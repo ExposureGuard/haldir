@@ -1,10 +1,8 @@
 """
-Haldir Gate — Core identity and permission engine.
-
-Sessions are short-lived, scoped tokens that agents use to prove identity
-and authorization for every action they take.
+Haldir Gate — Core identity and permission engine with SQLite persistence.
 """
 
+import json
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -12,14 +10,14 @@ from enum import Enum
 
 
 class Permission(Enum):
-    READ = "read"                    # Read data from tools
-    WRITE = "write"                  # Write/modify data
-    SPEND = "spend"                  # Authorize payments
-    EXECUTE = "execute"              # Run commands/code
-    BROWSE = "browse"                # Visit URLs
-    SEND = "send"                    # Send emails/messages
-    DELETE = "delete"                # Destructive operations
-    ADMIN = "admin"                  # Full access
+    READ = "read"
+    WRITE = "write"
+    SPEND = "spend"
+    EXECUTE = "execute"
+    BROWSE = "browse"
+    SEND = "send"
+    DELETE = "delete"
+    ADMIN = "admin"
 
 
 @dataclass
@@ -27,10 +25,10 @@ class Session:
     session_id: str
     agent_id: str
     scopes: list[str]
-    spend_limit: float = 0.0        # Max spend in USD for this session
-    spent: float = 0.0              # Running total spent
+    spend_limit: float = 0.0
+    spent: float = 0.0
     created_at: float = field(default_factory=time.time)
-    expires_at: float = 0.0         # 0 = no expiry
+    expires_at: float = 0.0
     revoked: bool = False
     metadata: dict = field(default_factory=dict)
 
@@ -49,7 +47,6 @@ class Session:
     def has_permission(self, scope: str) -> bool:
         if "admin" in self.scopes:
             return True
-        # Handle parameterized scopes like "spend:50"
         base_scope = scope.split(":")[0]
         return base_scope in self.scopes or scope in self.scopes
 
@@ -65,34 +62,46 @@ class Session:
 
 
 class Gate:
-    """
-    Central identity and permission authority.
+    """Central identity and permission authority with persistent storage."""
 
-    Every agent interaction starts with Gate.create_session().
-    Every tool call checks Gate.check_permission().
-    """
-
-    def __init__(self, api_key: str | None = None):
+    def __init__(self, api_key: str | None = None, db_path: str | None = None):
         self.api_key = api_key
+        self._db_path = db_path
+        # In-memory fallback when no DB
         self._sessions: dict[str, Session] = {}
         self._agent_policies: dict[str, dict] = {}
 
+    def _get_db(self):
+        if not self._db_path:
+            return None
+        from haldir_db import get_db
+        return get_db(self._db_path)
+
     def register_agent(self, agent_id: str, default_scopes: list[str] | None = None,
                        max_spend: float = 0.0, metadata: dict | None = None):
-        """Register an agent with default policies."""
-        self._agent_policies[agent_id] = {
-            "default_scopes": default_scopes or ["read", "browse"],
+        scopes = default_scopes or ["read", "browse"]
+        policy = {
+            "default_scopes": scopes,
             "max_spend": max_spend,
             "metadata": metadata or {},
         }
+        self._agent_policies[agent_id] = policy
+
+        conn = self._get_db()
+        if conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO agents (agent_id, default_scopes, max_spend, metadata, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (agent_id, json.dumps(scopes), max_spend, json.dumps(metadata or {}), time.time())
+            )
+            conn.commit()
+            conn.close()
 
     def create_session(self, agent_id: str, scopes: list[str] | None = None,
                        ttl: int = 3600, spend_limit: float | None = None) -> Session:
-        """Create a scoped session for an agent."""
         policy = self._agent_policies.get(agent_id, {})
         effective_scopes = scopes or policy.get("default_scopes", ["read"])
 
-        # Parse spend limit from scopes like "spend:50"
         effective_spend = spend_limit
         if effective_spend is None:
             for s in effective_scopes:
@@ -112,48 +121,110 @@ class Gate:
             expires_at=time.time() + ttl if ttl > 0 else 0,
         )
         self._sessions[session.session_id] = session
+
+        conn = self._get_db()
+        if conn:
+            conn.execute(
+                "INSERT INTO sessions (session_id, agent_id, scopes, spend_limit, spent, created_at, expires_at, revoked) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (session.session_id, session.agent_id, json.dumps(session.scopes),
+                 session.spend_limit, 0.0, session.created_at, session.expires_at, 0)
+            )
+            conn.commit()
+            conn.close()
+
         return session
 
     def get_session(self, session_id: str) -> Session | None:
+        # If we have a DB, always check it for fresh revocation status
+        conn = self._get_db()
+        if conn:
+            row = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+            conn.close()
+            if not row or int(row["revoked"]):
+                self._sessions.pop(session_id, None)
+                return None
+            session = Session(
+                session_id=row["session_id"],
+                agent_id=row["agent_id"],
+                scopes=json.loads(row["scopes"]),
+                spend_limit=row["spend_limit"],
+                spent=row["spent"],
+                created_at=row["created_at"],
+                expires_at=row["expires_at"],
+                revoked=bool(int(row["revoked"])),
+            )
+            if session.is_valid:
+                self._sessions[session_id] = session
+                return session
+            return None
+
+        # In-memory fallback
         session = self._sessions.get(session_id)
         if session and session.is_valid:
             return session
+
+        # Check DB
+        conn = self._get_db()
+        if conn:
+            row = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+            conn.close()
+            if row and not int(row["revoked"]):
+                session = Session(
+                    session_id=row["session_id"],
+                    agent_id=row["agent_id"],
+                    scopes=json.loads(row["scopes"]),
+                    spend_limit=row["spend_limit"],
+                    spent=row["spent"],
+                    created_at=row["created_at"],
+                    expires_at=row["expires_at"],
+                    revoked=bool(row["revoked"]),
+                )
+                if session.is_valid:
+                    self._sessions[session_id] = session
+                    return session
         return None
 
     def check_permission(self, session_id: str, scope: str) -> bool:
-        """Check if a session has a specific permission."""
         session = self.get_session(session_id)
         if not session:
             return False
         return session.has_permission(scope)
 
     def authorize_spend(self, session_id: str, amount: float) -> bool:
-        """Check if a session can spend a given amount."""
         session = self.get_session(session_id)
         if not session:
             return False
         return session.authorize_spend(amount)
 
     def record_spend(self, session_id: str, amount: float) -> bool:
-        """Record a spend against a session's budget."""
         session = self.get_session(session_id)
-        if not session:
-            return False
-        if not session.authorize_spend(amount):
+        if not session or not session.authorize_spend(amount):
             return False
         session.record_spend(amount)
+
+        conn = self._get_db()
+        if conn:
+            conn.execute("UPDATE sessions SET spent = ? WHERE session_id = ?",
+                         (session.spent, session_id))
+            conn.commit()
+            conn.close()
         return True
 
     def revoke_session(self, session_id: str) -> bool:
-        """Immediately revoke a session."""
         session = self._sessions.get(session_id)
         if session:
             session.revoked = True
+
+        conn = self._get_db()
+        if conn:
+            conn.execute("UPDATE sessions SET revoked = 1 WHERE session_id = ?", (session_id,))
+            conn.commit()
+            conn.close()
             return True
-        return False
+        return session is not None
 
     def list_sessions(self, agent_id: str | None = None) -> list[Session]:
-        """List active sessions, optionally filtered by agent."""
         sessions = [s for s in self._sessions.values() if s.is_valid]
         if agent_id:
             sessions = [s for s in sessions if s.agent_id == agent_id]
