@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Haldir — The Guardian Layer for AI Agents</title>
+    <meta name="description" content="Identity, secrets, and audit for AI agents. Every tool call flows through Haldir. MCP-native. Model-agnostic.">
+    <meta property="og:title" content="Haldir — The Guardian Layer for AI Agents">
+    <meta property="og:description" content="Identity, secrets, and audit for AI agents. Every tool call flows through Haldir.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://haldir.xyz">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #08080f;
+            --bg-card: #0d0d18;
+            --border: rgba(255,255,255,0.08);
+            --text: #e8e8f0;
+            --text-dim: #6b6b80;
+            --accent: #c9a33e;
+            --accent-glow: rgba(201,163,62,0.25);
+        }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'JetBrains Mono', monospace;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .shield {
+            width: 80px;
+            height: 90px;
+            margin-bottom: 2rem;
+            filter: drop-shadow(0 0 30px var(--accent-glow));
+            animation: pulse 3s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { filter: drop-shadow(0 0 20px var(--accent-glow)); }
+            50% { filter: drop-shadow(0 0 40px rgba(201,163,62,0.45)); }
+        }
+
+        h1 {
+            font-size: clamp(2rem, 5vw, 3.2rem);
+            font-weight: 800;
+            letter-spacing: -1px;
+            margin-bottom: 0.75rem;
+            background: linear-gradient(135deg, #e8e8f0, var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .tagline {
+            font-size: clamp(0.85rem, 2vw, 1.05rem);
+            color: var(--text-dim);
+            max-width: 520px;
+            line-height: 1.7;
+            margin-bottom: 2.5rem;
+        }
+
+        .features {
+            display: flex;
+            gap: 1.5rem;
+            margin-bottom: 2.5rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .feature {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.25rem 1.5rem;
+            width: 180px;
+            text-align: center;
+        }
+        .feature-icon { font-size: 1.5rem; margin-bottom: 0.5rem; }
+        .feature-name { font-size: 0.85rem; font-weight: 700; color: var(--accent); margin-bottom: 0.3rem; }
+        .feature-desc { font-size: 0.72rem; color: var(--text-dim); line-height: 1.5; }
+
+        .email-form {
+            display: flex;
+            gap: 0.5rem;
+            max-width: 420px;
+            width: 100%;
+            margin-bottom: 1rem;
+        }
+        .email-form input {
+            flex: 1;
+            padding: 0.8rem 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.85rem;
+            outline: none;
+        }
+        .email-form input:focus { border-color: var(--accent); }
+        .email-form button {
+            padding: 0.8rem 1.5rem;
+            border-radius: 8px;
+            border: none;
+            background: var(--accent);
+            color: #08080f;
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: opacity 0.2s;
+        }
+        .email-form button:hover { opacity: 0.85; }
+
+        .hint {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            margin-bottom: 3rem;
+        }
+
+        .bottom-links {
+            display: flex;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .bottom-links a {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .bottom-links a:hover { color: var(--accent); }
+
+        .success { display: none; color: var(--accent); font-size: 0.85rem; margin-bottom: 1rem; }
+
+        @media (max-width: 600px) {
+            .features { flex-direction: column; align-items: center; }
+            .feature { width: 100%; max-width: 280px; }
+        }
+    </style>
+</head>
+<body>
+
+    <svg class="shield" viewBox="0 0 80 92" fill="none">
+        <defs>
+            <linearGradient id="sg" x1="40" y1="4" x2="40" y2="88" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#e8c84a"/>
+                <stop offset="100%" stop-color="#8a6d1b"/>
+            </linearGradient>
+        </defs>
+        <path d="M40 4 L72 18 V46 C72 68 58 80 40 88 C22 80 8 68 8 46 V18 Z" fill="url(#sg)" opacity="0.15" stroke="url(#sg)" stroke-width="2"/>
+        <path d="M32 44 L38 50 L52 36" stroke="#c9a33e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </svg>
+
+    <h1>Haldir</h1>
+    <p class="tagline">
+        The guardian layer for AI agents.<br>
+        Identity. Secrets. Audit. Every tool call flows through Haldir.
+    </p>
+
+    <div class="features">
+        <div class="feature">
+            <div class="feature-icon">&#128274;</div>
+            <div class="feature-name">Gate</div>
+            <div class="feature-desc">Agent identity &amp; scoped permissions</div>
+        </div>
+        <div class="feature">
+            <div class="feature-icon">&#128273;</div>
+            <div class="feature-name">Vault</div>
+            <div class="feature-desc">Encrypted secrets &amp; payment rails</div>
+        </div>
+        <div class="feature">
+            <div class="feature-icon">&#128065;</div>
+            <div class="feature-name">Watch</div>
+            <div class="feature-desc">Audit trail &amp; compliance</div>
+        </div>
+    </div>
+
+    <form class="email-form" id="waitlist-form" onsubmit="return handleSubmit(event)">
+        <input type="email" name="email" placeholder="you@company.com" required autocomplete="email">
+        <button type="submit">Join Waitlist</button>
+    </form>
+    <p class="hint">MCP-native. Model-agnostic. Launching soon.</p>
+    <p class="success" id="success-msg">You're on the list. We'll be in touch.</p>
+
+    <div class="bottom-links">
+        <a href="https://github.com/ExposureGuard/exposureguard-mcp">GitHub</a>
+        <a href="https://getexposureguard.com">ExposureGuard</a>
+        <a href="https://smithery.ai/server/ExposureGuard/exposureguard-mcp">Smithery</a>
+    </div>
+
+    <script>
+    function handleSubmit(e) {
+        e.preventDefault();
+        var email = e.target.email.value;
+        // Store in localStorage for now — replace with real backend later
+        var waitlist = JSON.parse(localStorage.getItem('haldir_waitlist') || '[]');
+        waitlist.push({email: email, ts: new Date().toISOString()});
+        localStorage.setItem('haldir_waitlist', JSON.stringify(waitlist));
+        document.getElementById('waitlist-form').style.display = 'none';
+        document.getElementById('success-msg').style.display = 'block';
+        // TODO: POST to backend when ready
+        return false;
+    }
+    </script>
+
+</body>
+</html>
