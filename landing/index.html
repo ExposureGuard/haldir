@@ -7,455 +7,424 @@
     <meta name="description" content="Identity, secrets, and audit for AI agents. Every tool call flows through Haldir. MCP-native. Model-agnostic.">
     <meta property="og:title" content="Haldir — The Guardian Layer for AI Agents">
     <meta property="og:description" content="Identity, secrets, and audit for AI agents. Every tool call flows through Haldir.">
-    <meta property="og:type" content="website">
-    <meta property="og:url" content="https://haldir.xyz">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         :root {
-            --gold: #c9a33e;
-            --gold-dim: rgba(201,163,62,0.4);
-            --gold-glow: rgba(201,163,62,0.15);
-            --white: #ffffff;
-            --white-90: rgba(255,255,255,0.9);
-            --white-60: rgba(255,255,255,0.6);
-            --white-30: rgba(255,255,255,0.3);
-            --white-10: rgba(255,255,255,0.1);
-            --white-05: rgba(255,255,255,0.05);
-            --black: #000000;
+            --gold: #b8973a;
+            --gold-soft: rgba(184,151,58,0.5);
+            --gold-glow: rgba(184,151,58,0.08);
+            --w: #e0ddd5;
+            --w80: rgba(224,221,213,0.8);
+            --w50: rgba(224,221,213,0.5);
+            --w20: rgba(224,221,213,0.2);
+            --w08: rgba(224,221,213,0.08);
+            --w04: rgba(224,221,213,0.04);
+            --bg: #050505;
+            --mono: 'IBM Plex Mono', monospace;
+            --sans: 'Inter', -apple-system, sans-serif;
         }
 
         html { scroll-behavior: smooth; }
-
-        body {
-            background: var(--black);
-            color: var(--white);
-            font-family: 'Inter', -apple-system, sans-serif;
-            overflow-x: hidden;
-        }
+        body { background: var(--bg); color: var(--w); font-family: var(--sans); overflow-x: hidden; }
 
         /* ── Nav ── */
         nav {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            z-index: 100;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 1.25rem 3rem;
-            background: transparent;
-            transition: background 0.3s;
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 1.5rem 3rem;
+            mix-blend-mode: difference;
         }
-        nav.scrolled { background: rgba(0,0,0,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
-        .nav-logo {
-            font-size: 1.1rem;
-            font-weight: 900;
-            letter-spacing: 3px;
-            text-transform: uppercase;
-            color: var(--white);
-            text-decoration: none;
+        .logo {
+            font-family: var(--mono); font-size: 0.8rem; font-weight: 400;
+            letter-spacing: 4px; text-transform: uppercase;
+            color: var(--w); text-decoration: none;
         }
-        .nav-links { display: flex; gap: 2rem; align-items: center; }
-        .nav-links a {
-            font-size: 0.75rem;
-            font-weight: 500;
-            letter-spacing: 1px;
-            text-transform: uppercase;
-            color: var(--white-60);
-            text-decoration: none;
-            transition: color 0.2s;
+        .nav-r { display: flex; gap: 2.5rem; align-items: center; }
+        .nav-r a {
+            font-family: var(--mono); font-size: 0.65rem; font-weight: 300;
+            letter-spacing: 2px; text-transform: uppercase;
+            color: var(--w50); text-decoration: none; transition: color 0.3s;
         }
-        .nav-links a:hover { color: var(--white); }
+        .nav-r a:hover { color: var(--w); }
 
         /* ── Sections ── */
         section {
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            position: relative;
-            padding: 6rem 2rem;
+            min-height: 100vh; display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            position: relative; padding: 8rem 2rem;
         }
 
         /* ── Hero ── */
-        .hero {
-            background: radial-gradient(ellipse 80% 60% at 50% 40%, rgba(201,163,62,0.06) 0%, transparent 70%);
+        .hero { position: relative; overflow: hidden; }
+        .hero::before {
+            content: ''; position: absolute; top: 30%; left: 50%;
+            width: 600px; height: 600px; transform: translate(-50%, -50%);
+            background: radial-gradient(circle, var(--gold-glow) 0%, transparent 70%);
+            pointer-events: none;
         }
-        .hero-shield {
-            width: 100px;
-            height: 115px;
-            margin-bottom: 3rem;
-            filter: drop-shadow(0 0 40px var(--gold-glow));
-            animation: shield-pulse 4s ease-in-out infinite;
-        }
-        @keyframes shield-pulse {
-            0%, 100% { filter: drop-shadow(0 0 30px var(--gold-glow)); transform: scale(1); }
-            50% { filter: drop-shadow(0 0 60px rgba(201,163,62,0.3)); transform: scale(1.02); }
+
+        .hero-eyebrow {
+            font-family: var(--mono); font-size: 0.6rem; font-weight: 300;
+            letter-spacing: 4px; text-transform: uppercase;
+            color: var(--gold); margin-bottom: 2.5rem;
         }
         .hero h1 {
-            font-size: clamp(2.5rem, 6vw, 5rem);
-            font-weight: 900;
-            letter-spacing: -2px;
-            text-align: center;
-            line-height: 1.05;
-            margin-bottom: 1.5rem;
+            font-weight: 200; font-size: clamp(2.2rem, 5.5vw, 4.5rem);
+            letter-spacing: -1px; text-align: center; line-height: 1.15;
+            margin-bottom: 2rem; max-width: 700px;
+        }
+        .hero h1 em {
+            font-style: normal; color: var(--gold);
         }
         .hero-sub {
-            font-size: clamp(0.9rem, 2vw, 1.15rem);
-            font-weight: 300;
-            color: var(--white-60);
-            text-align: center;
-            max-width: 500px;
-            line-height: 1.8;
-            margin-bottom: 3rem;
+            font-size: 0.9rem; font-weight: 300; color: var(--w50);
+            text-align: center; max-width: 400px; line-height: 1.9;
+            margin-bottom: 4rem;
         }
-        .hero-cta {
-            display: flex;
-            gap: 1rem;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
+        .hero-cta { display: flex; gap: 1.5rem; }
         .btn {
-            padding: 0.9rem 2.5rem;
-            font-family: inherit;
-            font-size: 0.8rem;
-            font-weight: 700;
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-            text-decoration: none;
-            border: none;
-            cursor: pointer;
-            transition: all 0.3s;
+            font-family: var(--mono); font-size: 0.65rem; font-weight: 400;
+            letter-spacing: 2px; text-transform: uppercase;
+            padding: 0.85rem 2.2rem; text-decoration: none;
+            transition: all 0.3s; cursor: pointer; border: none;
         }
-        .btn-primary {
-            background: var(--white);
-            color: var(--black);
-        }
-        .btn-primary:hover { background: var(--white-90); transform: translateY(-1px); }
-        .btn-outline {
-            background: transparent;
-            color: var(--white);
-            border: 1px solid var(--white-30);
-        }
-        .btn-outline:hover { border-color: var(--white); }
-        .scroll-hint {
-            position: absolute;
-            bottom: 2rem;
-            font-size: 0.65rem;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            color: var(--white-30);
-            animation: bob 2s ease-in-out infinite;
-        }
-        @keyframes bob {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(6px); }
+        .btn-w { background: var(--w); color: var(--bg); }
+        .btn-w:hover { background: var(--w80); }
+        .btn-g { background: transparent; color: var(--w50); border: 1px solid var(--w20); }
+        .btn-g:hover { color: var(--w); border-color: var(--w50); }
+
+        .scroll-line {
+            position: absolute; bottom: 0; left: 50%;
+            width: 1px; height: 80px; background: linear-gradient(to bottom, transparent, var(--w20));
         }
 
-        /* ── Product sections ── */
-        .product-section {
-            border-top: 1px solid var(--white-10);
+        /* ── Live terminal ── */
+        .terminal-section { padding: 0 2rem 6rem; min-height: auto; }
+        .terminal {
+            max-width: 640px; width: 100%;
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--w08);
+            border-radius: 6px;
+            overflow: hidden;
         }
-        .product-label {
-            font-size: 0.65rem;
-            font-weight: 500;
-            letter-spacing: 3px;
-            text-transform: uppercase;
-            color: var(--gold);
-            margin-bottom: 2rem;
+        .terminal-bar {
+            display: flex; align-items: center; gap: 6px;
+            padding: 0.7rem 1rem;
+            background: rgba(255,255,255,0.03);
+            border-bottom: 1px solid var(--w08);
         }
-        .product-title {
-            font-size: clamp(2rem, 4.5vw, 3.5rem);
-            font-weight: 900;
-            letter-spacing: -1.5px;
-            text-align: center;
-            margin-bottom: 1.25rem;
+        .terminal-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--w20); }
+        .terminal-title {
+            font-family: var(--mono); font-size: 0.6rem;
+            color: var(--w20); margin-left: 0.5rem; letter-spacing: 1px;
+        }
+        .terminal-body {
+            padding: 1.5rem; font-family: var(--mono);
+            font-size: 0.75rem; line-height: 2.2; color: var(--w50);
+            min-height: 200px;
+        }
+        .terminal-body .prompt { color: var(--gold); }
+        .terminal-body .output { color: var(--w50); }
+        .terminal-body .success { color: #6bbd6b; }
+        .terminal-body .dim { color: var(--w20); }
+
+        /* ── Product cards ── */
+        .products {
+            min-height: auto; padding: 6rem 2rem;
+            border-top: 1px solid var(--w08);
+        }
+        .products-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr);
+            gap: 1px; max-width: 900px; width: 100%;
+            background: var(--w08); border: 1px solid var(--w08);
+        }
+        .product-card {
+            background: var(--bg); padding: 3rem 2.5rem;
+            display: flex; flex-direction: column;
+        }
+        .product-num {
+            font-family: var(--mono); font-size: 0.6rem;
+            color: var(--w20); letter-spacing: 2px; margin-bottom: 1.5rem;
+        }
+        .product-name {
+            font-size: 1.1rem; font-weight: 600;
+            letter-spacing: -0.5px; margin-bottom: 0.75rem;
         }
         .product-desc {
-            font-size: clamp(0.85rem, 1.5vw, 1rem);
-            font-weight: 300;
-            color: var(--white-60);
-            text-align: center;
-            max-width: 480px;
-            line-height: 1.8;
-            margin-bottom: 3rem;
+            font-size: 0.78rem; font-weight: 300;
+            color: var(--w50); line-height: 1.8;
         }
-        .product-code {
-            background: rgba(255,255,255,0.03);
-            border: 1px solid var(--white-10);
-            border-radius: 8px;
-            padding: 2rem 2.5rem;
-            max-width: 520px;
-            width: 100%;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
-            line-height: 2;
-            color: var(--white-60);
-            overflow-x: auto;
-        }
-        .product-code .accent { color: var(--gold); }
-        .product-code .str { color: #a8d8a8; }
-        .product-code .comment { color: rgba(255,255,255,0.25); }
 
-        /* ── Stats bar ── */
-        .stats {
-            min-height: auto;
-            padding: 4rem 2rem;
-            border-top: 1px solid var(--white-10);
-            flex-direction: row;
-            gap: 4rem;
-            flex-wrap: wrap;
+        /* ── Single line facts ── */
+        .facts {
+            min-height: auto; padding: 4rem 2rem;
+            border-top: 1px solid var(--w08);
+            flex-direction: row; gap: 0;
+            max-width: 900px; margin: 0 auto; width: 100%;
         }
-        .stat { text-align: center; }
-        .stat-num {
-            font-size: clamp(2rem, 4vw, 3rem);
-            font-weight: 900;
-            letter-spacing: -1px;
+        .fact {
+            flex: 1; text-align: center;
+            padding: 2rem 1rem;
+            border-right: 1px solid var(--w08);
         }
-        .stat-label {
-            font-size: 0.65rem;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            color: var(--white-30);
-            margin-top: 0.5rem;
+        .fact:last-child { border-right: none; }
+        .fact-val {
+            font-family: var(--mono); font-size: 1.5rem; font-weight: 300;
+            letter-spacing: -0.5px;
+        }
+        .fact-label {
+            font-family: var(--mono); font-size: 0.55rem;
+            color: var(--w20); letter-spacing: 2px;
+            text-transform: uppercase; margin-top: 0.5rem;
         }
 
         /* ── Waitlist ── */
         .waitlist {
-            border-top: 1px solid var(--white-10);
+            border-top: 1px solid var(--w08);
         }
         .waitlist h2 {
-            font-size: clamp(1.8rem, 4vw, 3rem);
-            font-weight: 900;
-            letter-spacing: -1px;
-            margin-bottom: 1rem;
+            font-weight: 200; font-size: clamp(1.6rem, 3.5vw, 2.5rem);
+            letter-spacing: -0.5px; text-align: center; margin-bottom: 1rem;
         }
         .waitlist-sub {
-            font-size: 0.9rem;
-            color: var(--white-60);
-            font-weight: 300;
-            margin-bottom: 2.5rem;
+            font-family: var(--mono); font-size: 0.65rem;
+            color: var(--w20); letter-spacing: 2px; text-transform: uppercase;
+            margin-bottom: 3rem;
         }
-        .email-form {
-            display: flex;
-            gap: 0;
-            max-width: 440px;
-            width: 100%;
+        .email-row {
+            display: flex; max-width: 400px; width: 100%;
+            border: 1px solid var(--w08);
         }
-        .email-form input {
-            flex: 1;
-            padding: 1rem 1.25rem;
-            border: 1px solid var(--white-10);
-            border-right: none;
-            background: transparent;
-            color: var(--white);
-            font-family: inherit;
-            font-size: 0.85rem;
-            outline: none;
+        .email-row input {
+            flex: 1; padding: 0.85rem 1rem;
+            background: transparent; border: none; color: var(--w);
+            font-family: var(--mono); font-size: 0.75rem; outline: none;
         }
-        .email-form input:focus { border-color: var(--white-30); }
-        .email-form button {
-            padding: 1rem 2rem;
-            background: var(--white);
-            color: var(--black);
-            border: 1px solid var(--white);
-            font-family: inherit;
-            font-size: 0.75rem;
-            font-weight: 700;
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-            cursor: pointer;
-            transition: opacity 0.2s;
+        .email-row input::placeholder { color: var(--w20); }
+        .email-row button {
+            padding: 0.85rem 1.5rem; background: var(--w);
+            color: var(--bg); border: none; font-family: var(--mono);
+            font-size: 0.6rem; font-weight: 500; letter-spacing: 2px;
+            text-transform: uppercase; cursor: pointer; transition: opacity 0.2s;
         }
-        .email-form button:hover { opacity: 0.85; }
-        .success-msg { display: none; color: var(--gold); font-size: 0.85rem; margin-top: 1rem; }
+        .email-row button:hover { opacity: 0.8; }
+        .ok-msg { display: none; font-family: var(--mono); font-size: 0.7rem; color: var(--gold); margin-top: 1rem; }
 
         /* ── Footer ── */
         footer {
-            padding: 3rem;
-            text-align: center;
-            border-top: 1px solid var(--white-10);
+            padding: 3rem; text-align: center;
+            border-top: 1px solid var(--w08);
         }
+        footer a {
+            font-family: var(--mono); font-size: 0.6rem;
+            color: var(--w20); text-decoration: none; letter-spacing: 1px;
+            margin: 0 1rem;
+        }
+        footer a:hover { color: var(--w50); }
         footer p {
-            font-size: 0.7rem;
-            color: var(--white-30);
-            letter-spacing: 1px;
+            font-size: 0.6rem; color: var(--w20);
+            margin-top: 1.5rem; letter-spacing: 1px;
         }
-        footer a { color: var(--white-30); text-decoration: none; }
-        footer a:hover { color: var(--white-60); }
 
-        /* ── Mobile ── */
         @media (max-width: 768px) {
             nav { padding: 1rem 1.5rem; }
-            .nav-links { gap: 1rem; }
-            .nav-links a { font-size: 0.65rem; }
-            section { padding: 4rem 1.5rem; }
-            .product-code { padding: 1.5rem; font-size: 0.72rem; }
-            .stats { gap: 2rem; padding: 3rem 1.5rem; }
+            .nav-r { gap: 1.5rem; }
+            section { padding: 5rem 1.5rem; }
+            .products-grid { grid-template-columns: 1fr; }
+            .facts { flex-direction: column; }
+            .fact { border-right: none; border-bottom: 1px solid var(--w08); }
+            .fact:last-child { border-bottom: none; }
+            .hero-cta { flex-direction: column; align-items: center; }
         }
     </style>
 </head>
 <body>
 
-    <nav id="nav">
-        <a href="/" class="nav-logo">Haldir</a>
-        <div class="nav-links">
-            <a href="#gate">Gate</a>
-            <a href="#vault">Vault</a>
-            <a href="#watch">Watch</a>
+    <nav>
+        <a href="/" class="logo">Haldir</a>
+        <div class="nav-r">
+            <a href="#products">Products</a>
             <a href="#waitlist">Early Access</a>
         </div>
     </nav>
 
     <!-- ── Hero ── -->
     <section class="hero">
-        <svg class="hero-shield" viewBox="0 0 80 92" fill="none">
-            <defs>
-                <linearGradient id="sg" x1="40" y1="4" x2="40" y2="88" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stop-color="#e8c84a"/>
-                    <stop offset="100%" stop-color="#8a6d1b"/>
-                </linearGradient>
-            </defs>
-            <path d="M40 4 L72 18 V46 C72 68 58 80 40 88 C22 80 8 68 8 46 V18 Z" fill="url(#sg)" opacity="0.12" stroke="url(#sg)" stroke-width="1.5"/>
-            <path d="M32 44 L38 50 L52 36" stroke="#c9a33e" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        </svg>
-        <h1>The guardian layer<br>for AI agents.</h1>
-        <p class="hero-sub">Identity. Secrets. Audit.<br>Every tool call flows through Haldir.</p>
+        <span class="hero-eyebrow">MCP-native security infrastructure</span>
+        <h1>The <em>guardian</em> layer<br>for AI agents</h1>
+        <p class="hero-sub">Identity, secrets, and audit for every tool call. Model-agnostic. Protocol-level.</p>
         <div class="hero-cta">
-            <a href="#waitlist" class="btn btn-primary">Get Early Access</a>
-            <a href="https://github.com/ExposureGuard/exposureguard-mcp" class="btn btn-outline" target="_blank">View on GitHub</a>
+            <a href="#waitlist" class="btn btn-w">Request access</a>
+            <a href="https://github.com/ExposureGuard/exposureguard-mcp" class="btn btn-g" target="_blank">GitHub</a>
         </div>
-        <span class="scroll-hint">Scroll to explore &#8595;</span>
+        <div class="scroll-line"></div>
     </section>
 
-    <!-- ── Gate ── -->
-    <section class="product-section" id="gate">
-        <span class="product-label">Haldir Gate</span>
-        <h2 class="product-title">Agent identity.<br>Solved.</h2>
-        <p class="product-desc">Every agent gets a scoped session. Permissions, spend limits, and TTL — enforced on every tool call. No session, no access.</p>
-        <div class="product-code">
-            <span class="comment"># Create a scoped session for your agent</span><br>
-            session = gate.<span class="accent">create_session</span>(<br>
-            &nbsp;&nbsp;agent_id=<span class="str">"research-bot"</span>,<br>
-            &nbsp;&nbsp;scopes=[<span class="str">"read"</span>, <span class="str">"browse"</span>, <span class="str">"spend:50"</span>],<br>
-            &nbsp;&nbsp;ttl=<span class="accent">3600</span><br>
-            )
+    <!-- ── Live terminal ── -->
+    <section class="terminal-section">
+        <div class="terminal">
+            <div class="terminal-bar">
+                <div class="terminal-dot"></div>
+                <div class="terminal-dot"></div>
+                <div class="terminal-dot"></div>
+                <span class="terminal-title">haldir</span>
+            </div>
+            <div class="terminal-body" id="term"></div>
         </div>
     </section>
 
-    <!-- ── Vault ── -->
-    <section class="product-section" id="vault">
-        <span class="product-label">Haldir Vault</span>
-        <h2 class="product-title">Secrets agents<br>never see.</h2>
-        <p class="product-desc">API keys, credentials, and payment limits — encrypted at rest. Agents request access. Vault decides.</p>
-        <div class="product-code">
-            <span class="comment"># Agent requests a secret — Vault checks scope</span><br>
-            key = vault.<span class="accent">get_secret</span>(<br>
-            &nbsp;&nbsp;<span class="str">"stripe_key"</span>,<br>
-            &nbsp;&nbsp;session=session<br>
-            )<br><br>
-            <span class="comment"># Authorize a payment against the session budget</span><br>
-            vault.<span class="accent">authorize_payment</span>(session, amount=<span class="accent">29.99</span>)
+    <!-- ── Products ── -->
+    <section class="products" id="products">
+        <div class="products-grid">
+            <div class="product-card">
+                <span class="product-num">01</span>
+                <div class="product-name">Gate</div>
+                <div class="product-desc">Scoped sessions for every agent. Permissions, spend limits, and TTL enforced on every tool call.</div>
+            </div>
+            <div class="product-card">
+                <span class="product-num">02</span>
+                <div class="product-name">Vault</div>
+                <div class="product-desc">Encrypted secrets agents never see. Payment authorization with per-session budget enforcement.</div>
+            </div>
+            <div class="product-card">
+                <span class="product-num">03</span>
+                <div class="product-name">Watch</div>
+                <div class="product-desc">Immutable audit log. Anomaly detection. Cost tracking. The compliance layer enterprises need.</div>
+            </div>
         </div>
     </section>
 
-    <!-- ── Watch ── -->
-    <section class="product-section" id="watch">
-        <span class="product-label">Haldir Watch</span>
-        <h2 class="product-title">Every action.<br>Recorded.</h2>
-        <p class="product-desc">Immutable audit log for every tool call. Anomaly detection. Cost tracking. The compliance layer enterprises require.</p>
-        <div class="product-code">
-            <span class="comment"># Every action is logged automatically</span><br>
-            watch.<span class="accent">log_action</span>(<br>
-            &nbsp;&nbsp;session,<br>
-            &nbsp;&nbsp;tool=<span class="str">"stripe"</span>,<br>
-            &nbsp;&nbsp;action=<span class="str">"charge"</span>,<br>
-            &nbsp;&nbsp;cost_usd=<span class="accent">29.99</span><br>
-            )<br><br>
-            <span class="comment"># Query the audit trail</span><br>
-            watch.<span class="accent">get_spend</span>(agent_id=<span class="str">"research-bot"</span>)
+    <!-- ── Facts ── -->
+    <div class="facts" style="display:flex; border-top: 1px solid var(--w08);">
+        <div class="fact">
+            <div class="fact-val">9</div>
+            <div class="fact-label">MCP Tools</div>
         </div>
-    </section>
-
-    <!-- ── Stats ── -->
-    <section class="stats">
-        <div class="stat">
-            <div class="stat-num">9</div>
-            <div class="stat-label">MCP Tools</div>
+        <div class="fact">
+            <div class="fact-val">&lt;200ms</div>
+            <div class="fact-label">Latency</div>
         </div>
-        <div class="stat">
-            <div class="stat-num">3</div>
-            <div class="stat-label">Products</div>
+        <div class="fact">
+            <div class="fact-val">AES-256</div>
+            <div class="fact-label">Encryption</div>
         </div>
-        <div class="stat">
-            <div class="stat-num">&lt;200ms</div>
-            <div class="stat-label">Latency</div>
+        <div class="fact">
+            <div class="fact-val">&infin;</div>
+            <div class="fact-label">Models</div>
         </div>
-        <div class="stat">
-            <div class="stat-num">&infin;</div>
-            <div class="stat-label">Models Supported</div>
-        </div>
-    </section>
+    </div>
 
     <!-- ── Waitlist ── -->
     <section class="waitlist" id="waitlist">
-        <h2>Ship agents.<br>Sleep at night.</h2>
-        <p class="waitlist-sub">MCP-native. Model-agnostic. Launching soon.</p>
-        <form class="email-form" id="waitlist-form" onsubmit="return handleSubmit(event)">
+        <h2>Ship agents. Sleep at night.</h2>
+        <span class="waitlist-sub">Launching soon</span>
+        <form class="email-row" id="wl" onsubmit="return sub(event)">
             <input type="email" name="email" placeholder="you@company.com" required autocomplete="email">
-            <button type="submit">Join Waitlist</button>
+            <button type="submit">Join</button>
         </form>
-        <p class="success-msg" id="success-msg">You're on the list.</p>
+        <p class="ok-msg" id="ok">You're on the list.</p>
     </section>
 
     <footer>
-        <p>
-            <a href="https://getexposureguard.com">ExposureGuard</a> &nbsp;&middot;&nbsp;
-            <a href="https://github.com/ExposureGuard/exposureguard-mcp">GitHub</a> &nbsp;&middot;&nbsp;
-            <a href="https://smithery.ai/server/ExposureGuard/exposureguard-mcp">Smithery</a>
-        </p>
-        <p style="margin-top: 1rem;">&copy; 2026 Haldir</p>
+        <a href="https://getexposureguard.com">ExposureGuard</a>
+        <a href="https://github.com/ExposureGuard/exposureguard-mcp">GitHub</a>
+        <a href="https://smithery.ai/server/ExposureGuard/exposureguard-mcp">Smithery</a>
+        <p>&copy; 2026 Haldir</p>
     </footer>
 
     <script>
-    // Nav background on scroll
-    window.addEventListener('scroll', function() {
-        document.getElementById('nav').classList.toggle('scrolled', window.scrollY > 50);
-    });
-
     // Waitlist
-    function handleSubmit(e) {
+    function sub(e) {
         e.preventDefault();
-        var email = e.target.email.value;
-        var waitlist = JSON.parse(localStorage.getItem('haldir_waitlist') || '[]');
-        waitlist.push({email: email, ts: new Date().toISOString()});
-        localStorage.setItem('haldir_waitlist', JSON.stringify(waitlist));
-        document.getElementById('waitlist-form').style.display = 'none';
-        document.getElementById('success-msg').style.display = 'block';
+        var em = e.target.email.value;
+        var wl = JSON.parse(localStorage.getItem('haldir_wl') || '[]');
+        wl.push({email: em, ts: new Date().toISOString()});
+        localStorage.setItem('haldir_wl', JSON.stringify(wl));
+        document.getElementById('wl').style.display = 'none';
+        document.getElementById('ok').style.display = 'block';
         return false;
     }
 
-    // Fade-in on scroll
-    var observer = new IntersectionObserver(function(entries) {
-        entries.forEach(function(entry) {
-            if (entry.isIntersecting) {
-                entry.target.style.opacity = '1';
-                entry.target.style.transform = 'translateY(0)';
+    // Terminal animation
+    (function() {
+        var lines = [
+            {type:'prompt', text:'$ haldir session create --agent research-bot --scopes read,browse,spend:50'},
+            {type:'output', text:''},
+            {type:'success', text:'Session created: ses_k8Fj2mNx...'},
+            {type:'dim', text:'  scopes: [read, browse, spend]  budget: $50.00  ttl: 3600s'},
+            {type:'output', text:''},
+            {type:'prompt', text:'$ haldir vault get stripe_key --session ses_k8Fj2mNx'},
+            {type:'output', text:''},
+            {type:'success', text:'sk_live_••••••••••••7x4Q'},
+            {type:'dim', text:'  scope: read  access_count: 1'},
+            {type:'output', text:''},
+            {type:'prompt', text:'$ haldir pay authorize 29.99 --session ses_k8Fj2mNx'},
+            {type:'output', text:''},
+            {type:'success', text:'Authorized: $29.99  remaining: $20.01'},
+            {type:'output', text:''},
+            {type:'prompt', text:'$ haldir watch spend --agent research-bot'},
+            {type:'output', text:''},
+            {type:'dim', text:'  total: $29.99  actions: 3  tools: stripe, exposureguard'},
+            {type:'success', text:'  flagged: 0  anomalies: none'},
+        ];
+
+        var term = document.getElementById('term');
+        var i = 0;
+
+        function type() {
+            if (i >= lines.length) {
+                setTimeout(function() { term.innerHTML = ''; i = 0; type(); }, 3000);
+                return;
+            }
+            var line = lines[i];
+            var el = document.createElement('div');
+            el.className = line.type;
+            term.appendChild(el);
+
+            if (line.type === 'output') {
+                el.innerHTML = '&nbsp;';
+                i++;
+                setTimeout(type, 200);
+                return;
+            }
+
+            var text = line.text;
+            var j = 0;
+            var speed = line.type === 'prompt' ? 18 : 8;
+
+            function letter() {
+                if (j < text.length) {
+                    el.textContent += text[j];
+                    j++;
+                    setTimeout(letter, speed);
+                } else {
+                    i++;
+                    setTimeout(type, line.type === 'prompt' ? 400 : 150);
+                }
+            }
+            letter();
+        }
+        type();
+    })();
+
+    // Fade in
+    var obs = new IntersectionObserver(function(entries) {
+        entries.forEach(function(e) {
+            if (e.isIntersecting) {
+                e.target.style.opacity = '1';
+                e.target.style.transform = 'translateY(0)';
             }
         });
-    }, { threshold: 0.15 });
-
-    document.querySelectorAll('.product-section, .stats, .waitlist').forEach(function(el) {
+    }, {threshold: 0.1});
+    document.querySelectorAll('.products, .waitlist').forEach(function(el) {
         el.style.opacity = '0';
-        el.style.transform = 'translateY(40px)';
-        el.style.transition = 'opacity 0.8s ease, transform 0.8s ease';
-        observer.observe(el);
+        el.style.transform = 'translateY(30px)';
+        el.style.transition = 'opacity 0.7s ease, transform 0.7s ease';
+        obs.observe(el);
     });
     </script>
 
