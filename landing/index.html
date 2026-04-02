@@ -9,210 +9,454 @@
     <meta property="og:description" content="Identity, secrets, and audit for AI agents. Every tool call flows through Haldir.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://haldir.xyz">
-    <meta name="twitter:card" content="summary_large_image">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         :root {
-            --bg: #08080f;
-            --bg-card: #0d0d18;
-            --border: rgba(255,255,255,0.08);
-            --text: #e8e8f0;
-            --text-dim: #6b6b80;
-            --accent: #c9a33e;
-            --accent-glow: rgba(201,163,62,0.25);
+            --gold: #c9a33e;
+            --gold-dim: rgba(201,163,62,0.4);
+            --gold-glow: rgba(201,163,62,0.15);
+            --white: #ffffff;
+            --white-90: rgba(255,255,255,0.9);
+            --white-60: rgba(255,255,255,0.6);
+            --white-30: rgba(255,255,255,0.3);
+            --white-10: rgba(255,255,255,0.1);
+            --white-05: rgba(255,255,255,0.05);
+            --black: #000000;
         }
+
+        html { scroll-behavior: smooth; }
+
         body {
-            background: var(--bg);
-            color: var(--text);
-            font-family: 'JetBrains Mono', monospace;
+            background: var(--black);
+            color: var(--white);
+            font-family: 'Inter', -apple-system, sans-serif;
+            overflow-x: hidden;
+        }
+
+        /* ── Nav ── */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.25rem 3rem;
+            background: transparent;
+            transition: background 0.3s;
+        }
+        nav.scrolled { background: rgba(0,0,0,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+        .nav-logo {
+            font-size: 1.1rem;
+            font-weight: 900;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: var(--white);
+            text-decoration: none;
+        }
+        .nav-links { display: flex; gap: 2rem; align-items: center; }
+        .nav-links a {
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: var(--white-60);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .nav-links a:hover { color: var(--white); }
+
+        /* ── Sections ── */
+        section {
             min-height: 100vh;
             display: flex;
             flex-direction: column;
-            align-items: center;
             justify-content: center;
-            padding: 2rem;
+            align-items: center;
+            position: relative;
+            padding: 6rem 2rem;
+        }
+
+        /* ── Hero ── */
+        .hero {
+            background: radial-gradient(ellipse 80% 60% at 50% 40%, rgba(201,163,62,0.06) 0%, transparent 70%);
+        }
+        .hero-shield {
+            width: 100px;
+            height: 115px;
+            margin-bottom: 3rem;
+            filter: drop-shadow(0 0 40px var(--gold-glow));
+            animation: shield-pulse 4s ease-in-out infinite;
+        }
+        @keyframes shield-pulse {
+            0%, 100% { filter: drop-shadow(0 0 30px var(--gold-glow)); transform: scale(1); }
+            50% { filter: drop-shadow(0 0 60px rgba(201,163,62,0.3)); transform: scale(1.02); }
+        }
+        .hero h1 {
+            font-size: clamp(2.5rem, 6vw, 5rem);
+            font-weight: 900;
+            letter-spacing: -2px;
             text-align: center;
+            line-height: 1.05;
+            margin-bottom: 1.5rem;
         }
-
-        .shield {
-            width: 80px;
-            height: 90px;
-            margin-bottom: 2rem;
-            filter: drop-shadow(0 0 30px var(--accent-glow));
-            animation: pulse 3s ease-in-out infinite;
+        .hero-sub {
+            font-size: clamp(0.9rem, 2vw, 1.15rem);
+            font-weight: 300;
+            color: var(--white-60);
+            text-align: center;
+            max-width: 500px;
+            line-height: 1.8;
+            margin-bottom: 3rem;
         }
-        @keyframes pulse {
-            0%, 100% { filter: drop-shadow(0 0 20px var(--accent-glow)); }
-            50% { filter: drop-shadow(0 0 40px rgba(201,163,62,0.45)); }
-        }
-
-        h1 {
-            font-size: clamp(2rem, 5vw, 3.2rem);
-            font-weight: 800;
-            letter-spacing: -1px;
-            margin-bottom: 0.75rem;
-            background: linear-gradient(135deg, #e8e8f0, var(--accent));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .tagline {
-            font-size: clamp(0.85rem, 2vw, 1.05rem);
-            color: var(--text-dim);
-            max-width: 520px;
-            line-height: 1.7;
-            margin-bottom: 2.5rem;
-        }
-
-        .features {
+        .hero-cta {
             display: flex;
-            gap: 1.5rem;
-            margin-bottom: 2.5rem;
+            gap: 1rem;
             flex-wrap: wrap;
             justify-content: center;
         }
-
-        .feature {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 1.25rem 1.5rem;
-            width: 180px;
-            text-align: center;
+        .btn {
+            padding: 0.9rem 2.5rem;
+            font-family: inherit;
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s;
         }
-        .feature-icon { font-size: 1.5rem; margin-bottom: 0.5rem; }
-        .feature-name { font-size: 0.85rem; font-weight: 700; color: var(--accent); margin-bottom: 0.3rem; }
-        .feature-desc { font-size: 0.72rem; color: var(--text-dim); line-height: 1.5; }
+        .btn-primary {
+            background: var(--white);
+            color: var(--black);
+        }
+        .btn-primary:hover { background: var(--white-90); transform: translateY(-1px); }
+        .btn-outline {
+            background: transparent;
+            color: var(--white);
+            border: 1px solid var(--white-30);
+        }
+        .btn-outline:hover { border-color: var(--white); }
+        .scroll-hint {
+            position: absolute;
+            bottom: 2rem;
+            font-size: 0.65rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--white-30);
+            animation: bob 2s ease-in-out infinite;
+        }
+        @keyframes bob {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(6px); }
+        }
 
+        /* ── Product sections ── */
+        .product-section {
+            border-top: 1px solid var(--white-10);
+        }
+        .product-label {
+            font-size: 0.65rem;
+            font-weight: 500;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: var(--gold);
+            margin-bottom: 2rem;
+        }
+        .product-title {
+            font-size: clamp(2rem, 4.5vw, 3.5rem);
+            font-weight: 900;
+            letter-spacing: -1.5px;
+            text-align: center;
+            margin-bottom: 1.25rem;
+        }
+        .product-desc {
+            font-size: clamp(0.85rem, 1.5vw, 1rem);
+            font-weight: 300;
+            color: var(--white-60);
+            text-align: center;
+            max-width: 480px;
+            line-height: 1.8;
+            margin-bottom: 3rem;
+        }
+        .product-code {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--white-10);
+            border-radius: 8px;
+            padding: 2rem 2.5rem;
+            max-width: 520px;
+            width: 100%;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            line-height: 2;
+            color: var(--white-60);
+            overflow-x: auto;
+        }
+        .product-code .accent { color: var(--gold); }
+        .product-code .str { color: #a8d8a8; }
+        .product-code .comment { color: rgba(255,255,255,0.25); }
+
+        /* ── Stats bar ── */
+        .stats {
+            min-height: auto;
+            padding: 4rem 2rem;
+            border-top: 1px solid var(--white-10);
+            flex-direction: row;
+            gap: 4rem;
+            flex-wrap: wrap;
+        }
+        .stat { text-align: center; }
+        .stat-num {
+            font-size: clamp(2rem, 4vw, 3rem);
+            font-weight: 900;
+            letter-spacing: -1px;
+        }
+        .stat-label {
+            font-size: 0.65rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--white-30);
+            margin-top: 0.5rem;
+        }
+
+        /* ── Waitlist ── */
+        .waitlist {
+            border-top: 1px solid var(--white-10);
+        }
+        .waitlist h2 {
+            font-size: clamp(1.8rem, 4vw, 3rem);
+            font-weight: 900;
+            letter-spacing: -1px;
+            margin-bottom: 1rem;
+        }
+        .waitlist-sub {
+            font-size: 0.9rem;
+            color: var(--white-60);
+            font-weight: 300;
+            margin-bottom: 2.5rem;
+        }
         .email-form {
             display: flex;
-            gap: 0.5rem;
-            max-width: 420px;
+            gap: 0;
+            max-width: 440px;
             width: 100%;
-            margin-bottom: 1rem;
         }
         .email-form input {
             flex: 1;
-            padding: 0.8rem 1rem;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-            background: var(--bg-card);
-            color: var(--text);
+            padding: 1rem 1.25rem;
+            border: 1px solid var(--white-10);
+            border-right: none;
+            background: transparent;
+            color: var(--white);
             font-family: inherit;
             font-size: 0.85rem;
             outline: none;
         }
-        .email-form input:focus { border-color: var(--accent); }
+        .email-form input:focus { border-color: var(--white-30); }
         .email-form button {
-            padding: 0.8rem 1.5rem;
-            border-radius: 8px;
-            border: none;
-            background: var(--accent);
-            color: #08080f;
+            padding: 1rem 2rem;
+            background: var(--white);
+            color: var(--black);
+            border: 1px solid var(--white);
             font-family: inherit;
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
             cursor: pointer;
-            white-space: nowrap;
             transition: opacity 0.2s;
         }
         .email-form button:hover { opacity: 0.85; }
+        .success-msg { display: none; color: var(--gold); font-size: 0.85rem; margin-top: 1rem; }
 
-        .hint {
+        /* ── Footer ── */
+        footer {
+            padding: 3rem;
+            text-align: center;
+            border-top: 1px solid var(--white-10);
+        }
+        footer p {
             font-size: 0.7rem;
-            color: var(--text-dim);
-            margin-bottom: 3rem;
+            color: var(--white-30);
+            letter-spacing: 1px;
         }
+        footer a { color: var(--white-30); text-decoration: none; }
+        footer a:hover { color: var(--white-60); }
 
-        .bottom-links {
-            display: flex;
-            gap: 1.5rem;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-        .bottom-links a {
-            font-size: 0.75rem;
-            color: var(--text-dim);
-            text-decoration: none;
-            transition: color 0.2s;
-        }
-        .bottom-links a:hover { color: var(--accent); }
-
-        .success { display: none; color: var(--accent); font-size: 0.85rem; margin-bottom: 1rem; }
-
-        @media (max-width: 600px) {
-            .features { flex-direction: column; align-items: center; }
-            .feature { width: 100%; max-width: 280px; }
+        /* ── Mobile ── */
+        @media (max-width: 768px) {
+            nav { padding: 1rem 1.5rem; }
+            .nav-links { gap: 1rem; }
+            .nav-links a { font-size: 0.65rem; }
+            section { padding: 4rem 1.5rem; }
+            .product-code { padding: 1.5rem; font-size: 0.72rem; }
+            .stats { gap: 2rem; padding: 3rem 1.5rem; }
         }
     </style>
 </head>
 <body>
 
-    <svg class="shield" viewBox="0 0 80 92" fill="none">
-        <defs>
-            <linearGradient id="sg" x1="40" y1="4" x2="40" y2="88" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stop-color="#e8c84a"/>
-                <stop offset="100%" stop-color="#8a6d1b"/>
-            </linearGradient>
-        </defs>
-        <path d="M40 4 L72 18 V46 C72 68 58 80 40 88 C22 80 8 68 8 46 V18 Z" fill="url(#sg)" opacity="0.15" stroke="url(#sg)" stroke-width="2"/>
-        <path d="M32 44 L38 50 L52 36" stroke="#c9a33e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-    </svg>
-
-    <h1>Haldir</h1>
-    <p class="tagline">
-        The guardian layer for AI agents.<br>
-        Identity. Secrets. Audit. Every tool call flows through Haldir.
-    </p>
-
-    <div class="features">
-        <div class="feature">
-            <div class="feature-icon">&#128274;</div>
-            <div class="feature-name">Gate</div>
-            <div class="feature-desc">Agent identity &amp; scoped permissions</div>
+    <nav id="nav">
+        <a href="/" class="nav-logo">Haldir</a>
+        <div class="nav-links">
+            <a href="#gate">Gate</a>
+            <a href="#vault">Vault</a>
+            <a href="#watch">Watch</a>
+            <a href="#waitlist">Early Access</a>
         </div>
-        <div class="feature">
-            <div class="feature-icon">&#128273;</div>
-            <div class="feature-name">Vault</div>
-            <div class="feature-desc">Encrypted secrets &amp; payment rails</div>
-        </div>
-        <div class="feature">
-            <div class="feature-icon">&#128065;</div>
-            <div class="feature-name">Watch</div>
-            <div class="feature-desc">Audit trail &amp; compliance</div>
-        </div>
-    </div>
+    </nav>
 
-    <form class="email-form" id="waitlist-form" onsubmit="return handleSubmit(event)">
-        <input type="email" name="email" placeholder="you@company.com" required autocomplete="email">
-        <button type="submit">Join Waitlist</button>
-    </form>
-    <p class="hint">MCP-native. Model-agnostic. Launching soon.</p>
-    <p class="success" id="success-msg">You're on the list. We'll be in touch.</p>
+    <!-- ── Hero ── -->
+    <section class="hero">
+        <svg class="hero-shield" viewBox="0 0 80 92" fill="none">
+            <defs>
+                <linearGradient id="sg" x1="40" y1="4" x2="40" y2="88" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stop-color="#e8c84a"/>
+                    <stop offset="100%" stop-color="#8a6d1b"/>
+                </linearGradient>
+            </defs>
+            <path d="M40 4 L72 18 V46 C72 68 58 80 40 88 C22 80 8 68 8 46 V18 Z" fill="url(#sg)" opacity="0.12" stroke="url(#sg)" stroke-width="1.5"/>
+            <path d="M32 44 L38 50 L52 36" stroke="#c9a33e" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </svg>
+        <h1>The guardian layer<br>for AI agents.</h1>
+        <p class="hero-sub">Identity. Secrets. Audit.<br>Every tool call flows through Haldir.</p>
+        <div class="hero-cta">
+            <a href="#waitlist" class="btn btn-primary">Get Early Access</a>
+            <a href="https://github.com/ExposureGuard/exposureguard-mcp" class="btn btn-outline" target="_blank">View on GitHub</a>
+        </div>
+        <span class="scroll-hint">Scroll to explore &#8595;</span>
+    </section>
 
-    <div class="bottom-links">
-        <a href="https://github.com/ExposureGuard/exposureguard-mcp">GitHub</a>
-        <a href="https://getexposureguard.com">ExposureGuard</a>
-        <a href="https://smithery.ai/server/ExposureGuard/exposureguard-mcp">Smithery</a>
-    </div>
+    <!-- ── Gate ── -->
+    <section class="product-section" id="gate">
+        <span class="product-label">Haldir Gate</span>
+        <h2 class="product-title">Agent identity.<br>Solved.</h2>
+        <p class="product-desc">Every agent gets a scoped session. Permissions, spend limits, and TTL — enforced on every tool call. No session, no access.</p>
+        <div class="product-code">
+            <span class="comment"># Create a scoped session for your agent</span><br>
+            session = gate.<span class="accent">create_session</span>(<br>
+            &nbsp;&nbsp;agent_id=<span class="str">"research-bot"</span>,<br>
+            &nbsp;&nbsp;scopes=[<span class="str">"read"</span>, <span class="str">"browse"</span>, <span class="str">"spend:50"</span>],<br>
+            &nbsp;&nbsp;ttl=<span class="accent">3600</span><br>
+            )
+        </div>
+    </section>
+
+    <!-- ── Vault ── -->
+    <section class="product-section" id="vault">
+        <span class="product-label">Haldir Vault</span>
+        <h2 class="product-title">Secrets agents<br>never see.</h2>
+        <p class="product-desc">API keys, credentials, and payment limits — encrypted at rest. Agents request access. Vault decides.</p>
+        <div class="product-code">
+            <span class="comment"># Agent requests a secret — Vault checks scope</span><br>
+            key = vault.<span class="accent">get_secret</span>(<br>
+            &nbsp;&nbsp;<span class="str">"stripe_key"</span>,<br>
+            &nbsp;&nbsp;session=session<br>
+            )<br><br>
+            <span class="comment"># Authorize a payment against the session budget</span><br>
+            vault.<span class="accent">authorize_payment</span>(session, amount=<span class="accent">29.99</span>)
+        </div>
+    </section>
+
+    <!-- ── Watch ── -->
+    <section class="product-section" id="watch">
+        <span class="product-label">Haldir Watch</span>
+        <h2 class="product-title">Every action.<br>Recorded.</h2>
+        <p class="product-desc">Immutable audit log for every tool call. Anomaly detection. Cost tracking. The compliance layer enterprises require.</p>
+        <div class="product-code">
+            <span class="comment"># Every action is logged automatically</span><br>
+            watch.<span class="accent">log_action</span>(<br>
+            &nbsp;&nbsp;session,<br>
+            &nbsp;&nbsp;tool=<span class="str">"stripe"</span>,<br>
+            &nbsp;&nbsp;action=<span class="str">"charge"</span>,<br>
+            &nbsp;&nbsp;cost_usd=<span class="accent">29.99</span><br>
+            )<br><br>
+            <span class="comment"># Query the audit trail</span><br>
+            watch.<span class="accent">get_spend</span>(agent_id=<span class="str">"research-bot"</span>)
+        </div>
+    </section>
+
+    <!-- ── Stats ── -->
+    <section class="stats">
+        <div class="stat">
+            <div class="stat-num">9</div>
+            <div class="stat-label">MCP Tools</div>
+        </div>
+        <div class="stat">
+            <div class="stat-num">3</div>
+            <div class="stat-label">Products</div>
+        </div>
+        <div class="stat">
+            <div class="stat-num">&lt;200ms</div>
+            <div class="stat-label">Latency</div>
+        </div>
+        <div class="stat">
+            <div class="stat-num">&infin;</div>
+            <div class="stat-label">Models Supported</div>
+        </div>
+    </section>
+
+    <!-- ── Waitlist ── -->
+    <section class="waitlist" id="waitlist">
+        <h2>Ship agents.<br>Sleep at night.</h2>
+        <p class="waitlist-sub">MCP-native. Model-agnostic. Launching soon.</p>
+        <form class="email-form" id="waitlist-form" onsubmit="return handleSubmit(event)">
+            <input type="email" name="email" placeholder="you@company.com" required autocomplete="email">
+            <button type="submit">Join Waitlist</button>
+        </form>
+        <p class="success-msg" id="success-msg">You're on the list.</p>
+    </section>
+
+    <footer>
+        <p>
+            <a href="https://getexposureguard.com">ExposureGuard</a> &nbsp;&middot;&nbsp;
+            <a href="https://github.com/ExposureGuard/exposureguard-mcp">GitHub</a> &nbsp;&middot;&nbsp;
+            <a href="https://smithery.ai/server/ExposureGuard/exposureguard-mcp">Smithery</a>
+        </p>
+        <p style="margin-top: 1rem;">&copy; 2026 Haldir</p>
+    </footer>
 
     <script>
+    // Nav background on scroll
+    window.addEventListener('scroll', function() {
+        document.getElementById('nav').classList.toggle('scrolled', window.scrollY > 50);
+    });
+
+    // Waitlist
     function handleSubmit(e) {
         e.preventDefault();
         var email = e.target.email.value;
-        // Store in localStorage for now — replace with real backend later
         var waitlist = JSON.parse(localStorage.getItem('haldir_waitlist') || '[]');
         waitlist.push({email: email, ts: new Date().toISOString()});
         localStorage.setItem('haldir_waitlist', JSON.stringify(waitlist));
         document.getElementById('waitlist-form').style.display = 'none';
         document.getElementById('success-msg').style.display = 'block';
-        // TODO: POST to backend when ready
         return false;
     }
+
+    // Fade-in on scroll
+    var observer = new IntersectionObserver(function(entries) {
+        entries.forEach(function(entry) {
+            if (entry.isIntersecting) {
+                entry.target.style.opacity = '1';
+                entry.target.style.transform = 'translateY(0)';
+            }
+        });
+    }, { threshold: 0.15 });
+
+    document.querySelectorAll('.product-section, .stats, .waitlist').forEach(function(el) {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(40px)';
+        el.style.transition = 'opacity 0.8s ease, transform 0.8s ease';
+        observer.observe(el);
+    });
     </script>
 
 </body>
