@@ -386,8 +386,8 @@ def healthz():
     return jsonify({"status": "ok", "service": "haldir", "version": "0.1.0"})
 
 
-@app.route("/")
-def index():
+@app.route("/v1")
+def api_index():
     return jsonify({
         "service": "haldir",
         "version": "0.1.0",
@@ -400,6 +400,15 @@ def index():
             "keys": "/v1/keys",
         },
     })
+
+
+@app.route("/")
+def landing():
+    landing_path = os.path.join(os.path.dirname(__file__), "landing", "index.html")
+    if os.path.exists(landing_path):
+        with open(landing_path) as f:
+            return f.read(), 200, {"Content-Type": "text/html"}
+    return jsonify({"service": "haldir", "version": "0.1.0"}), 200
 
 
 if __name__ == "__main__":
