@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.ExposureGuard/haldir -->
 # Haldir
 
 **The guardian layer for AI agents.**

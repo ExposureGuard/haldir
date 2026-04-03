@@ -1,0 +1,23 @@
+# Smithery configuration — https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+
+configSchema:
+  type: object
+  required:
+    - apiKey
+  properties:
+    apiKey:
+      type: string
+      description: "Your Haldir API key (get one at https://haldir.xyz)"
+
+commandFunction: |-
+  (config) => ({
+    command: 'python3',
+    args: ['-m', 'mcp_server'],
+    env: { HALDIR_API_KEY: config.apiKey }
+  })
+
+exampleConfig:
+  apiKey: "hld_your_api_key_here"

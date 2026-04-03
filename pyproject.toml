@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Sterling", email = "sterling@getexposureguard.com"}]
-keywords = ["mcp", "ai-agents", "security", "identity", "secrets", "audit", "model-context-protocol"]
+keywords = ["mcp", "ai-agents", "security", "identity", "secrets", "audit", "model-context-protocol", "governance", "compliance"]
 dependencies = [
     "mcp>=1.0.0",
     "httpx>=0.27.0",
@@ -19,11 +19,25 @@ dependencies = [
 ]
 
 [project.scripts]
-haldir-mcp = "haldir.mcp_server:main"
+haldir-mcp = "mcp_server:main"
 
 [project.urls]
-Homepage = "https://github.com/haldir-ai/haldir"
-Documentation = "https://haldir.dev/docs"
+Homepage = "https://haldir.xyz"
+Repository = "https://github.com/ExposureGuard/haldir"
+Documentation = "https://haldir.xyz"
 
 [tool.hatch.build.targets.wheel]
 packages = ["haldir_gate", "haldir_vault", "haldir_watch", "sdk"]
+include = ["mcp_server.py", "haldir_db.py"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "haldir_gate/**",
+    "haldir_vault/**",
+    "haldir_watch/**",
+    "sdk/**",
+    "mcp_server.py",
+    "haldir_db.py",
+    "README.md",
+    "pyproject.toml",
+]

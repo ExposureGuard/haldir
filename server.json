@@ -1,0 +1,19 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ExposureGuard/haldir",
+  "title": "Haldir",
+  "description": "Guardian layer for AI agents: identity, secrets, audit via MCP.",
+  "repository": {
+    "url": "https://github.com/ExposureGuard/haldir",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "haldir",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}
