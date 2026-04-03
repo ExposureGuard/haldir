@@ -26,11 +26,16 @@ def test_full_api():
     assert r.status_code == 200
     print("[+] Health check OK")
 
-    # 2. Root endpoint
+    # 2. Root endpoint (serves landing page HTML)
     r = client.get("/")
     assert r.status_code == 200
-    assert "haldir" in r.json["service"]
     print("[+] Root endpoint OK")
+
+    # 2b. API index
+    r = client.get("/v1")
+    assert r.status_code == 200
+    assert "haldir" in r.json["service"]
+    print("[+] API index OK")
 
     # 3. Create first API key (no auth needed for first key)
     r = client.post("/v1/keys", json={"name": "test-key", "tier": "pro"})
