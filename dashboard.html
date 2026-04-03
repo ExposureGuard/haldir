@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Haldir Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#050505;--card:#0a0a0f;--border:rgba(224,221,213,0.08);--w:#e0ddd5;--w80:rgba(224,221,213,0.8);--w50:rgba(224,221,213,0.5);--w20:rgba(224,221,213,0.2);--w08:rgba(224,221,213,0.04);--gold:#b8973a;--green:#6bbd6b;--red:#e87b7b;--blue:#7ba8e8;--mono:'IBM Plex Mono',monospace;--sans:'Inter',sans-serif}
+body{background:var(--bg);color:var(--w);font-family:var(--sans);display:flex;min-height:100vh}
+.side{width:200px;border-right:1px solid var(--border);padding:1.5rem 0;flex-shrink:0;position:fixed;top:0;bottom:0;overflow-y:auto}
+.side-logo{font-family:var(--mono);font-size:0.75rem;letter-spacing:3px;text-transform:uppercase;padding:0 1.25rem;margin-bottom:2rem;color:var(--gold)}
+.side a{display:block;padding:0.5rem 1.25rem;font-family:var(--mono);font-size:0.7rem;color:var(--w50);text-decoration:none;letter-spacing:1px;border-left:2px solid transparent;transition:all 0.2s;cursor:pointer}
+.side a:hover,.side a.active{color:var(--w);background:var(--w08);border-left-color:var(--gold)}
+.main{flex:1;margin-left:200px;padding:2rem}
+.page{display:none}.page.active{display:block}
+.page-title{font-weight:200;font-size:1.5rem;margin-bottom:1.5rem;letter-spacing:-0.5px}
+table{width:100%;border-collapse:collapse;font-size:0.75rem}
+th{font-family:var(--mono);font-size:0.6rem;color:var(--w20);letter-spacing:1px;text-transform:uppercase;text-align:left;padding:0.6rem 0.75rem;border-bottom:1px solid var(--border)}
+td{padding:0.5rem 0.75rem;border-bottom:1px solid var(--w08);color:var(--w50);font-family:var(--mono);font-size:0.72rem}
+tr:hover td{color:var(--w)}
+.flagged td{color:var(--red)!important;background:rgba(232,123,123,0.03)}
+.stat-row{display:flex;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:4px;margin-bottom:1.5rem;overflow:hidden}
+.stat-card{flex:1;background:var(--bg);padding:1.25rem;text-align:center}
+.stat-val{font-family:var(--mono);font-size:1.3rem;font-weight:300}
+.stat-label{font-family:var(--mono);font-size:0.55rem;color:var(--w20);letter-spacing:2px;text-transform:uppercase;margin-top:0.3rem}
+.bar-wrap{margin-bottom:0.5rem}
+.bar-label{display:flex;justify-content:space-between;font-family:var(--mono);font-size:0.7rem;color:var(--w50);margin-bottom:0.25rem}
+.bar-track{height:6px;background:var(--w08);border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;background:var(--gold);border-radius:3px;transition:width 0.5s}
+.btn-sm{font-family:var(--mono);font-size:0.6rem;padding:0.3rem 0.75rem;border:1px solid var(--border);background:transparent;color:var(--w50);cursor:pointer;letter-spacing:1px;text-transform:uppercase;transition:all 0.2s}
+.btn-sm:hover{color:var(--w);border-color:var(--w50)}
+.btn-approve{border-color:rgba(107,189,107,0.3);color:var(--green)}.btn-approve:hover{border-color:var(--green)}
+.btn-deny{border-color:rgba(232,123,123,0.3);color:var(--red)}.btn-deny:hover{border-color:var(--red)}
+.form-row{display:flex;gap:0;margin-bottom:1rem}
+.form-row input{flex:1;padding:0.6rem 0.8rem;background:transparent;border:1px solid var(--border);border-right:none;color:var(--w);font-family:var(--mono);font-size:0.75rem;outline:none}
+.form-row input:focus{border-color:var(--w20)}
+.form-row button{padding:0.6rem 1.2rem;background:var(--w);color:var(--bg);border:1px solid var(--w);font-family:var(--mono);font-size:0.6rem;font-weight:500;letter-spacing:1px;text-transform:uppercase;cursor:pointer}
+.empty{font-family:var(--mono);font-size:0.75rem;color:var(--w20);padding:2rem;text-align:center}
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:80vh}
+.login-box{max-width:360px;width:100%;text-align:center}
+.login-box h1{font-weight:200;font-size:1.8rem;margin-bottom:0.5rem}
+.login-box p{font-size:0.8rem;color:var(--w50);margin-bottom:2rem}
+.login-box input{width:100%;padding:0.8rem 1rem;background:transparent;border:1px solid var(--border);color:var(--w);font-family:var(--mono);font-size:0.8rem;outline:none;margin-bottom:0.75rem}
+.login-box input:focus{border-color:var(--gold)}
+.login-box button{width:100%;padding:0.8rem;background:var(--w);color:var(--bg);border:none;font-family:var(--mono);font-size:0.7rem;font-weight:500;letter-spacing:2px;text-transform:uppercase;cursor:pointer}
+@media(max-width:768px){.side{display:none}.main{margin-left:0}}
+</style>
+</head>
+<body>
+<div class="side" id="sidebar" style="display:none">
+    <div class="side-logo">Haldir</div>
+    <a onclick="show('sessions')" class="active" id="nav-sessions">Sessions</a>
+    <a onclick="show('audit')" id="nav-audit">Audit Log</a>
+    <a onclick="show('spend')" id="nav-spend">Spend</a>
+    <a onclick="show('approvals')" id="nav-approvals">Approvals</a>
+    <a onclick="show('secrets')" id="nav-secrets">Secrets</a>
+    <a onclick="show('webhooks')" id="nav-webhooks">Webhooks</a>
+    <a onclick="show('usage')" id="nav-usage">Usage</a>
+    <a onclick="logout()" style="margin-top:2rem;color:var(--red)">Logout</a>
+</div>
+<div class="main">
+<div class="page active" id="page-login"><div class="login-wrap"><div class="login-box"><h1>Haldir</h1><p>Enter your API key to access the dashboard.</p><input type="text" id="key-input" placeholder="hld_your_api_key" autofocus onkeydown="if(event.key==='Enter')login()"><button onclick="login()">Connect</button><p id="login-err" style="color:var(--red);font-size:0.75rem;margin-top:0.75rem;display:none"></p></div></div></div>
+<div class="page" id="page-sessions"><h2 class="page-title">Sessions</h2><div class="stat-row" id="session-stats"></div><table><thead><tr><th>Agent</th><th>Scopes</th><th>Budget</th><th>Spent</th><th>Remaining</th></tr></thead><tbody id="sessions-body"></tbody></table><p class="empty" id="sessions-empty" style="display:none">No data yet</p></div>
+<div class="page" id="page-audit"><h2 class="page-title">Audit Log</h2><div class="form-row" style="max-width:400px"><input type="text" id="audit-filter" placeholder="Filter by agent or tool..." oninput="loadAudit()"><button onclick="loadAudit()">Filter</button></div><table><thead><tr><th>Time</th><th>Agent</th><th>Tool</th><th>Action</th><th>Cost</th><th>Flag</th></tr></thead><tbody id="audit-body"></tbody></table><p class="empty" id="audit-empty" style="display:none">No entries</p></div>
+<div class="page" id="page-spend"><h2 class="page-title">Spend</h2><div class="stat-row" id="spend-stats"></div><div id="spend-bars"></div></div>
+<div class="page" id="page-approvals"><h2 class="page-title">Pending Approvals</h2><table><thead><tr><th>Agent</th><th>Tool</th><th>Action</th><th>Amount</th><th>Reason</th><th></th></tr></thead><tbody id="approvals-body"></tbody></table><p class="empty" id="approvals-empty" style="display:none">No pending approvals</p></div>
+<div class="page" id="page-secrets"><h2 class="page-title">Secrets</h2><table><thead><tr><th>Name</th><th></th></tr></thead><tbody id="secrets-body"></tbody></table><p class="empty" id="secrets-empty" style="display:none">No secrets</p></div>
+<div class="page" id="page-webhooks"><h2 class="page-title">Webhooks</h2><div class="form-row" style="max-width:500px"><input type="text" id="wh-url" placeholder="https://hooks.slack.com/..." onkeydown="if(event.key==='Enter')addWH()"><button onclick="addWH()">Add</button></div><table><thead><tr><th>URL</th><th>Events</th><th>Fires</th><th>Fails</th></tr></thead><tbody id="wh-body"></tbody></table><p class="empty" id="wh-empty" style="display:none">No webhooks</p></div>
+<div class="page" id="page-usage"><h2 class="page-title">Usage</h2><div class="stat-row" id="usage-stats"></div></div>
+</div>
+<script>
+var KEY='',BASE='';
+function api(m,p,b){var o={method:m,headers:{'Authorization':'Bearer '+KEY,'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);return fetch(BASE+p,o).then(function(r){return r.json()})}
+function login(){KEY=document.getElementById('key-input').value.trim();if(!KEY)return;BASE=location.origin;api('GET','/v1/usage').then(function(d){if(d.error){document.getElementById('login-err').textContent=d.error;document.getElementById('login-err').style.display='block';return}localStorage.setItem('haldir_key',KEY);document.getElementById('sidebar').style.display='block';show('sessions');setInterval(refresh,10000)}).catch(function(){document.getElementById('login-err').textContent='Cannot connect';document.getElementById('login-err').style.display='block'})}
+function logout(){localStorage.removeItem('haldir_key');KEY='';document.getElementById('sidebar').style.display='none';document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active')});document.getElementById('page-login').classList.add('active')}
+function show(p){document.querySelectorAll('.page').forEach(function(el){el.classList.remove('active')});document.getElementById('page-'+p).classList.add('active');document.querySelectorAll('.side a').forEach(function(a){a.classList.remove('active')});var n=document.getElementById('nav-'+p);if(n)n.classList.add('active');load(p)}
+function load(p){if(p==='sessions')loadSessions();if(p==='audit')loadAudit();if(p==='spend')loadSpend();if(p==='approvals')loadApprovals();if(p==='secrets')loadSecrets();if(p==='webhooks')loadWH();if(p==='usage')loadUsage()}
+function refresh(){var a=document.querySelector('.page.active');if(a)load(a.id.replace('page-',''))}
+function loadSessions(){api('GET','/v1/audit/spend').then(function(d){document.getElementById('session-stats').innerHTML='<div class="stat-card"><div class="stat-val">'+d.action_count+'</div><div class="stat-label">Actions</div></div><div class="stat-card"><div class="stat-val">$'+(d.total_usd||0).toFixed(2)+'</div><div class="stat-label">Total Spend</div></div><div class="stat-card"><div class="stat-val">'+Object.keys(d.by_tool||{}).length+'</div><div class="stat-label">Tools</div></div>'})}
+function loadAudit(){var f=document.getElementById('audit-filter').value.trim();var q='?limit=50';if(f)q+='&agent_id='+encodeURIComponent(f);api('GET','/v1/audit'+q).then(function(d){var b=document.getElementById('audit-body'),e=document.getElementById('audit-empty');if(!d.entries||!d.entries.length){b.innerHTML='';e.style.display='block';return}e.style.display='none';b.innerHTML=d.entries.map(function(x){var c=x.flagged?' class="flagged"':'';var t=new Date(x.timestamp*1000).toLocaleTimeString();var fl=x.flagged?'<span style="color:var(--red)">'+x.flag_reason+'</span>':'<span style="color:var(--w20)">&mdash;</span>';return'<tr'+c+'><td>'+t+'</td><td>'+x.agent_id+'</td><td>'+x.tool+'</td><td>'+x.action+'</td><td>$'+(x.cost_usd||0).toFixed(2)+'</td><td>'+fl+'</td></tr>'}).join('')})}
+function loadSpend(){api('GET','/v1/audit/spend').then(function(d){document.getElementById('spend-stats').innerHTML='<div class="stat-card"><div class="stat-val">$'+(d.total_usd||0).toFixed(2)+'</div><div class="stat-label">Total</div></div><div class="stat-card"><div class="stat-val">'+d.action_count+'</div><div class="stat-label">Actions</div></div>';var tools=d.by_tool||{};var mx=Math.max.apply(null,Object.values(tools).concat([1]));document.getElementById('spend-bars').innerHTML=Object.keys(tools).map(function(t){var pct=(tools[t]/mx*100).toFixed(0);return'<div class="bar-wrap"><div class="bar-label"><span>'+t+'</span><span>$'+tools[t].toFixed(2)+'</span></div><div class="bar-track"><div class="bar-fill" style="width:'+pct+'%"></div></div></div>'}).join('')})}
+function loadApprovals(){api('GET','/v1/approvals/pending').then(function(d){var b=document.getElementById('approvals-body'),e=document.getElementById('approvals-empty');if(!d.requests||!d.requests.length){b.innerHTML='';e.style.display='block';return}e.style.display='none';b.innerHTML=d.requests.map(function(r){return'<tr><td>'+r.agent_id+'</td><td>'+r.tool+'</td><td>'+r.action+'</td><td>$'+(r.amount||0).toFixed(2)+'</td><td>'+r.reason+'</td><td><button class="btn-sm btn-approve" onclick="apr(\''+r.request_id+'\')">Approve</button> <button class="btn-sm btn-deny" onclick="dny(\''+r.request_id+'\')">Deny</button></td></tr>'}).join('')})}
+function apr(id){api('POST','/v1/approvals/'+id+'/approve',{decided_by:'dashboard'}).then(function(){loadApprovals()})}
+function dny(id){api('POST','/v1/approvals/'+id+'/deny',{decided_by:'dashboard'}).then(function(){loadApprovals()})}
+function loadSecrets(){api('GET','/v1/secrets').then(function(d){var b=document.getElementById('secrets-body'),e=document.getElementById('secrets-empty');if(!d.secrets||!d.secrets.length){b.innerHTML='';e.style.display='block';return}e.style.display='none';b.innerHTML=d.secrets.map(function(s){return'<tr><td>'+s+'</td><td><button class="btn-sm btn-deny" onclick="if(confirm(\'Delete '+s+'?\'))api(\'DELETE\',\'/v1/secrets/'+s+'\').then(loadSecrets)">Delete</button></td></tr>'}).join('')})}
+function loadWH(){api('GET','/v1/webhooks').then(function(d){var b=document.getElementById('wh-body'),e=document.getElementById('wh-empty');if(!d.webhooks||!d.webhooks.length){b.innerHTML='';e.style.display='block';return}e.style.display='none';b.innerHTML=d.webhooks.map(function(w){return'<tr><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">'+w.url+'</td><td>'+(w.events||[]).join(', ')+'</td><td>'+w.fire_count+'</td><td>'+w.fail_count+'</td></tr>'}).join('')})}
+function addWH(){var u=document.getElementById('wh-url').value.trim();if(!u)return;api('POST','/v1/webhooks',{url:u,events:['all']}).then(function(){document.getElementById('wh-url').value='';loadWH()})}
+function loadUsage(){api('GET','/v1/usage').then(function(d){document.getElementById('usage-stats').innerHTML='<div class="stat-card"><div class="stat-val">'+(d.action_count||0)+'</div><div class="stat-label">Actions This Month</div></div><div class="stat-card"><div class="stat-val">'+(d.tier||'free')+'</div><div class="stat-label">Tier</div></div><div class="stat-card"><div class="stat-val">'+(d.month||'')+'</div><div class="stat-label">Period</div></div>'})}
+(function(){var k=localStorage.getItem('haldir_key');if(k){document.getElementById('key-input').value=k;login()}})();
+</script>
+</body>
+</html>

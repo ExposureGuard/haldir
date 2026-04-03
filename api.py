@@ -1425,6 +1425,15 @@ def mcp_server_card():
     })
 
 
+# ── Dashboard ──
+
+@app.route("/dashboard")
+def dashboard():
+    dashboard_path = os.path.join(os.path.dirname(__file__), "dashboard.html")
+    with open(dashboard_path) as f:
+        return f.read(), 200, {"Content-Type": "text/html"}
+
+
 # ── Health ──
 
 @app.route("/healthz")
