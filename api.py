@@ -61,24 +61,6 @@ if not ENCRYPTION_KEY:
 
 # ── API Key auth ──
 
-def _init_keys_table():
-    conn = get_db(DB_PATH)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS api_keys (
-            key_hash TEXT PRIMARY KEY,
-            key_prefix TEXT NOT NULL,
-            name TEXT NOT NULL DEFAULT '',
-            tier TEXT NOT NULL DEFAULT 'free',
-            created_at REAL NOT NULL,
-            last_used REAL NOT NULL DEFAULT 0,
-            revoked INTEGER NOT NULL DEFAULT 0
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-_init_keys_table()
-
 
 def _hash_key(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
@@ -106,6 +88,10 @@ def require_api_key(f):
 
         request.api_key_tier = row["tier"]
         request.api_key_name = row["name"]
+        try:
+            request.tenant_id = row["tenant_id"] or key_hash[:16]
+        except (IndexError, KeyError):
+            request.tenant_id = key_hash[:16]
         return f(*args, **kwargs)
     return decorated
 
@@ -142,11 +128,12 @@ def create_api_key():
 
     full_key = f"hld_{secrets.token_urlsafe(32)}"
     key_hash = _hash_key(full_key)
+    tenant_id = key_hash[:16]
 
     conn = get_db(DB_PATH)
     conn.execute(
-        "INSERT INTO api_keys (key_hash, key_prefix, name, tier, created_at) VALUES (?, ?, ?, ?, ?)",
-        (key_hash, full_key[:12], name, tier, time.time())
+        "INSERT INTO api_keys (key_hash, key_prefix, tenant_id, name, tier, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (key_hash, full_key[:12], tenant_id, name, tier, time.time())
     )
     conn.commit()
     conn.close()
@@ -377,6 +364,50 @@ def get_spend():
         session_id=request.args.get("session_id"),
         agent_id=request.args.get("agent_id"),
     ))
+
+
+# ── Usage tracking (for billing) ──
+
+@app.after_request
+def track_usage(response):
+    """Track API usage per tenant for billing."""
+    if request.path.startswith("/v1/") and hasattr(request, "tenant_id"):
+        tenant = request.tenant_id
+        month = time.strftime("%Y-%m")
+        try:
+            conn = get_db(DB_PATH)
+            conn.execute(
+                "INSERT INTO usage (tenant_id, month, action_count) VALUES (?, ?, 1) "
+                "ON CONFLICT(tenant_id, month) DO UPDATE SET action_count = action_count + 1",
+                (tenant, month)
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+    return response
+
+
+@app.route("/v1/usage", methods=["GET"])
+@require_api_key
+def get_usage():
+    """Get usage stats for billing."""
+    tenant = getattr(request, "tenant_id", "")
+    month = request.args.get("month", time.strftime("%Y-%m"))
+    conn = get_db(DB_PATH)
+    row = conn.execute(
+        "SELECT * FROM usage WHERE tenant_id = ? AND month = ?",
+        (tenant, month)
+    ).fetchone()
+    conn.close()
+    if row:
+        return jsonify({
+            "tenant_id": tenant,
+            "month": month,
+            "action_count": row["action_count"],
+            "tier": getattr(request, "api_key_tier", "free"),
+        })
+    return jsonify({"tenant_id": tenant, "month": month, "action_count": 0})
 
 
 # ── Approvals (Human-in-the-loop) ──
