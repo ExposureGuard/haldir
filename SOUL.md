@@ -145,13 +145,30 @@ Before every action, ask:
 
 ### Phase 1: Prove It (Now → 90 days)
 - [ ] ExposureGuard hitting $1K MRR
-- [ ] Haldir MVP deployed (Gate + Vault + Watch as MCP server)
+- [x] Haldir MVP deployed (Gate + Vault + Watch as MCP server)
 - [ ] 10 developers using Haldir free tier
 - [ ] Listed on Smithery, PyPI, modelcontextprotocol.io
-- [ ] haldir.xyz live with docs
+- [x] haldir.xyz live with docs
 - [ ] First 50 cold emails to agencies/enterprises
 - [ ] Loom demo recorded and posted
 - [ ] Product Hunt + Hacker News launches
+
+### What's shipped (as of 2026-04-03)
+- [x] Gate: sessions, permissions, spend limits, revocation
+- [x] Vault: AES-encrypted secrets, payment authorization, budget enforcement
+- [x] Watch: audit log, anomaly detection, spend tracking, compliance export
+- [x] Human-in-the-loop: approval requests, approve/deny, auto-rules, webhooks
+- [x] Webhook system: Slack/Discord/HTTP alerts for anomalies + approvals
+- [x] MCP server: 10 tools, 2 prompts, server card, system instructions
+- [x] REST API: 28+ endpoints, API key auth, rate limiting
+- [x] Python SDK: sync + async clients, typed, exception hierarchy
+- [x] Multi-tenant isolation: tenant_id on every table
+- [x] Postgres support: DATABASE_URL env var swaps from SQLite
+- [x] Usage tracking: per-tenant monthly action counts (billing-ready)
+- [x] API docs page: /docs with full endpoint reference
+- [x] Landing page: haldir.xyz with live terminal animation
+- [x] GitHub: github.com/ExposureGuard/haldir
+- [x] Dashboard UI (in progress)
 
 ### Phase 2: Grow It (90 → 180 days)
 - [ ] ExposureGuard hitting $5K MRR
