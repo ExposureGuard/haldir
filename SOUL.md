@@ -199,6 +199,27 @@ Before every action, ask:
 
 ---
 
+## Idea Quality Score (YC Startup School framework, scored 2026-04-03)
+
+**How big of an idea: 9/10**
+The AI agent governance market doesn't fully exist yet but will be massive. Every company deploying agents needs identity, secrets, and audit. Comparable to identity market (Okta $14B) + security monitoring (CrowdStrike $90B) for a new category. Not 10 because the market hasn't proven itself yet.
+
+**Founder/market fit: 6/10**
+Self-taught, ships fast, understands MCP deeply (100/100 + 98/100 Smithery). But no enterprise sales experience, no security industry network, no prior startup. The 6 becomes 8 after closing first 3 enterprise deals. Need to learn sales or find a co-founder who knows enterprise.
+
+**How easy to get started: 10/10**
+Already started. Product live. API works. Proxy works. PyPI published. Smithery listed. Landing page deployed. Dashboard built. Most founders are still writing pitch decks.
+
+**Early market feedback: 3/10**
+THE WEAK SPOT. Zero paying customers. Zero confirmed external users. Idea makes logical sense but market hasn't validated with wallets. This needs to be 7+ before YC application. Fix: get 10 users and 1 paying customer.
+
+**Overall: 7/10**
+Massive market + built product + strong execution. Unproven demand + untested sales. The 7 becomes 9 the moment paying customers exist. That's the only thing holding the score back.
+
+**Action:** Every decision should prioritize moving "Early market feedback" from 3 to 7+. Nothing else matters until then.
+
+---
+
 ## The Difference Between 10% and 70%
 
 The 10% outcome doesn't start with a grand vision. It starts with 50 cold emails in week 2 that land the first enterprise pilot. Everything compounds from there.
