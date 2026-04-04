@@ -1541,6 +1541,67 @@ def list_proxy_policies():
     return jsonify({"policies": proxy._policies, "count": len(proxy._policies)})
 
 
+# ── Metrics (founder view) ──
+
+@app.route("/v1/metrics")
+@require_api_key
+def metrics():
+    """Full platform metrics — users, sessions, actions, spend, secrets, upstreams."""
+    conn = get_db(DB_PATH)
+    m = {}
+
+    # API keys (users)
+    m["total_api_keys"] = conn.execute("SELECT COUNT(*) FROM api_keys WHERE revoked = 0").fetchone()[0]
+
+    # Sessions
+    m["total_sessions"] = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+    m["active_sessions"] = conn.execute("SELECT COUNT(*) FROM sessions WHERE revoked = 0 AND (expires_at = 0 OR expires_at > ?)", (time.time(),)).fetchone()[0]
+
+    # Unique agents
+    m["unique_agents"] = conn.execute("SELECT COUNT(DISTINCT agent_id) FROM sessions").fetchone()[0]
+
+    # Audit
+    m["total_actions"] = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+    m["flagged_actions"] = conn.execute("SELECT COUNT(*) FROM audit_log WHERE flagged = 1").fetchone()[0]
+    m["actions_today"] = conn.execute("SELECT COUNT(*) FROM audit_log WHERE timestamp > ?", (time.time() - 86400,)).fetchone()[0]
+
+    # Spend
+    row = conn.execute("SELECT COALESCE(SUM(cost_usd), 0) as total FROM audit_log").fetchone()
+    m["total_spend_usd"] = round(row["total"], 2)
+
+    # Secrets
+    m["total_secrets"] = conn.execute("SELECT COUNT(*) FROM secrets").fetchone()[0]
+
+    # Payments
+    m["total_payments"] = conn.execute("SELECT COUNT(*) FROM payments").fetchone()[0]
+    row = conn.execute("SELECT COALESCE(SUM(amount), 0) as total FROM payments").fetchone()
+    m["total_payment_volume_usd"] = round(row["total"], 2)
+
+    # Approvals
+    try:
+        m["pending_approvals"] = conn.execute("SELECT COUNT(*) FROM approval_requests WHERE status = 'pending'").fetchone()[0]
+        m["total_approvals"] = conn.execute("SELECT COUNT(*) FROM approval_requests").fetchone()[0]
+    except Exception:
+        m["pending_approvals"] = 0
+        m["total_approvals"] = 0
+
+    # Top tools
+    rows = conn.execute("SELECT tool, COUNT(*) as cnt FROM audit_log GROUP BY tool ORDER BY cnt DESC LIMIT 10").fetchall()
+    m["top_tools"] = {r["tool"]: r["cnt"] for r in rows}
+
+    # Top agents
+    rows = conn.execute("SELECT agent_id, COUNT(*) as cnt FROM audit_log GROUP BY agent_id ORDER BY cnt DESC LIMIT 10").fetchall()
+    m["top_agents"] = {r["agent_id"]: r["cnt"] for r in rows}
+
+    # Usage this month
+    month = time.strftime("%Y-%m")
+    rows = conn.execute("SELECT tenant_id, action_count FROM usage WHERE month = ? ORDER BY action_count DESC LIMIT 10", (month,)).fetchall()
+    m["usage_this_month"] = {r["tenant_id"][:8]: r["action_count"] for r in rows}
+
+    conn.close()
+    return jsonify(m)
+
+
 # ── Dashboard ──
 
 @app.route("/dashboard")
