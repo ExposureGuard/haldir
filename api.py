@@ -1425,6 +1425,115 @@ def mcp_server_card():
     })
 
 
+# ── Proxy Mode ──
+
+from haldir_gate.proxy import HaldirProxy
+
+proxy = HaldirProxy(
+    gate=gate, vault=vault, watch=watch,
+    approval_engine=approval_engine,
+    webhook_mgr=webhook_mgr,
+    db_path=DB_PATH,
+)
+
+
+@app.route("/v1/proxy/upstreams", methods=["POST"])
+@require_api_key
+def register_upstream():
+    """Register an upstream MCP server to proxy through Haldir."""
+    data = request.json or {}
+    name = data.get("name")
+    url = data.get("url")
+    if not name or not url:
+        return jsonify({"error": "name and url are required"}), 400
+    server = proxy.register_upstream(name, url)
+    return jsonify({
+        "registered": True,
+        "name": name,
+        "url": url,
+        "healthy": server.healthy,
+        "tools_discovered": len(server.tools),
+        "tool_names": [t["name"] for t in server.tools],
+    }), 201
+
+
+@app.route("/v1/proxy/upstreams", methods=["GET"])
+@require_api_key
+def list_upstreams():
+    """List all registered upstream servers and their status."""
+    return jsonify(proxy.get_stats())
+
+
+@app.route("/v1/proxy/tools", methods=["GET"])
+@require_api_key
+def proxy_tools():
+    """List all tools available through the proxy (from all upstreams)."""
+    tools = proxy.get_tools()
+    return jsonify({
+        "count": len(tools),
+        "tools": [{"name": t["name"], "description": t.get("description", ""),
+                    "upstream": t.get("_haldir", {}).get("upstream", "")}
+                   for t in tools],
+    })
+
+
+@app.route("/v1/proxy/call", methods=["POST"])
+@require_api_key
+def proxy_call():
+    """
+    Call a tool through the Haldir proxy.
+
+    Every call is intercepted: session validated, permissions checked,
+    policies enforced, approval verified, then forwarded to the upstream
+    MCP server. The call is logged to the audit trail.
+    """
+    data = request.json or {}
+    tool_name = data.get("tool")
+    arguments = data.get("arguments", {})
+    session_id = data.get("session_id")
+
+    if not tool_name:
+        return jsonify({"error": "tool is required"}), 400
+    if not session_id:
+        return jsonify({"error": "session_id is required"}), 400
+
+    session = gate.get_session(session_id)
+    if not session:
+        return jsonify({"error": "Invalid or expired session"}), 401
+
+    result = proxy.call_tool(tool_name, arguments, session=session)
+    status = 403 if result.get("isError") else 200
+    return jsonify(result), status
+
+
+@app.route("/v1/proxy/policies", methods=["POST"])
+@require_api_key
+def add_proxy_policy():
+    """
+    Add a governance policy to the proxy.
+
+    Types:
+    - block_tool: {"type": "block_tool", "tool": "dangerous_tool"}
+    - allow_list: {"type": "allow_list", "tools": ["safe_tool_1", "safe_tool_2"]}
+    - deny_list: {"type": "deny_list", "tools": ["blocked_1", "blocked_2"]}
+    - spend_limit: {"type": "spend_limit", "max": 100.0}
+    - rate_limit: {"type": "rate_limit", "max_per_minute": 30}
+    - time_window: {"type": "time_window", "start_hour": 9, "end_hour": 17}
+    """
+    data = request.json or {}
+    ptype = data.get("type")
+    if not ptype:
+        return jsonify({"error": "type is required"}), 400
+    proxy.add_policy(**data)
+    return jsonify({"added": True, "type": ptype}), 201
+
+
+@app.route("/v1/proxy/policies", methods=["GET"])
+@require_api_key
+def list_proxy_policies():
+    return jsonify({"policies": proxy._policies, "count": len(proxy._policies)})
+
+
 # ── Dashboard ──
 
 @app.route("/dashboard")
