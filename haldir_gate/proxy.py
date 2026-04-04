@@ -92,6 +92,7 @@ class HaldirProxy:
                 json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
                 headers={"Content-Type": "application/json"},
                 timeout=15,
+                follow_redirects=True,
             )
             data = resp.json()
             tools = data.get("result", {}).get("tools", [])
@@ -263,6 +264,7 @@ class HaldirProxy:
                 },
                 headers={"Content-Type": "application/json"},
                 timeout=30,
+                follow_redirects=True,
             )
             data = resp.json()
             return data.get("result", {"content": [{"type": "text", "text": "Empty response"}]})
