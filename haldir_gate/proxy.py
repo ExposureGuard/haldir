@@ -86,35 +86,26 @@ class HaldirProxy:
     def _discover_tools(self, server: UpstreamServer):
         """Call tools/list on an upstream server to discover its tools."""
         try:
-            payload = json.dumps({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/list",
-                "params": {},
-            }).encode()
-
-            req = urllib.request.Request(
+            import httpx
+            resp = httpx.post(
                 server.url,
-                data=payload,
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
                 headers={"Content-Type": "application/json"},
-                method="POST",
+                timeout=15,
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
-                tools = data.get("result", {}).get("tools", [])
-                server.tools = tools
-                server.healthy = True
-                server.last_check = time.time()
+            data = resp.json()
+            tools = data.get("result", {}).get("tools", [])
+            server.tools = tools
+            server.healthy = True
+            server.last_check = time.time()
 
-                # Map each tool to this upstream
-                for tool in tools:
-                    tool_name = tool["name"]
-                    # Namespace: upstream_name.tool_name
-                    namespaced = f"{server.name}.{tool_name}"
-                    self._tool_map[namespaced] = server.name
-                    # Also allow unnamespaced if no conflict
-                    if tool_name not in self._tool_map:
-                        self._tool_map[tool_name] = server.name
+            # Map each tool to this upstream
+            for tool in tools:
+                tool_name = tool["name"]
+                namespaced = f"{server.name}.{tool_name}"
+                self._tool_map[namespaced] = server.name
+                if tool_name not in self._tool_map:
+                    self._tool_map[tool_name] = server.name
 
         except Exception as e:
             server.healthy = False
@@ -253,34 +244,28 @@ class HaldirProxy:
     def _forward(self, server: UpstreamServer, tool_name: str,
                  arguments: dict) -> dict:
         """Forward a tool call to the upstream MCP server."""
-        # Strip namespace if present
         actual_tool = tool_name
         if "." in tool_name:
             actual_tool = tool_name.split(".", 1)[1]
 
-        payload = json.dumps({
-            "jsonrpc": "2.0",
-            "id": int(time.time() * 1000),
-            "method": "tools/call",
-            "params": {
-                "name": actual_tool,
-                "arguments": arguments,
-            },
-        }).encode()
-
         try:
-            req = urllib.request.Request(
+            import httpx
+            resp = httpx.post(
                 server.url,
-                data=payload,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": int(time.time() * 1000),
+                    "method": "tools/call",
+                    "params": {"name": actual_tool, "arguments": arguments},
+                },
                 headers={"Content-Type": "application/json"},
-                method="POST",
+                timeout=30,
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read())
-                return data.get("result", {"content": [{"type": "text", "text": "Empty response"}]})
-        except urllib.error.HTTPError as e:
+            data = resp.json()
+            return data.get("result", {"content": [{"type": "text", "text": "Empty response"}]})
+        except httpx.HTTPStatusError as e:
             server.total_errors += 1
-            return self._error(f"Upstream error: {e.code} {e.reason}")
+            return self._error(f"Upstream error: {e.response.status_code}")
         except Exception as e:
             server.total_errors += 1
             server.healthy = False
