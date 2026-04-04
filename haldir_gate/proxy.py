@@ -94,6 +94,8 @@ class HaldirProxy:
                 timeout=15,
                 follow_redirects=True,
             )
+            server._raw_status = resp.status_code
+            server._raw_body = resp.text[:500]
             data = resp.json()
             tools = data.get("result", {}).get("tools", [])
             server.tools = tools

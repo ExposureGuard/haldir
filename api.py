@@ -1457,6 +1457,10 @@ def register_upstream():
     }
     if hasattr(server, '_last_error'):
         resp["error"] = server._last_error
+    if hasattr(server, '_raw_status'):
+        resp["upstream_status"] = server._raw_status
+    if hasattr(server, '_raw_body'):
+        resp["upstream_body"] = server._raw_body[:300]
     return jsonify(resp), 201
 
 
