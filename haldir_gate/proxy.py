@@ -110,6 +110,9 @@ class HaldirProxy:
         except Exception as e:
             server.healthy = False
             server.last_check = time.time()
+            server._last_error = str(e)
+            import traceback
+            traceback.print_exc()
 
     def add_policy(self, policy_type: str = "", type: str = "", **kwargs):
         """

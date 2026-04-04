@@ -1447,14 +1447,17 @@ def register_upstream():
     if not name or not url:
         return jsonify({"error": "name and url are required"}), 400
     server = proxy.register_upstream(name, url)
-    return jsonify({
+    resp = {
         "registered": True,
         "name": name,
         "url": url,
         "healthy": server.healthy,
         "tools_discovered": len(server.tools),
         "tool_names": [t["name"] for t in server.tools],
-    }), 201
+    }
+    if hasattr(server, '_last_error'):
+        resp["error"] = server._last_error
+    return jsonify(resp), 201
 
 
 @app.route("/v1/proxy/upstreams", methods=["GET"])
