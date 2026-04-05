@@ -1627,6 +1627,13 @@ def robots_txt():
         return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 
+@app.route("/.well-known/security.txt")
+def security_txt():
+    p = os.path.join(os.path.dirname(__file__), ".well-known", "security.txt")
+    with open(p) as f:
+        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
 @app.route("/.well-known/ai-plugin.json")
 def ai_plugin():
     p = os.path.join(os.path.dirname(__file__), "ai-plugin.json")

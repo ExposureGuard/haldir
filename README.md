@@ -1,17 +1,28 @@
 <!-- mcp-name: io.github.ExposureGuard/haldir -->
-# Haldir
+# Haldir — The Guardian Layer for AI Agents
 
-**The guardian layer for AI agents.**
+[![Smithery Score](https://img.shields.io/badge/Smithery-98%2F100-gold)](https://smithery.ai/server/haldir/haldir)
+[![PyPI](https://img.shields.io/pypi/v/haldir)](https://pypi.org/project/haldir/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Haldir is an MCP server platform that gives AI agents identity, security, and accountability. Every agent action — browsing, paying, authenticating, calling APIs — flows through Haldir.
+**Identity, secrets, and audit for AI agents. MCP-native. Model-agnostic.**
 
-## Products
+Haldir enforces governance on every AI agent tool call — scoped sessions, encrypted secrets, spend limits, immutable audit trail, human-in-the-loop approvals, and a proxy that intercepts every MCP call before it reaches your tools.
 
-| Product | What it does | MCP Tools |
-|---|---|---|
-| **Haldir Gate** | Agent identity, auth, permissions | `authenticate`, `check_permission`, `create_session`, `revoke_session` |
-| **Haldir Vault** | Secrets, credentials, payment limits | `get_secret`, `store_secret`, `authorize_payment`, `check_budget` |
-| **Haldir Watch** | Audit logs, compliance, cost tracking | `log_action`, `get_audit_trail`, `get_spend`, `flag_anomaly` |
+> **Live now:** [haldir.xyz](https://haldir.xyz) · [API Docs](https://haldir.xyz/docs) · [OpenAPI Spec](https://haldir.xyz/openapi.json) · [Smithery](https://smithery.ai/server/haldir/haldir)
+
+## Why Haldir
+
+AI agents are calling APIs, spending money, and accessing credentials with zero oversight. Haldir is the missing layer:
+
+| Without Haldir | With Haldir |
+|---|---|
+| Agent has unlimited access | Scoped sessions with permissions |
+| Secrets in plaintext env vars | AES-encrypted vault with access control |
+| No spend limits | Per-session budget enforcement |
+| No record of what happened | Immutable audit trail |
+| No human oversight | Approval workflows with webhooks |
+| Agent talks to tools directly | Proxy intercepts and enforces policies |
 
 ## Quick Start
 
@@ -20,24 +31,90 @@ pip install haldir
 ```
 
 ```python
-from haldir import Gate, Vault, Watch
+from sdk.client import HaldirClient
 
-# Initialize
-gate = Gate(api_key="your-key")
-vault = Vault(api_key="your-key")
-watch = Watch(api_key="your-key")
+h = HaldirClient(api_key="hld_xxx", base_url="https://haldir.xyz")
 
-# Authenticate an agent
-session = gate.create_session(agent_id="my-agent", scopes=["read", "spend:50"])
+# Create a governed agent session
+session = h.create_session("my-agent", scopes=["read", "spend:50"])
 
-# Get a secret safely
-api_key = vault.get_secret("stripe_key", session=session)
+# Store secrets agents never see directly
+h.store_secret("stripe_key", "sk_live_xxx")
+
+# Retrieve with scope enforcement
+key = h.get_secret("stripe_key", session_id=session["session_id"])
+
+# Authorize payments against budget
+h.authorize_payment(session["session_id"], 29.99)
 
 # Every action is logged
-watch.log_action(session=session, tool="stripe", action="charge", amount=29.99)
+h.log_action(session["session_id"], tool="stripe", action="charge", cost_usd=29.99)
+
+# Revoke when done
+h.revoke_session(session["session_id"])
+```
+
+## Products
+
+### Gate — Agent Identity & Auth
+Scoped sessions with permissions, spend limits, and TTL. No session = no access.
+
+```bash
+curl -X POST https://haldir.xyz/v1/sessions \
+  -H "Authorization: Bearer hld_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "my-bot", "scopes": ["read", "browse", "spend:50"], "ttl": 3600}'
+```
+
+### Vault — Encrypted Secrets & Payments
+AES-encrypted storage. Agents request access; Vault checks session scope. Payment authorization with per-session budgets.
+
+```bash
+curl -X POST https://haldir.xyz/v1/secrets \
+  -H "Authorization: Bearer hld_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "api_key", "value": "sk_live_xxx", "scope_required": "read"}'
+```
+
+### Watch — Audit Trail & Compliance
+Immutable log for every action. Anomaly detection. Cost tracking. Compliance exports.
+
+```bash
+curl https://haldir.xyz/v1/audit?agent_id=my-bot \
+  -H "Authorization: Bearer hld_xxx"
+```
+
+### Proxy — Enforcement Layer
+Sits between agents and MCP servers. Every tool call is intercepted, authorized, and logged. Supports policy enforcement: allow lists, deny lists, spend limits, rate limits, time windows.
+
+```bash
+# Register an upstream MCP server
+curl -X POST https://haldir.xyz/v1/proxy/upstreams \
+  -H "Authorization: Bearer hld_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "myserver", "url": "https://my-mcp-server.com/mcp"}'
+
+# Call through the proxy — governance enforced
+curl -X POST https://haldir.xyz/v1/proxy/call \
+  -H "Authorization: Bearer hld_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "scan_domain", "arguments": {"domain": "example.com"}, "session_id": "ses_xxx"}'
+```
+
+### Approvals — Human-in-the-Loop
+Pause agent execution for human review. Webhook notifications. Approve or deny from dashboard or API.
+
+```bash
+# Require approval for spend over $100
+curl -X POST https://haldir.xyz/v1/approvals/rules \
+  -H "Authorization: Bearer hld_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "spend_over", "threshold": 100}'
 ```
 
 ## MCP Server
+
+Haldir is available as an MCP server with 10 tools for Claude, Cursor, Windsurf, and any MCP-compatible AI:
 
 ```json
 {
@@ -45,37 +122,101 @@ watch.log_action(session=session, tool="stripe", action="charge", amount=29.99)
     "haldir": {
       "command": "haldir-mcp",
       "env": {
-        "HALDIR_API_KEY": "your-key"
+        "HALDIR_API_KEY": "hld_xxx"
       }
     }
   }
 }
 ```
 
+**MCP Tools:** `createSession`, `getSession`, `revokeSession`, `checkPermission`, `storeSecret`, `getSecret`, `authorizePayment`, `logAction`, `getAuditTrail`, `getSpend`
+
+**MCP HTTP Endpoint:** `POST https://haldir.xyz/mcp`
+
 ## Architecture
 
 ```
-Agent (Claude, GPT, etc.)
+Agent (Claude, GPT, Cursor, etc.)
     │
     ▼
-┌─────────────────────────┐
-│      Haldir Gate         │  ← Identity + permissions
-│  "Can this agent do X?"  │
-└────────┬────────────────┘
-         │
-    ┌────┴────┐
-    ▼         ▼
-┌────────┐ ┌────────┐
-│ Vault  │ │ Watch  │
-│secrets │ │ audit  │
-│payments│ │ costs  │
-└────────┘ └────────┘
-    │         │
-    ▼         ▼
-  External   Storage
-  APIs       (Postgres)
+┌─────────────────────────────┐
+│       Haldir Proxy          │  ← Intercepts every tool call
+│  Policy enforcement layer   │
+└──────┬──────────┬───────────┘
+       │          │
+  ┌────▼────┐ ┌───▼────┐
+  │  Gate   │ │ Watch  │
+  │identity │ │ audit  │
+  │sessions │ │ costs  │
+  └────┬────┘ └────────┘
+       │
+  ┌────▼────┐
+  │ Vault   │
+  │secrets  │
+  │payments │
+  └────┬────┘
+       │
+       ▼
+  Upstream MCP Servers
+  (your actual tools)
 ```
+
+## API Reference
+
+Full docs at [haldir.xyz/docs](https://haldir.xyz/docs)
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/v1/keys` | POST | Create API key |
+| `/v1/sessions` | POST | Create agent session |
+| `/v1/sessions/:id` | GET | Get session info |
+| `/v1/sessions/:id` | DELETE | Revoke session |
+| `/v1/sessions/:id/check` | POST | Check permission |
+| `/v1/secrets` | POST | Store secret |
+| `/v1/secrets/:name` | GET | Retrieve secret |
+| `/v1/secrets` | GET | List secrets |
+| `/v1/secrets/:name` | DELETE | Delete secret |
+| `/v1/payments/authorize` | POST | Authorize payment |
+| `/v1/audit` | POST | Log action |
+| `/v1/audit` | GET | Query audit trail |
+| `/v1/audit/spend` | GET | Spend summary |
+| `/v1/approvals/rules` | POST | Add approval rule |
+| `/v1/approvals/request` | POST | Request approval |
+| `/v1/approvals/:id` | GET | Check approval status |
+| `/v1/approvals/:id/approve` | POST | Approve |
+| `/v1/approvals/:id/deny` | POST | Deny |
+| `/v1/approvals/pending` | GET | List pending |
+| `/v1/webhooks` | POST | Register webhook |
+| `/v1/webhooks` | GET | List webhooks |
+| `/v1/proxy/upstreams` | POST | Register upstream |
+| `/v1/proxy/tools` | GET | List proxy tools |
+| `/v1/proxy/call` | POST | Call through proxy |
+| `/v1/proxy/policies` | POST | Add policy |
+| `/v1/usage` | GET | Usage stats |
+| `/v1/metrics` | GET | Platform metrics |
+
+## Agent Discovery
+
+Haldir is discoverable through every major protocol:
+
+| URL | Protocol |
+|---|---|
+| `haldir.xyz/openapi.json` | OpenAPI 3.1 |
+| `haldir.xyz/llms.txt` | LLM-readable docs |
+| `haldir.xyz/.well-known/ai-plugin.json` | ChatGPT plugins |
+| `haldir.xyz/.well-known/mcp/server-card.json` | MCP discovery |
+| `haldir.xyz/mcp` | MCP JSON-RPC |
+| `smithery.ai/server/haldir/haldir` | Smithery registry |
+| `pypi.org/project/haldir` | PyPI |
 
 ## License
 
 MIT
+
+## Links
+
+- **Website:** [haldir.xyz](https://haldir.xyz)
+- **API Docs:** [haldir.xyz/docs](https://haldir.xyz/docs)
+- **Smithery:** [98/100](https://smithery.ai/server/haldir/haldir)
+- **PyPI:** [haldir](https://pypi.org/project/haldir/)
+- **OpenAPI:** [haldir.xyz/openapi.json](https://haldir.xyz/openapi.json)

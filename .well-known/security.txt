@@ -1,0 +1,5 @@
+Contact: mailto:sterling@getexposureguard.com
+Expires: 2027-04-01T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://haldir.xyz/.well-known/security.txt
+Policy: https://haldir.xyz/docs
