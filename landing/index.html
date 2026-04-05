@@ -248,7 +248,8 @@
         <a href="/" class="logo">Haldir</a>
         <div class="nav-r">
             <a href="#products">Products</a>
-            <a href="#waitlist">Early Access</a>
+            <a href="#try">Try it</a>
+            <a href="https://haldir.xyz/docs">Docs</a>
         </div>
     </nav>
 
@@ -258,8 +259,8 @@
         <h1>The <em>guardian</em> layer<br>for AI agents</h1>
         <p class="hero-sub">Identity, secrets, and audit for every tool call. Model-agnostic. Protocol-level.</p>
         <div class="hero-cta">
-            <a href="#waitlist" class="btn btn-w">Request access</a>
-            <a href="https://github.com/ExposureGuard/exposureguard-mcp" class="btn btn-g" target="_blank">GitHub</a>
+            <a href="#try" class="btn btn-w">Try it live</a>
+            <a href="https://haldir.xyz/docs" class="btn btn-g">API Docs</a>
         </div>
         <div class="scroll-line"></div>
     </section>
@@ -318,26 +319,148 @@
         </div>
     </div>
 
-    <!-- ── Waitlist ── -->
-    <section class="waitlist" id="waitlist">
+    <!-- ── Live demo ── -->
+    <section class="waitlist" id="try">
+        <h2>Try it. Right now.</h2>
+        <span class="waitlist-sub">No signup. One click. Live API.</span>
+        <button class="btn btn-w" id="demo-btn" onclick="runDemo()" style="margin-bottom:1.5rem;">Run live demo</button>
+        <div id="demo-output" style="display:none; max-width:540px; width:100%; text-align:left;">
+            <div class="terminal" style="margin-bottom:0;">
+                <div class="terminal-bar">
+                    <div class="terminal-dot"></div>
+                    <div class="terminal-dot"></div>
+                    <div class="terminal-dot"></div>
+                    <span class="terminal-title">live</span>
+                </div>
+                <div class="terminal-body" id="demo-term" style="min-height:120px; font-size:0.7rem; line-height:2;"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Get started ── -->
+    <section class="waitlist" id="start" style="border-top:1px solid var(--w08);">
         <h2>Ship agents. Sleep at night.</h2>
-        <span class="waitlist-sub">Launching soon</span>
-        <form class="email-row" id="wl" onsubmit="return sub(event)">
-            <input type="email" name="email" placeholder="you@company.com" required autocomplete="email">
-            <button type="submit">Join</button>
-        </form>
-        <p class="ok-msg" id="ok">You're on the list.</p>
+        <span class="waitlist-sub" style="margin-bottom:1.5rem;">Free. No credit card. Start in 30 seconds.</span>
+        <pre style="max-width:460px; width:100%; background:rgba(255,255,255,0.03); border:1px solid var(--w08); border-radius:4px; padding:1rem 1.25rem; font-family:var(--mono); font-size:0.75rem; color:var(--w50); text-align:left; margin-bottom:1.5rem; overflow-x:auto;">pip install haldir</pre>
+        <div style="display:flex; gap:1.5rem; flex-wrap:wrap; justify-content:center;">
+            <a href="https://haldir.xyz/docs" class="btn btn-w">API Docs</a>
+            <a href="https://github.com/ExposureGuard/haldir" class="btn btn-g" target="_blank">GitHub</a>
+            <a href="https://smithery.ai/server/haldir/haldir" class="btn btn-g" target="_blank">Smithery</a>
+        </div>
     </section>
 
     <footer>
+        <a href="https://haldir.xyz/docs">Docs</a>
+        <a href="https://github.com/ExposureGuard/haldir">GitHub</a>
+        <a href="https://smithery.ai/server/haldir/haldir">Smithery</a>
+        <a href="https://pypi.org/project/haldir">PyPI</a>
         <a href="https://getexposureguard.com">ExposureGuard</a>
-        <a href="https://github.com/ExposureGuard/exposureguard-mcp">GitHub</a>
-        <a href="https://smithery.ai/server/ExposureGuard/exposureguard-mcp">Smithery</a>
         <p>&copy; 2026 Haldir</p>
     </footer>
 
     <script>
-    // Waitlist
+    // Live demo
+    function runDemo() {
+        var btn = document.getElementById('demo-btn');
+        var out = document.getElementById('demo-output');
+        var term = document.getElementById('demo-term');
+        btn.textContent = 'Running...';
+        btn.disabled = true;
+        out.style.display = 'block';
+        term.innerHTML = '';
+
+        var BASE = 'https://haldir.xyz';
+        var lines = [];
+
+        function addLine(cls, text) {
+            var d = document.createElement('div');
+            d.className = cls;
+            d.textContent = text;
+            term.appendChild(d);
+            term.scrollTop = term.scrollHeight;
+        }
+
+        // Step 1: create key
+        addLine('dim', '$ creating API key...');
+        fetch(BASE + '/v1/keys', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:'demo-'+Date.now(), bootstrap_token:'haldir_boot_2026'})})
+        .then(function(r){return r.json()})
+        .then(function(d){
+            var key = d.key;
+            var H = {'Authorization':'Bearer '+key, 'Content-Type':'application/json'};
+            addLine('success', '+ Key: ' + key.substring(0,12) + '...');
+            addLine('output', '');
+
+            // Step 2: create session
+            addLine('dim', '$ creating agent session (budget: $50)...');
+            return fetch(BASE+'/v1/sessions', {method:'POST', headers:H, body:JSON.stringify({agent_id:'demo-agent', scopes:['read','execute','spend'], spend_limit:50})})
+            .then(function(r){return r.json()})
+            .then(function(s){
+                addLine('success', '+ Session: ' + s.session_id.substring(0,20) + '...');
+                addLine('success', '+ Scopes: ' + JSON.stringify(s.scopes));
+                addLine('success', '+ Budget: $' + s.spend_limit.toFixed(2));
+                addLine('output', '');
+
+                // Step 3: check permission
+                addLine('dim', '$ checking permissions...');
+                return fetch(BASE+'/v1/sessions/'+s.session_id+'/check', {method:'POST', headers:H, body:JSON.stringify({scope:'read'})})
+                .then(function(r){return r.json()})
+                .then(function(p){
+                    addLine('success', '+ read: ' + p.allowed);
+                    return fetch(BASE+'/v1/sessions/'+s.session_id+'/check', {method:'POST', headers:H, body:JSON.stringify({scope:'delete'})})
+                    .then(function(r){return r.json()})
+                    .then(function(p2){
+                        addLine('prompt', '- delete: ' + p2.allowed + ' (blocked)');
+                        addLine('output', '');
+
+                        // Step 4: store secret
+                        addLine('dim', '$ storing encrypted secret...');
+                        return fetch(BASE+'/v1/secrets', {method:'POST', headers:H, body:JSON.stringify({name:'demo_key', value:'sk_live_secret_'+Date.now()})})
+                        .then(function(r){return r.json()})
+                        .then(function(){
+                            addLine('success', '+ secret stored (AES encrypted)');
+                            addLine('output', '');
+
+                            // Step 5: authorize payment
+                            addLine('dim', '$ authorizing $29.99 payment...');
+                            return fetch(BASE+'/v1/payments/authorize', {method:'POST', headers:H, body:JSON.stringify({session_id:s.session_id, amount:29.99, description:'demo'})})
+                            .then(function(r){return r.json()})
+                            .then(function(pay){
+                                addLine('success', '+ authorized: $29.99');
+                                addLine('success', '+ remaining: $' + pay.remaining_budget.toFixed(2));
+                                addLine('output', '');
+
+                                // Step 6: log action
+                                addLine('dim', '$ logging to audit trail...');
+                                return fetch(BASE+'/v1/audit', {method:'POST', headers:H, body:JSON.stringify({session_id:s.session_id, tool:'stripe', action:'charge', cost_usd:29.99})})
+                                .then(function(r){return r.json()})
+                                .then(function(log){
+                                    addLine('success', '+ logged: ' + log.entry_id);
+                                    addLine('output', '');
+                                    addLine('dim', '$ revoking session...');
+
+                                    return fetch(BASE+'/v1/sessions/'+s.session_id, {method:'DELETE', headers:H})
+                                    .then(function(){
+                                        addLine('success', '+ session revoked');
+                                        addLine('output', '');
+                                        addLine('success', 'All operations complete. This was live.');
+                                        btn.textContent = 'Run again';
+                                        btn.disabled = false;
+                                    });
+                                });
+                            });
+                        });
+                    });
+                });
+            });
+        })
+        .catch(function(e){
+            addLine('prompt', 'Error: ' + e.message);
+            btn.textContent = 'Try again';
+            btn.disabled = false;
+        });
+    }
+
+    // Old waitlist kept for compatibility
     function sub(e) {
         e.preventDefault();
         var em = e.target.email.value;
