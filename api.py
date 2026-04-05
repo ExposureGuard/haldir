@@ -1611,6 +1611,48 @@ def dashboard():
         return f.read(), 200, {"Content-Type": "text/html"}
 
 
+# ── Agent discovery files ──
+
+@app.route("/llms.txt")
+def llms_txt():
+    p = os.path.join(os.path.dirname(__file__), "llms.txt")
+    with open(p) as f:
+        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    p = os.path.join(os.path.dirname(__file__), "robots.txt")
+    with open(p) as f:
+        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+@app.route("/.well-known/ai-plugin.json")
+def ai_plugin():
+    p = os.path.join(os.path.dirname(__file__), "ai-plugin.json")
+    with open(p) as f:
+        return f.read(), 200, {"Content-Type": "application/json"}
+
+
+@app.route("/openapi.json")
+def openapi_spec():
+    p = os.path.join(os.path.dirname(__file__), "openapi.json")
+    if os.path.exists(p):
+        with open(p) as f:
+            return f.read(), 200, {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
+    return jsonify({"error": "OpenAPI spec not yet generated"}), 404
+
+
+@app.route("/icon.svg")
+def icon_svg():
+    return '''<svg viewBox="0 0 80 92" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs><linearGradient id="sg" x1="40" y1="4" x2="40" y2="88" gradientUnits="userSpaceOnUse">
+<stop offset="0%" stop-color="#e8c84a"/><stop offset="100%" stop-color="#8a6d1b"/></linearGradient></defs>
+<path d="M40 4 L72 18 V46 C72 68 58 80 40 88 C22 80 8 68 8 46 V18 Z" fill="url(#sg)" opacity="0.15" stroke="url(#sg)" stroke-width="2"/>
+<path d="M32 44 L38 50 L52 36" stroke="#c9a33e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>''', 200, {"Content-Type": "image/svg+xml"}
+
+
 # ── Health ──
 
 @app.route("/healthz")

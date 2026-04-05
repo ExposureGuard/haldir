@@ -1,0 +1,20 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "Haldir — AI Agent Governance",
+  "name_for_model": "haldir",
+  "description_for_human": "Identity, secrets, and audit for AI agents. Scoped sessions, encrypted vault, immutable audit trail, proxy mode.",
+  "description_for_model": "Haldir is a governance layer for AI agents. Use it to create scoped sessions with permissions and spend limits (Gate), store and retrieve encrypted secrets with access control (Vault), log every action to an immutable audit trail with anomaly detection (Watch), and proxy tool calls through a policy enforcement layer. All endpoints require an API key via Authorization: Bearer header. Create a key with POST /v1/keys first.",
+  "auth": {
+    "type": "service_http",
+    "authorization_type": "bearer",
+    "verification_tokens": {}
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://haldir.xyz/openapi.json",
+    "is_user_authenticated": false
+  },
+  "logo_url": "https://haldir.xyz/icon.svg",
+  "contact_email": "sterling@getexposureguard.com",
+  "legal_info_url": "https://haldir.xyz"
+}

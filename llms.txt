@@ -1,0 +1,97 @@
+# Haldir — The Guardian Layer for AI Agents
+
+> Haldir provides identity, secrets management, and audit logging for AI agents via REST API and MCP (Model Context Protocol).
+
+## What Haldir Does
+
+Haldir sits between AI agents and the tools they use. It enforces governance on every action:
+
+- **Gate**: Scoped sessions with permissions and spend limits. Agents authenticate through Gate before accessing any tool.
+- **Vault**: Encrypted secrets (API keys, credentials, tokens). Agents request access; Vault checks session scope before returning values.
+- **Watch**: Immutable audit log for every action. Anomaly detection, cost tracking, compliance exports.
+- **Proxy**: Intercepts every MCP tool call. The agent connects to Haldir; Haldir forwards to upstream servers after enforcing policies.
+
+## API Base URL
+
+https://haldir.xyz/v1
+
+## Authentication
+
+All endpoints require an API key via header:
+- `Authorization: Bearer hld_xxx`
+- or `X-API-Key: hld_xxx`
+
+Create your first key (no auth needed for the first key):
+POST /v1/keys {"name": "my-app"}
+
+## Core Endpoints
+
+### Sessions (Gate)
+- POST /v1/sessions — Create agent session with scoped permissions and spend limit
+- GET /v1/sessions/{id} — Get session info including remaining budget
+- DELETE /v1/sessions/{id} — Revoke session immediately
+- POST /v1/sessions/{id}/check — Check if session has a permission {"scope": "read"}
+
+### Secrets (Vault)
+- POST /v1/secrets — Store encrypted secret {"name": "key", "value": "secret"}
+- GET /v1/secrets/{name} — Retrieve secret (pass X-Session-ID header for scope check)
+- GET /v1/secrets — List secret names (never values)
+- DELETE /v1/secrets/{name} — Delete secret
+
+### Payments
+- POST /v1/payments/authorize — Authorize payment against session budget {"session_id": "ses_xxx", "amount": 29.99}
+
+### Audit (Watch)
+- POST /v1/audit — Log action {"session_id": "ses_xxx", "tool": "stripe", "action": "charge", "cost_usd": 29.99}
+- GET /v1/audit — Query audit trail. Params: session_id, agent_id, tool, flagged, limit
+- GET /v1/audit/spend — Spend summary. Params: session_id, agent_id
+
+### Approvals (Human-in-the-loop)
+- POST /v1/approvals/rules — Add approval rule {"type": "spend_over", "threshold": 100}
+- POST /v1/approvals/request — Request human approval for an action
+- GET /v1/approvals/{id} — Check approval status
+- POST /v1/approvals/{id}/approve — Approve a request
+- POST /v1/approvals/{id}/deny — Deny a request
+- GET /v1/approvals/pending — List pending approvals
+
+### Proxy
+- POST /v1/proxy/upstreams — Register upstream MCP server {"name": "myserver", "url": "https://..."}
+- GET /v1/proxy/upstreams — List upstream servers and health
+- GET /v1/proxy/tools — List all tools available through proxy
+- POST /v1/proxy/call — Call tool through governance proxy {"tool": "scan_domain", "arguments": {...}, "session_id": "ses_xxx"}
+- POST /v1/proxy/policies — Add enforcement policy {"type": "block_tool", "tool": "dangerous_tool"}
+
+### Webhooks
+- POST /v1/webhooks — Register webhook {"url": "https://hooks.slack.com/xxx", "events": ["anomaly", "approval_requested"]}
+- GET /v1/webhooks — List webhooks
+
+### Usage & Metrics
+- GET /v1/usage — Usage stats for billing
+- GET /v1/metrics — Full platform metrics
+
+## MCP Server
+
+Haldir is also available as an MCP server for Claude, Cursor, Windsurf, and any MCP-compatible AI:
+
+pip install haldir
+
+MCP endpoint: POST https://haldir.xyz/mcp (JSON-RPC 2.0)
+Smithery: https://smithery.ai/server/haldir/haldir (98/100 quality score)
+PyPI: https://pypi.org/project/haldir/
+
+## Quick Start
+
+1. Create an API key: POST /v1/keys
+2. Create a session: POST /v1/sessions {"agent_id": "my-agent", "scopes": ["read", "spend:50"]}
+3. Use the session_id for all subsequent calls
+4. Every action is automatically logged to the audit trail
+5. Revoke the session when done: DELETE /v1/sessions/{id}
+
+## Links
+
+- Website: https://haldir.xyz
+- API Docs: https://haldir.xyz/docs
+- OpenAPI Spec: https://haldir.xyz/openapi.json
+- GitHub: https://github.com/ExposureGuard/haldir
+- Smithery: https://smithery.ai/server/haldir/haldir
+- PyPI: https://pypi.org/project/haldir/

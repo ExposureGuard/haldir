@@ -1,0 +1,14 @@
+User-agent: *
+Allow: /
+
+# AI agent discovery
+Sitemap: https://haldir.xyz/openapi.json
+
+# LLM-readable docs
+# https://haldir.xyz/llms.txt
+
+# MCP server card
+# https://haldir.xyz/.well-known/mcp/server-card.json
+
+# AI plugin manifest
+# https://haldir.xyz/.well-known/ai-plugin.json
