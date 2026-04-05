@@ -1,0 +1,1469 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Haldir API — Governance for AI Agents",
+    "version": "0.1.0",
+    "description": "Haldir is a security and governance layer for AI agents, composed of three modules:\n\n- **Gate** — Session-scoped permissions. Create short-lived sessions with explicit scopes (read, write, admin, spend:N) and TTLs. Every privileged operation must pass through Gate first.\n- **Vault** — Encrypted secret storage with access control. Secrets are AES-encrypted at rest and only released to sessions that hold the required scope. Vault also manages spend budgets and payment authorization.\n- **Watch** — Tamper-evident audit logging with automatic anomaly detection. Every tool call, payment, and decision is recorded. Suspicious patterns (rapid-fire actions, high-cost operations, unusual tools) are flagged in real time.\n\nAuthenticate with `Authorization: Bearer hld_...` or `X-API-Key: hld_...`. Create your first key via `POST /v1/keys` (no auth required for the bootstrap key).",
+    "contact": {
+      "name": "0xN0rD",
+      "url": "https://haldir.xyz"
+    },
+    "license": {
+      "name": "AGPL-3.0",
+      "url": "https://www.gnu.org/licenses/agpl-3.0.html"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://haldir.xyz",
+      "description": "Production"
+    }
+  ],
+  "security": [
+    { "BearerAuth": [] },
+    { "ApiKeyAuth": [] }
+  ],
+  "tags": [
+    { "name": "gate", "description": "Session management and permission checks" },
+    { "name": "vault", "description": "Encrypted secret storage and retrieval" },
+    { "name": "watch", "description": "Audit logging and spend tracking" },
+    { "name": "proxy", "description": "Governance proxy for upstream MCP servers" },
+    { "name": "audit", "description": "Query audit trail and spend summaries" },
+    { "name": "approvals", "description": "Human-in-the-loop approval workflows" },
+    { "name": "webhooks", "description": "Webhook registration for real-time alerts" }
+  ],
+  "paths": {
+    "/v1/keys": {
+      "post": {
+        "operationId": "createApiKey",
+        "summary": "Create an API key",
+        "description": "Create a new API key. The very first key requires no authentication. Subsequent keys require either a valid API key or the HALDIR_BOOTSTRAP_TOKEN.",
+        "tags": ["gate"],
+        "security": [
+          {},
+          { "BearerAuth": [] },
+          { "ApiKeyAuth": [] }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "default": "default",
+                    "description": "Human-readable name for this key"
+                  },
+                  "tier": {
+                    "type": "string",
+                    "enum": ["free", "pro", "enterprise"],
+                    "default": "free",
+                    "description": "Pricing tier (affects rate limits)"
+                  },
+                  "bootstrap_token": {
+                    "type": "string",
+                    "description": "HALDIR_BOOTSTRAP_TOKEN value, required when creating additional keys without an existing API key"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "API key created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "key": { "type": "string", "description": "Full API key (shown only once)" },
+                    "prefix": { "type": "string", "description": "Key prefix for identification" },
+                    "name": { "type": "string" },
+                    "tier": { "type": "string" },
+                    "message": { "type": "string" }
+                  },
+                  "required": ["key", "prefix", "name", "tier", "message"]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/v1/sessions": {
+      "post": {
+        "operationId": "createSession",
+        "summary": "Create an agent session",
+        "description": "Create a scoped session for an AI agent with explicit permissions, TTL, and optional spend budget.",
+        "tags": ["gate"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["agent_id"],
+                "properties": {
+                  "agent_id": { "type": "string", "description": "Unique agent identifier" },
+                  "scopes": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": ["read", "browse"],
+                    "description": "Permission scopes to grant"
+                  },
+                  "ttl": {
+                    "type": "integer",
+                    "default": 3600,
+                    "description": "Session time-to-live in seconds"
+                  },
+                  "spend_limit": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Maximum USD spend for this session"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SessionCreated" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/sessions/{session_id}": {
+      "get": {
+        "operationId": "getSession",
+        "summary": "Get session info",
+        "description": "Retrieve the current state of a session including scopes, spend, remaining budget, and validity.",
+        "tags": ["gate"],
+        "parameters": [
+          { "$ref": "#/components/parameters/SessionIdPath" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session details",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SessionDetail" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      },
+      "delete": {
+        "operationId": "revokeSession",
+        "summary": "Revoke a session",
+        "description": "Immediately revoke a session, permanently disabling all permissions.",
+        "tags": ["gate"],
+        "parameters": [
+          { "$ref": "#/components/parameters/SessionIdPath" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "revoked": { "type": "boolean", "const": true },
+                    "session_id": { "type": "string" }
+                  },
+                  "required": ["revoked", "session_id"]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/sessions/{session_id}/check": {
+      "post": {
+        "operationId": "checkPermission",
+        "summary": "Check a session permission",
+        "description": "Check whether a session holds a specific scope. Use before sensitive operations to avoid 403 errors.",
+        "tags": ["gate"],
+        "parameters": [
+          { "$ref": "#/components/parameters/SessionIdPath" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["scope"],
+                "properties": {
+                  "scope": { "type": "string", "description": "The scope to check (e.g. read, write, admin)" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Permission check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allowed": { "type": "boolean" },
+                    "session_id": { "type": "string" },
+                    "scope": { "type": "string" }
+                  },
+                  "required": ["allowed", "session_id", "scope"]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/secrets": {
+      "post": {
+        "operationId": "storeSecret",
+        "summary": "Store an encrypted secret",
+        "description": "Store a secret in the Vault, encrypted at rest with AES. Optionally require a specific scope for retrieval.",
+        "tags": ["vault"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "value"],
+                "properties": {
+                  "name": { "type": "string", "description": "Unique secret name" },
+                  "value": { "type": "string", "description": "Secret value to encrypt" },
+                  "scope_required": {
+                    "type": "string",
+                    "default": "read",
+                    "description": "Minimum scope a session must hold to read this secret"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Secret stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stored": { "type": "boolean", "const": true },
+                    "name": { "type": "string" }
+                  },
+                  "required": ["stored", "name"]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      },
+      "get": {
+        "operationId": "listSecrets",
+        "summary": "List secret names",
+        "description": "List all stored secret names (never values).",
+        "tags": ["vault"],
+        "responses": {
+          "200": {
+            "description": "List of secret names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "secrets": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "count": { "type": "integer" }
+                  },
+                  "required": ["secrets", "count"]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/secrets/{name}": {
+      "get": {
+        "operationId": "getSecret",
+        "summary": "Retrieve a secret",
+        "description": "Retrieve a decrypted secret. Pass X-Session-ID header or session_id query param for scope-based access control.",
+        "tags": ["vault"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Secret name"
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "Session ID for scope enforcement"
+          },
+          {
+            "name": "X-Session-ID",
+            "in": "header",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "Session ID for scope enforcement (alternative to query param)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "value": { "type": "string" }
+                  },
+                  "required": ["name", "value"]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSecret",
+        "summary": "Delete a secret",
+        "description": "Permanently delete a secret from the Vault.",
+        "tags": ["vault"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Secret name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": { "type": "boolean", "const": true },
+                    "name": { "type": "string" }
+                  },
+                  "required": ["deleted", "name"]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/payments/authorize": {
+      "post": {
+        "operationId": "authorizePayment",
+        "summary": "Authorize a payment",
+        "description": "Authorize a payment against a session's spend budget. Denied if insufficient budget remains.",
+        "tags": ["vault"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["session_id", "amount"],
+                "properties": {
+                  "session_id": { "type": "string" },
+                  "amount": { "type": "number", "description": "Amount to authorize" },
+                  "currency": { "type": "string", "default": "USD", "description": "ISO 4217 currency code" },
+                  "description": { "type": "string", "default": "", "description": "What the payment is for" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payment authorized",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "Payment denied (budget exceeded)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentResult" }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/audit": {
+      "post": {
+        "operationId": "logAction",
+        "summary": "Log an agent action",
+        "description": "Log an action to the tamper-evident audit trail. Watch automatically flags anomalous patterns.",
+        "tags": ["watch", "audit"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["session_id", "action"],
+                "properties": {
+                  "session_id": { "type": "string" },
+                  "tool": { "type": "string", "default": "", "description": "Tool or service name" },
+                  "action": { "type": "string", "description": "Description of the action" },
+                  "details": { "type": "string", "nullable": true, "description": "Additional context" },
+                  "cost_usd": { "type": "number", "default": 0, "description": "Cost in USD" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Action logged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "logged": { "type": "boolean", "const": true },
+                    "entry_id": { "type": "string" },
+                    "flagged": { "type": "boolean", "description": "Whether the action was flagged as anomalous" },
+                    "flag_reason": { "type": "string", "nullable": true }
+                  },
+                  "required": ["logged", "entry_id", "flagged", "flag_reason"]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      },
+      "get": {
+        "operationId": "getAuditTrail",
+        "summary": "Query the audit trail",
+        "description": "Retrieve audit log entries with optional filters by session, agent, tool, or flagged status.",
+        "tags": ["watch", "audit"],
+        "parameters": [
+          { "name": "session_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by session" },
+          { "name": "agent_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by agent" },
+          { "name": "tool", "in": "query", "schema": { "type": "string" }, "description": "Filter by tool name" },
+          { "name": "flagged", "in": "query", "schema": { "type": "string", "enum": ["true", "false"] }, "description": "Only flagged entries" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 100 }, "description": "Max entries to return" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Audit entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": { "type": "integer" },
+                    "entries": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/AuditEntry" }
+                    }
+                  },
+                  "required": ["count", "entries"]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/audit/spend": {
+      "get": {
+        "operationId": "getSpend",
+        "summary": "Get spend summary",
+        "description": "Get aggregated spend data, optionally filtered by session or agent.",
+        "tags": ["watch", "audit"],
+        "parameters": [
+          { "name": "session_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by session" },
+          { "name": "agent_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by agent" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Spend summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Spend breakdown returned by Watch.get_spend()",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/usage": {
+      "get": {
+        "operationId": "getUsage",
+        "summary": "Get usage stats",
+        "description": "Get API usage count for the current tenant, optionally for a specific month.",
+        "tags": ["watch"],
+        "parameters": [
+          { "name": "month", "in": "query", "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}$" }, "description": "Month in YYYY-MM format (defaults to current month)" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tenant_id": { "type": "string" },
+                    "month": { "type": "string" },
+                    "action_count": { "type": "integer" },
+                    "tier": { "type": "string" }
+                  },
+                  "required": ["tenant_id", "month", "action_count"]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/approvals/rules": {
+      "post": {
+        "operationId": "addApprovalRule",
+        "summary": "Add an approval rule",
+        "description": "Add a rule that triggers human-in-the-loop approval for matching actions.",
+        "tags": ["approvals"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": ["spend_over", "tool_blocked", "destructive", "all"],
+                    "description": "Rule type"
+                  },
+                  "threshold": { "type": "number", "default": 0, "description": "Threshold for spend_over rules (USD)" },
+                  "tools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "nullable": true,
+                    "description": "Tool names for tool_blocked rules"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Rule added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "added": { "type": "boolean", "const": true },
+                    "type": { "type": "string" }
+                  },
+                  "required": ["added", "type"]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/approvals/request": {
+      "post": {
+        "operationId": "requestApproval",
+        "summary": "Request human approval",
+        "description": "Submit an action for human approval. The agent polls the approval status until it is approved or denied.",
+        "tags": ["approvals"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["session_id"],
+                "properties": {
+                  "session_id": { "type": "string" },
+                  "tool": { "type": "string", "default": "" },
+                  "action": { "type": "string", "default": "" },
+                  "amount": { "type": "number", "default": 0 },
+                  "reason": { "type": "string", "default": "" },
+                  "details": { "type": "string", "nullable": true },
+                  "ttl": { "type": "integer", "default": 3600, "description": "Time before the request expires (seconds)" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Approval requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "request_id": { "type": "string" },
+                    "status": { "type": "string" },
+                    "expires_at": { "type": "number" }
+                  },
+                  "required": ["request_id", "status", "expires_at"]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/approvals/{request_id}": {
+      "get": {
+        "operationId": "checkApproval",
+        "summary": "Check approval status",
+        "description": "Poll the status of a pending approval request.",
+        "tags": ["approvals"],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approval status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ApprovalDetail" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/approvals/{request_id}/approve": {
+      "post": {
+        "operationId": "approveRequest",
+        "summary": "Approve a pending request",
+        "description": "Approve a pending approval request, allowing the agent to proceed.",
+        "tags": ["approvals"],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "decided_by": { "type": "string", "default": "", "description": "Who approved (e.g. human operator name)" },
+                  "note": { "type": "string", "default": "", "description": "Optional note on the decision" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "approved": { "type": "boolean", "const": true },
+                    "request_id": { "type": "string" }
+                  },
+                  "required": ["approved", "request_id"]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/approvals/{request_id}/deny": {
+      "post": {
+        "operationId": "denyRequest",
+        "summary": "Deny a pending request",
+        "description": "Deny a pending approval request, blocking the agent's action.",
+        "tags": ["approvals"],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "decided_by": { "type": "string", "default": "" },
+                  "note": { "type": "string", "default": "" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "denied": { "type": "boolean", "const": true },
+                    "request_id": { "type": "string" }
+                  },
+                  "required": ["denied", "request_id"]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/approvals/pending": {
+      "get": {
+        "operationId": "listPendingApprovals",
+        "summary": "List pending approvals",
+        "description": "List all approval requests that are still pending a decision.",
+        "tags": ["approvals"],
+        "parameters": [
+          { "name": "agent_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by agent" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pending approval requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": { "type": "integer" },
+                    "requests": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/PendingApproval" }
+                    }
+                  },
+                  "required": ["count", "requests"]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/webhooks": {
+      "post": {
+        "operationId": "registerWebhook",
+        "summary": "Register a webhook",
+        "description": "Register a URL to receive real-time event notifications (anomaly, approval_requested, budget_exhausted).",
+        "tags": ["webhooks"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                  "url": { "type": "string", "format": "uri", "description": "Webhook endpoint URL" },
+                  "name": { "type": "string", "default": "", "description": "Human-readable name" },
+                  "events": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["all", "anomaly", "approval_requested", "budget_exhausted"] },
+                    "nullable": true,
+                    "description": "Events to subscribe to (defaults to all)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Webhook registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "registered": { "type": "boolean", "const": true },
+                    "url": { "type": "string" },
+                    "events": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "nullable": true
+                    }
+                  },
+                  "required": ["registered", "url", "events"]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      },
+      "get": {
+        "operationId": "listWebhooks",
+        "summary": "List registered webhooks",
+        "description": "List all webhooks registered for this account.",
+        "tags": ["webhooks"],
+        "responses": {
+          "200": {
+            "description": "Webhook list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "webhooks": { "type": "array", "items": { "type": "object" } }
+                  },
+                  "required": ["webhooks"]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/proxy/upstreams": {
+      "post": {
+        "operationId": "registerUpstream",
+        "summary": "Register an upstream MCP server",
+        "description": "Register an upstream MCP server to proxy through Haldir. Haldir discovers the server's tools automatically.",
+        "tags": ["proxy"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "url"],
+                "properties": {
+                  "name": { "type": "string", "description": "Unique name for this upstream" },
+                  "url": { "type": "string", "format": "uri", "description": "MCP server URL" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Upstream registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "registered": { "type": "boolean", "const": true },
+                    "name": { "type": "string" },
+                    "url": { "type": "string" },
+                    "healthy": { "type": "boolean" },
+                    "tools_discovered": { "type": "integer" },
+                    "tool_names": { "type": "array", "items": { "type": "string" } },
+                    "error": { "type": "string", "description": "Present if upstream had errors during discovery" },
+                    "upstream_status": { "type": "integer", "description": "HTTP status from upstream (debug)" },
+                    "upstream_body": { "type": "string", "description": "Truncated response body from upstream (debug)" }
+                  },
+                  "required": ["registered", "name", "url", "healthy", "tools_discovered", "tool_names"]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      },
+      "get": {
+        "operationId": "listUpstreams",
+        "summary": "List upstream servers",
+        "description": "List all registered upstream MCP servers and their health status.",
+        "tags": ["proxy"],
+        "responses": {
+          "200": {
+            "description": "Upstream server stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Stats object from HaldirProxy.get_stats()",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/proxy/tools": {
+      "get": {
+        "operationId": "listProxyTools",
+        "summary": "List all proxied tools",
+        "description": "List all tools available through the proxy, aggregated from all registered upstreams.",
+        "tags": ["proxy"],
+        "responses": {
+          "200": {
+            "description": "Proxied tools",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": { "type": "integer" },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": { "type": "string" },
+                          "description": { "type": "string" },
+                          "upstream": { "type": "string" }
+                        },
+                        "required": ["name", "description", "upstream"]
+                      }
+                    }
+                  },
+                  "required": ["count", "tools"]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/proxy/call": {
+      "post": {
+        "operationId": "proxyCall",
+        "summary": "Call a tool through the proxy",
+        "description": "Call a tool on an upstream MCP server through Haldir's governance layer. The session is validated, permissions checked, policies enforced, and the call is logged to the audit trail.",
+        "tags": ["proxy"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["tool", "session_id"],
+                "properties": {
+                  "tool": { "type": "string", "description": "Tool name to call" },
+                  "arguments": { "type": "object", "additionalProperties": true, "description": "Arguments to pass to the tool" },
+                  "session_id": { "type": "string", "description": "Active session ID" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tool call result from upstream",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "MCP tool result with content array",
+                  "properties": {
+                    "content": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "type": { "type": "string" },
+                          "text": { "type": "string" }
+                        }
+                      }
+                    },
+                    "isError": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "Blocked by policy or insufficient permissions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "isError": { "type": "boolean", "const": true },
+                    "content": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "type": { "type": "string" },
+                          "text": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/proxy/policies": {
+      "post": {
+        "operationId": "addProxyPolicy",
+        "summary": "Add a governance policy",
+        "description": "Add a policy to the proxy that controls which tools agents can use. Supported types: block_tool, allow_list, deny_list, spend_limit, rate_limit, time_window.",
+        "tags": ["proxy"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": ["block_tool", "allow_list", "deny_list", "spend_limit", "rate_limit", "time_window"],
+                    "description": "Policy type"
+                  },
+                  "tool": { "type": "string", "description": "Tool name (for block_tool)" },
+                  "tools": { "type": "array", "items": { "type": "string" }, "description": "Tool list (for allow_list / deny_list)" },
+                  "max": { "type": "number", "description": "Max USD (spend_limit)" },
+                  "max_per_minute": { "type": "integer", "description": "Max calls per minute (rate_limit)" },
+                  "start_hour": { "type": "integer", "description": "Start hour UTC (time_window)" },
+                  "end_hour": { "type": "integer", "description": "End hour UTC (time_window)" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Policy added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "added": { "type": "boolean", "const": true },
+                    "type": { "type": "string" }
+                  },
+                  "required": ["added", "type"]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      },
+      "get": {
+        "operationId": "listProxyPolicies",
+        "summary": "List governance policies",
+        "description": "List all active proxy governance policies.",
+        "tags": ["proxy"],
+        "responses": {
+          "200": {
+            "description": "Active policies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "policies": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+                    "count": { "type": "integer" }
+                  },
+                  "required": ["policies", "count"]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/v1/metrics": {
+      "get": {
+        "operationId": "getMetrics",
+        "summary": "Get platform metrics",
+        "description": "Full platform metrics including API keys, sessions, actions, spend, secrets, payments, approvals, and top tools/agents.",
+        "tags": ["watch", "audit"],
+        "responses": {
+          "200": {
+            "description": "Platform metrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total_api_keys": { "type": "integer" },
+                    "total_sessions": { "type": "integer" },
+                    "active_sessions": { "type": "integer" },
+                    "unique_agents": { "type": "integer" },
+                    "total_actions": { "type": "integer" },
+                    "flagged_actions": { "type": "integer" },
+                    "actions_today": { "type": "integer" },
+                    "total_spend_usd": { "type": "number" },
+                    "total_secrets": { "type": "integer" },
+                    "total_payments": { "type": "integer" },
+                    "total_payment_volume_usd": { "type": "number" },
+                    "pending_approvals": { "type": "integer" },
+                    "total_approvals": { "type": "integer" },
+                    "top_tools": { "type": "object", "additionalProperties": { "type": "integer" } },
+                    "top_agents": { "type": "object", "additionalProperties": { "type": "integer" } },
+                    "usage_this_month": { "type": "object", "additionalProperties": { "type": "integer" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthCheck",
+        "summary": "Health check",
+        "description": "Returns service status. No authentication required.",
+        "tags": ["gate"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "const": "ok" },
+                    "service": { "type": "string", "const": "haldir" },
+                    "version": { "type": "string" }
+                  },
+                  "required": ["status", "service", "version"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1": {
+      "get": {
+        "operationId": "apiIndex",
+        "summary": "API index",
+        "description": "Returns service info and available endpoint groups. No authentication required.",
+        "tags": ["gate"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "API index",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "service": { "type": "string" },
+                    "version": { "type": "string" },
+                    "docs": { "type": "string", "format": "uri" },
+                    "endpoints": {
+                      "type": "object",
+                      "additionalProperties": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Pass your Haldir API key as a Bearer token: `Authorization: Bearer hld_...`"
+      },
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Pass your Haldir API key via the X-API-Key header"
+      }
+    },
+    "parameters": {
+      "SessionIdPath": {
+        "name": "session_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" },
+        "description": "Session ID"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "description": "Human-readable error message" }
+        },
+        "required": ["error"]
+      },
+      "RateLimitError": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "limit": { "type": "integer", "description": "Requests allowed per hour" },
+          "tier": { "type": "string" },
+          "retry_after": { "type": "integer", "description": "Seconds until the rate limit window resets" }
+        },
+        "required": ["error", "limit", "tier", "retry_after"]
+      },
+      "SessionCreated": {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "agent_id": { "type": "string" },
+          "scopes": { "type": "array", "items": { "type": "string" } },
+          "spend_limit": { "type": "number", "nullable": true },
+          "expires_at": { "type": "number", "description": "Unix timestamp" },
+          "ttl": { "type": "integer" }
+        },
+        "required": ["session_id", "agent_id", "scopes", "spend_limit", "expires_at", "ttl"]
+      },
+      "SessionDetail": {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "agent_id": { "type": "string" },
+          "scopes": { "type": "array", "items": { "type": "string" } },
+          "spend_limit": { "type": "number", "nullable": true },
+          "spent": { "type": "number" },
+          "remaining_budget": { "type": "number", "nullable": true },
+          "is_valid": { "type": "boolean" },
+          "created_at": { "type": "number", "description": "Unix timestamp" },
+          "expires_at": { "type": "number", "description": "Unix timestamp" }
+        },
+        "required": ["session_id", "agent_id", "scopes", "spend_limit", "spent", "remaining_budget", "is_valid", "created_at", "expires_at"]
+      },
+      "PaymentResult": {
+        "type": "object",
+        "properties": {
+          "authorized": { "type": "boolean" },
+          "amount": { "type": "number" },
+          "currency": { "type": "string" },
+          "remaining_budget": { "type": "number", "nullable": true },
+          "reason": { "type": "string" }
+        },
+        "required": ["authorized"]
+      },
+      "AuditEntry": {
+        "type": "object",
+        "properties": {
+          "entry_id": { "type": "string" },
+          "session_id": { "type": "string" },
+          "agent_id": { "type": "string" },
+          "tool": { "type": "string" },
+          "action": { "type": "string" },
+          "cost_usd": { "type": "number" },
+          "flagged": { "type": "boolean" },
+          "flag_reason": { "type": "string", "nullable": true },
+          "timestamp": { "type": "number", "description": "Unix timestamp" },
+          "details": { "type": "string", "nullable": true }
+        },
+        "required": ["entry_id", "session_id", "agent_id", "tool", "action", "cost_usd", "flagged", "flag_reason", "timestamp"]
+      },
+      "ApprovalDetail": {
+        "type": "object",
+        "properties": {
+          "request_id": { "type": "string" },
+          "status": { "type": "string", "description": "pending, approved, or denied" },
+          "agent_id": { "type": "string" },
+          "tool": { "type": "string" },
+          "action": { "type": "string" },
+          "amount": { "type": "number" },
+          "reason": { "type": "string" },
+          "decided_by": { "type": "string", "nullable": true },
+          "decision_note": { "type": "string", "nullable": true }
+        },
+        "required": ["request_id", "status", "agent_id", "tool", "action", "amount", "reason"]
+      },
+      "PendingApproval": {
+        "type": "object",
+        "properties": {
+          "request_id": { "type": "string" },
+          "agent_id": { "type": "string" },
+          "tool": { "type": "string" },
+          "action": { "type": "string" },
+          "amount": { "type": "number" },
+          "reason": { "type": "string" },
+          "created_at": { "type": "number", "description": "Unix timestamp" }
+        },
+        "required": ["request_id", "agent_id", "tool", "action", "amount", "reason", "created_at"]
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Missing or invalid request parameters",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing, invalid, or revoked API key",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient scope or permission denied",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Rate limit exceeded (per-tier hourly limits: free=100, pro=5000, enterprise=50000)",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/RateLimitError" }
+          }
+        }
+      }
+    }
+  }
+}
