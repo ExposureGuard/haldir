@@ -19,6 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
+haldir = "cli:main"
 haldir-mcp = "mcp_server:main"
 
 [project.urls]
@@ -28,7 +29,7 @@ Documentation = "https://haldir.xyz"
 
 [tool.hatch.build.targets.wheel]
 packages = ["haldir_gate", "haldir_vault", "haldir_watch", "sdk"]
-include = ["mcp_server.py", "haldir_db.py"]
+include = ["mcp_server.py", "haldir_db.py", "cli.py"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -38,6 +39,7 @@ include = [
     "sdk/**",
     "mcp_server.py",
     "haldir_db.py",
+    "cli.py",
     "README.md",
     "pyproject.toml",
 ]

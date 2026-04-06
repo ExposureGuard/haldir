@@ -309,6 +309,19 @@ _SCHEMA = """
     );
 
     CREATE INDEX IF NOT EXISTS idx_usage_tenant ON usage(tenant_id);
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+        tenant_id TEXT PRIMARY KEY,
+        stripe_customer_id TEXT NOT NULL DEFAULT '',
+        stripe_subscription_id TEXT NOT NULL DEFAULT '',
+        tier TEXT NOT NULL DEFAULT 'free',
+        status TEXT NOT NULL DEFAULT 'active',
+        current_period_end REAL NOT NULL DEFAULT 0.0,
+        created_at REAL NOT NULL DEFAULT 0.0,
+        updated_at REAL NOT NULL DEFAULT 0.0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_subs_stripe_cust ON subscriptions(stripe_customer_id);
 """
 
 # SQLite version uses BLOB instead of BYTEA and INTEGER PRIMARY KEY AUTOINCREMENT instead of SERIAL

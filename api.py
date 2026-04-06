@@ -31,7 +31,7 @@ import secrets
 import hashlib
 from functools import wraps
 
-from flask import Flask, request, jsonify, abort
+from flask import Flask, request, jsonify, abort, redirect
 
 from haldir_db import init_db, get_db
 from haldir_gate.gate import Gate
@@ -57,6 +57,19 @@ watch = Watch(db_path=DB_PATH)
 if not ENCRYPTION_KEY:
     print(f"[!] No HALDIR_ENCRYPTION_KEY set. Generated: {vault.encryption_key.decode()}")
     print(f"[!] Set this as an environment variable to persist secrets across restarts.")
+
+# ── Billing tier limits ──
+
+TIER_LIMITS = {
+    "free":       {"agents": 1,    "actions_per_month": 1_000},
+    "pro":        {"agents": 10,   "actions_per_month": 50_000},
+    "enterprise": {"agents": 999_999, "actions_per_month": 999_999_999},
+}
+
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PRICE_PRO = os.environ.get("STRIPE_PRICE_PRO", "")
+STRIPE_PRICE_ENTERPRISE = os.environ.get("STRIPE_PRICE_ENTERPRISE", "")
 
 
 # ── API Key auth ──
@@ -94,6 +107,42 @@ def require_api_key(f):
             request.tenant_id = key_hash[:16]
         return f(*args, **kwargs)
     return decorated
+
+
+def _get_tenant_tier(tenant_id):
+    """Get the effective billing tier for a tenant from subscriptions table."""
+    conn = get_db(DB_PATH)
+    row = conn.execute(
+        "SELECT tier, status FROM subscriptions WHERE tenant_id = ?",
+        (tenant_id,)
+    ).fetchone()
+    conn.close()
+    if row and row["status"] == "active":
+        return row["tier"]
+    return "free"
+
+
+def _get_tenant_agent_count(tenant_id):
+    """Count distinct agents with active sessions for a tenant."""
+    conn = get_db(DB_PATH)
+    count = conn.execute(
+        "SELECT COUNT(DISTINCT agent_id) FROM sessions WHERE tenant_id = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?)",
+        (tenant_id, time.time())
+    ).fetchone()[0]
+    conn.close()
+    return count
+
+
+def _get_tenant_monthly_actions(tenant_id):
+    """Get action count for current month."""
+    month = time.strftime("%Y-%m")
+    conn = get_db(DB_PATH)
+    row = conn.execute(
+        "SELECT action_count FROM usage WHERE tenant_id = ? AND month = ?",
+        (tenant_id, month)
+    ).fetchone()
+    conn.close()
+    return row["action_count"] if row else 0
 
 
 # ── Bootstrap: create first API key ──
@@ -156,6 +205,28 @@ def create_session():
     agent_id = data.get("agent_id")
     if not agent_id:
         return jsonify({"error": "agent_id is required"}), 400
+
+    # Enforce agent limit per billing tier
+    tenant = getattr(request, "tenant_id", "")
+    tier = _get_tenant_tier(tenant)
+    limits = TIER_LIMITS.get(tier, TIER_LIMITS["free"])
+    current_agents = _get_tenant_agent_count(tenant)
+
+    # Only count as new agent if this agent_id doesn't already have an active session
+    conn = get_db(DB_PATH)
+    existing = conn.execute(
+        "SELECT COUNT(*) FROM sessions WHERE tenant_id = ? AND agent_id = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?)",
+        (tenant, agent_id, time.time())
+    ).fetchone()[0]
+    conn.close()
+    if existing == 0 and current_agents >= limits["agents"]:
+        return jsonify({
+            "error": "Agent limit reached for your tier",
+            "tier": tier,
+            "limit": limits["agents"],
+            "current": current_agents,
+            "upgrade": "https://haldir.xyz/pricing",
+        }), 403
 
     scopes = data.get("scopes", ["read", "browse"])
     ttl = data.get("ttl", 3600)
@@ -580,6 +651,26 @@ def rate_limit():
                 "tier": tier,
                 "retry_after": int(entry["start"] + window - now),
             }), 429
+
+        # Monthly action quota check (billing tier)
+        tenant = None
+        conn = get_db(DB_PATH)
+        row = conn.execute("SELECT tenant_id FROM api_keys WHERE key_hash = ? AND revoked = 0", (key_hash,)).fetchone()
+        conn.close()
+        if row:
+            tenant = row["tenant_id"]
+        if tenant:
+            billing_tier = _get_tenant_tier(tenant)
+            tier_limits = TIER_LIMITS.get(billing_tier, TIER_LIMITS["free"])
+            monthly_actions = _get_tenant_monthly_actions(tenant)
+            if monthly_actions >= tier_limits["actions_per_month"]:
+                return jsonify({
+                    "error": "Monthly action quota exceeded",
+                    "tier": billing_tier,
+                    "limit": tier_limits["actions_per_month"],
+                    "used": monthly_actions,
+                    "upgrade": "https://haldir.xyz/pricing",
+                }), 429
 
 
 # ── API Docs ──
@@ -1600,6 +1691,483 @@ def metrics():
 
     conn.close()
     return jsonify(m)
+
+
+# ── Quickstart ──
+
+@app.route("/quickstart")
+def quickstart_page():
+    qs_path = os.path.join(os.path.dirname(__file__), "quickstart.html")
+    if os.path.exists(qs_path):
+        with open(qs_path) as f:
+            return f.read(), 200, {"Content-Type": "text/html"}
+    return redirect("/docs")
+
+
+# ── Billing (Stripe) ──
+
+@app.route("/pricing")
+def pricing_page():
+    """Pricing page with tier comparison and checkout buttons."""
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pricing — Haldir</title>
+<meta name="description" content="Simple usage-based pricing for AI agent security. Free tier included.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+    --gold: #b8973a;
+    --gold-soft: rgba(184,151,58,0.5);
+    --gold-glow: rgba(184,151,58,0.08);
+    --w: #e0ddd5;
+    --w80: rgba(224,221,213,0.8);
+    --w50: rgba(224,221,213,0.5);
+    --w20: rgba(224,221,213,0.2);
+    --w08: rgba(224,221,213,0.08);
+    --w04: rgba(224,221,213,0.04);
+    --bg: #050505;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Inter', -apple-system, sans-serif;
+}
+html { scroll-behavior: smooth; }
+body { background: var(--bg); color: var(--w); font-family: var(--sans); overflow-x: hidden; }
+
+/* Nav */
+nav {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 1.5rem 3rem; border-bottom: 1px solid var(--w08);
+}
+.logo {
+    font-family: var(--mono); font-size: 0.8rem; font-weight: 400;
+    letter-spacing: 4px; text-transform: uppercase;
+    color: var(--w); text-decoration: none;
+}
+.nav-r { display: flex; gap: 2.5rem; align-items: center; }
+.nav-r a {
+    font-family: var(--mono); font-size: 0.65rem; font-weight: 300;
+    letter-spacing: 2px; text-transform: uppercase;
+    color: var(--w50); text-decoration: none; transition: color 0.3s;
+}
+.nav-r a:hover { color: var(--w); }
+
+/* Hero */
+.pricing-hero {
+    text-align: center; padding: 6rem 2rem 3rem;
+    position: relative;
+}
+.pricing-hero::before {
+    content: ''; position: absolute; top: 30%; left: 50%;
+    width: 500px; height: 500px; transform: translate(-50%, -50%);
+    background: radial-gradient(circle, var(--gold-glow) 0%, transparent 70%);
+    pointer-events: none;
+}
+.pricing-hero h1 {
+    font-weight: 200; font-size: clamp(2rem, 4vw, 3rem);
+    letter-spacing: -1px; margin-bottom: 1rem;
+}
+.pricing-hero h1 em { font-style: normal; color: var(--gold); }
+.pricing-hero p {
+    font-size: 0.9rem; font-weight: 300; color: var(--w50);
+    max-width: 450px; margin: 0 auto; line-height: 1.8;
+}
+
+/* Pricing grid */
+.pricing-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 1px; max-width: 960px; margin: 0 auto 4rem;
+    padding: 0 2rem;
+    background: var(--w08); border: 1px solid var(--w08);
+}
+.tier-card {
+    background: var(--bg); padding: 3rem 2.5rem;
+    display: flex; flex-direction: column; position: relative;
+}
+.tier-card.featured {
+    background: rgba(184,151,58,0.03);
+    border-top: 2px solid var(--gold);
+}
+.tier-badge {
+    position: absolute; top: 1rem; right: 1.5rem;
+    font-family: var(--mono); font-size: 0.55rem; font-weight: 400;
+    letter-spacing: 2px; text-transform: uppercase;
+    color: var(--gold); background: rgba(184,151,58,0.1);
+    padding: 0.25rem 0.6rem; border-radius: 3px;
+}
+.current-badge {
+    position: absolute; top: 1rem; right: 1.5rem;
+    font-family: var(--mono); font-size: 0.55rem; font-weight: 400;
+    letter-spacing: 2px; text-transform: uppercase;
+    color: #6bbd6b; background: rgba(107,189,107,0.1);
+    padding: 0.25rem 0.6rem; border-radius: 3px;
+}
+.tier-name {
+    font-family: var(--mono); font-size: 0.65rem; font-weight: 400;
+    letter-spacing: 3px; text-transform: uppercase;
+    color: var(--w50); margin-bottom: 1.5rem;
+}
+.tier-price {
+    font-weight: 200; font-size: 2.5rem; letter-spacing: -1px;
+    margin-bottom: 0.25rem;
+}
+.tier-price span { font-size: 0.9rem; font-weight: 300; color: var(--w50); }
+.tier-desc {
+    font-size: 0.8rem; color: var(--w50); line-height: 1.7;
+    margin-bottom: 2rem; min-height: 2.5rem;
+}
+.tier-features {
+    list-style: none; margin-bottom: 2.5rem; flex: 1;
+}
+.tier-features li {
+    font-family: var(--mono); font-size: 0.75rem; color: var(--w50);
+    padding: 0.5rem 0; border-bottom: 1px solid var(--w08);
+    display: flex; align-items: center; gap: 0.6rem;
+}
+.tier-features li::before {
+    content: ''; display: inline-block; width: 4px; height: 4px;
+    background: var(--gold); border-radius: 50%; flex-shrink: 0;
+}
+.tier-btn {
+    display: block; text-align: center;
+    font-family: var(--mono); font-size: 0.65rem; font-weight: 400;
+    letter-spacing: 2px; text-transform: uppercase;
+    padding: 0.85rem 2rem; text-decoration: none;
+    transition: all 0.3s; cursor: pointer; border: none; width: 100%;
+}
+.tier-btn-outline {
+    background: transparent; color: var(--w50);
+    border: 1px solid var(--w20);
+}
+.tier-btn-outline:hover { color: var(--w); border-color: var(--w50); }
+.tier-btn-gold {
+    background: var(--gold); color: var(--bg);
+}
+.tier-btn-gold:hover { background: #cca842; }
+.tier-btn-white {
+    background: var(--w); color: var(--bg);
+}
+.tier-btn-white:hover { background: var(--w80); }
+
+/* FAQ */
+.faq {
+    max-width: 640px; margin: 0 auto 6rem; padding: 0 2rem;
+}
+.faq h2 {
+    font-weight: 200; font-size: 1.5rem; margin-bottom: 2rem;
+    text-align: center;
+}
+.faq-item {
+    border-bottom: 1px solid var(--w08); padding: 1.25rem 0;
+}
+.faq-q {
+    font-size: 0.85rem; font-weight: 400; margin-bottom: 0.5rem;
+}
+.faq-a {
+    font-size: 0.8rem; font-weight: 300; color: var(--w50); line-height: 1.7;
+}
+
+/* Footer */
+footer {
+    border-top: 1px solid var(--w08);
+    padding: 2rem 3rem; text-align: center;
+    font-family: var(--mono); font-size: 0.65rem;
+    color: var(--w20); letter-spacing: 1px;
+}
+footer a { color: var(--gold); text-decoration: none; }
+
+/* Responsive */
+@media (max-width: 768px) {
+    nav { padding: 1rem 1.5rem; }
+    .pricing-grid { grid-template-columns: 1fr; padding: 0 1rem; }
+    .pricing-hero { padding: 4rem 1.5rem 2rem; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+    <a href="/" class="logo">Haldir</a>
+    <div class="nav-r">
+        <a href="/docs">Docs</a>
+        <a href="/blog">Blog</a>
+        <a href="/dashboard">Dashboard</a>
+    </div>
+</nav>
+
+<div class="pricing-hero">
+    <h1>Simple, <em>usage-based</em> pricing</h1>
+    <p>Start free. Scale when your agents do. No surprises.</p>
+</div>
+
+<div class="pricing-grid">
+    <!-- Free -->
+    <div class="tier-card">
+        <span class="current-badge">Current: Free</span>
+        <div class="tier-name">Free</div>
+        <div class="tier-price">$0 <span>/ forever</span></div>
+        <div class="tier-desc">Get started. One agent, full security.</div>
+        <ul class="tier-features">
+            <li>1 agent</li>
+            <li>1,000 actions / month</li>
+            <li>Session-scoped permissions</li>
+            <li>Encrypted secret storage</li>
+            <li>Audit trail</li>
+            <li>MCP support</li>
+            <li>Community support</li>
+        </ul>
+        <a href="/docs" class="tier-btn tier-btn-outline">Get Started</a>
+    </div>
+
+    <!-- Pro -->
+    <div class="tier-card featured">
+        <span class="tier-badge">Most Popular</span>
+        <div class="tier-name">Pro</div>
+        <div class="tier-price">$49 <span>/ month</span></div>
+        <div class="tier-desc">For teams running multiple agents in production.</div>
+        <ul class="tier-features">
+            <li>10 agents</li>
+            <li>50,000 actions / month</li>
+            <li>Everything in Free</li>
+            <li>Anomaly detection</li>
+            <li>Webhooks (Slack, Discord)</li>
+            <li>Human-in-the-loop approvals</li>
+            <li>Proxy mode + governance policies</li>
+            <li>Priority support</li>
+        </ul>
+        <button onclick="checkout('pro')" class="tier-btn tier-btn-gold">Upgrade to Pro</button>
+    </div>
+
+    <!-- Enterprise -->
+    <div class="tier-card">
+        <div class="tier-name">Enterprise</div>
+        <div class="tier-price">$499 <span>/ month</span></div>
+        <div class="tier-desc">Unlimited scale. Full control. Dedicated support.</div>
+        <ul class="tier-features">
+            <li>Unlimited agents</li>
+            <li>Unlimited actions</li>
+            <li>Everything in Pro</li>
+            <li>SSO / SAML (coming soon)</li>
+            <li>Custom policy engine</li>
+            <li>Dedicated infrastructure</li>
+            <li>SLA guarantee</li>
+            <li>Dedicated Slack channel</li>
+        </ul>
+        <button onclick="checkout('enterprise')" class="tier-btn tier-btn-white">Upgrade to Enterprise</button>
+    </div>
+</div>
+
+<div class="faq">
+    <h2>Questions</h2>
+    <div class="faq-item">
+        <div class="faq-q">What counts as an action?</div>
+        <div class="faq-a">Every API call to /v1/* counts as one action. Creating sessions, checking permissions, storing secrets, logging audit entries — each is one action.</div>
+    </div>
+    <div class="faq-item">
+        <div class="faq-q">What happens if I exceed my limit?</div>
+        <div class="faq-a">API calls return a 429 with a clear message and a link to upgrade. No data is lost, no sessions are terminated. You just can't make new calls until the next month or you upgrade.</div>
+    </div>
+    <div class="faq-item">
+        <div class="faq-q">Can I change plans anytime?</div>
+        <div class="faq-a">Yes. Upgrade instantly, downgrade at end of billing period. Managed through the Stripe customer portal — no emails, no sales calls.</div>
+    </div>
+    <div class="faq-item">
+        <div class="faq-q">Do you offer annual billing?</div>
+        <div class="faq-a">Not yet, but it's coming. Contact us if you want to lock in a discount today.</div>
+    </div>
+    <div class="faq-item">
+        <div class="faq-q">Is there a self-hosted option?</div>
+        <div class="faq-a">Haldir is AGPL-3.0. You can self-host for free. The paid tiers are for the managed cloud service at haldir.xyz.</div>
+    </div>
+</div>
+
+<footer>&copy; 2026 Haldir &middot; <a href="https://haldir.xyz">haldir.xyz</a></footer>
+
+<script>
+function checkout(tier) {
+    const apiKey = prompt('Enter your Haldir API key (hld_...) to upgrade:');
+    if (!apiKey) return;
+    fetch('/v1/billing/checkout', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + apiKey,
+        },
+        body: JSON.stringify({ tier: tier }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.url) {
+            window.location.href = data.url;
+        } else {
+            alert(data.error || 'Something went wrong');
+        }
+    })
+    .catch(() => alert('Network error — check your API key and try again'));
+}
+</script>
+</body>
+</html>""", 200, {"Content-Type": "text/html"}
+
+
+@app.route("/v1/billing/checkout", methods=["POST"])
+@require_api_key
+def billing_checkout():
+    """Create a Stripe Checkout session for Pro or Enterprise."""
+    if not STRIPE_SECRET_KEY:
+        return jsonify({"error": "Billing not configured — STRIPE_SECRET_KEY not set"}), 503
+
+    import stripe
+    stripe.api_key = STRIPE_SECRET_KEY
+
+    data = request.json or {}
+    tier = data.get("tier", "pro")
+    tenant = getattr(request, "tenant_id", "")
+
+    price_id = STRIPE_PRICE_PRO if tier == "pro" else STRIPE_PRICE_ENTERPRISE
+    if not price_id:
+        return jsonify({"error": f"No Stripe price configured for tier '{tier}'"}), 400
+
+    # Reuse existing Stripe customer if one exists
+    conn = get_db(DB_PATH)
+    row = conn.execute("SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ?", (tenant,)).fetchone()
+    conn.close()
+    customer_id = row["stripe_customer_id"] if row and row["stripe_customer_id"] else None
+
+    try:
+        checkout_params = {
+            "mode": "subscription",
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "success_url": "https://haldir.xyz/pricing?session_id={CHECKOUT_SESSION_ID}&status=success",
+            "cancel_url": "https://haldir.xyz/pricing?status=cancelled",
+            "metadata": {"tenant_id": tenant, "tier": tier},
+        }
+        if customer_id:
+            checkout_params["customer"] = customer_id
+        else:
+            checkout_params["customer_creation"] = "always"
+
+        session = stripe.checkout.Session.create(**checkout_params)
+        return jsonify({"url": session.url, "session_id": session.id})
+    except stripe.StripeError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/v1/billing/webhook", methods=["POST"])
+def billing_webhook():
+    """Handle Stripe webhook events for subscription lifecycle."""
+    if not STRIPE_SECRET_KEY or not STRIPE_WEBHOOK_SECRET:
+        return jsonify({"error": "Billing webhooks not configured"}), 503
+
+    import stripe
+    stripe.api_key = STRIPE_SECRET_KEY
+
+    payload = request.get_data(as_text=True)
+    sig = request.headers.get("Stripe-Signature", "")
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+    except (ValueError, stripe.SignatureVerificationError):
+        return jsonify({"error": "Invalid webhook signature"}), 400
+
+    etype = event["type"]
+    obj = event["data"]["object"]
+
+    if etype == "checkout.session.completed":
+        tenant_id = obj.get("metadata", {}).get("tenant_id", "")
+        tier = obj.get("metadata", {}).get("tier", "pro")
+        customer_id = obj.get("customer", "")
+        subscription_id = obj.get("subscription", "")
+
+        if tenant_id:
+            now = time.time()
+            conn = get_db(DB_PATH)
+            # Upsert subscription record
+            conn.execute(
+                "INSERT INTO subscriptions (tenant_id, stripe_customer_id, stripe_subscription_id, tier, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 'active', ?, ?) "
+                "ON CONFLICT(tenant_id) DO UPDATE SET "
+                "stripe_customer_id = ?, stripe_subscription_id = ?, tier = ?, status = 'active', updated_at = ?",
+                (tenant_id, customer_id, subscription_id, tier, now, now,
+                 customer_id, subscription_id, tier, now)
+            )
+            # Also update the api_keys tier
+            conn.execute(
+                "UPDATE api_keys SET tier = ? WHERE tenant_id = ?",
+                (tier, tenant_id)
+            )
+            conn.commit()
+            conn.close()
+
+    elif etype == "invoice.payment_succeeded":
+        subscription_id = obj.get("subscription", "")
+        period_end = obj.get("lines", {}).get("data", [{}])[0].get("period", {}).get("end", 0)
+        if subscription_id:
+            conn = get_db(DB_PATH)
+            conn.execute(
+                "UPDATE subscriptions SET status = 'active', current_period_end = ?, updated_at = ? "
+                "WHERE stripe_subscription_id = ?",
+                (period_end, time.time(), subscription_id)
+            )
+            conn.commit()
+            conn.close()
+
+    elif etype == "customer.subscription.deleted":
+        subscription_id = obj.get("id", "")
+        if subscription_id:
+            conn = get_db(DB_PATH)
+            # Downgrade to free
+            conn.execute(
+                "UPDATE subscriptions SET tier = 'free', status = 'cancelled', updated_at = ? "
+                "WHERE stripe_subscription_id = ?",
+                (time.time(), subscription_id)
+            )
+            # Also downgrade the api_keys tier
+            row = conn.execute(
+                "SELECT tenant_id FROM subscriptions WHERE stripe_subscription_id = ?",
+                (subscription_id,)
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE api_keys SET tier = 'free' WHERE tenant_id = ?",
+                    (row["tenant_id"],)
+                )
+            conn.commit()
+            conn.close()
+
+    return jsonify({"received": True}), 200
+
+
+@app.route("/v1/billing/portal", methods=["GET"])
+@require_api_key
+def billing_portal():
+    """Return a Stripe Customer Portal URL for managing subscription."""
+    if not STRIPE_SECRET_KEY:
+        return jsonify({"error": "Billing not configured — STRIPE_SECRET_KEY not set"}), 503
+
+    import stripe
+    stripe.api_key = STRIPE_SECRET_KEY
+
+    tenant = getattr(request, "tenant_id", "")
+    conn = get_db(DB_PATH)
+    row = conn.execute("SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ?", (tenant,)).fetchone()
+    conn.close()
+
+    if not row or not row["stripe_customer_id"]:
+        return jsonify({"error": "No billing account found. Subscribe first at /pricing"}), 404
+
+    try:
+        portal = stripe.billing_portal.Session.create(
+            customer=row["stripe_customer_id"],
+            return_url="https://haldir.xyz/pricing",
+        )
+        return jsonify({"url": portal.url})
+    except stripe.StripeError as e:
+        return jsonify({"error": str(e)}), 400
 
 
 # ── Dashboard ──
