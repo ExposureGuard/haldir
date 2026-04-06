@@ -1,0 +1,35 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Haldir Quickstart — Get Started in 30 Seconds</title>
+<meta name="description" content="Get started with Haldir in 30 seconds. Install, create a session, store secrets, authorize payments, audit everything.">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#050505;color:#e0ddd5;font-family:'Inter',sans-serif;padding:3rem;max-width:700px;margin:0 auto}
+h1{font-weight:200;font-size:2rem;margin-bottom:0.5rem}
+.sub{font-size:0.85rem;color:rgba(224,221,213,0.5);margin-bottom:2.5rem}
+.step{margin-bottom:2rem;padding:1.5rem;border:1px solid rgba(224,221,213,0.08);border-radius:6px}
+.step-num{font-family:'IBM Plex Mono',monospace;font-size:0.6rem;color:#b8973a;letter-spacing:2px;text-transform:uppercase;margin-bottom:0.5rem}
+.step h2{font-weight:400;font-size:1rem;margin-bottom:0.75rem}
+.step p{font-size:0.85rem;color:rgba(224,221,213,0.5);line-height:1.7;margin-bottom:0.75rem}
+pre{background:rgba(255,255,255,0.03);border:1px solid rgba(224,221,213,0.08);border-radius:4px;padding:1rem;font-family:'IBM Plex Mono',monospace;font-size:0.75rem;color:rgba(224,221,213,0.6);overflow-x:auto;line-height:1.8;margin:0.5rem 0}
+a{color:#b8973a;text-decoration:none}a:hover{text-decoration:underline}
+</style></head><body>
+<p style="margin-bottom:1.5rem;font-size:0.8rem"><a href="/">Haldir</a> / Quickstart</p>
+<h1>Get started in 30 seconds</h1>
+<p class="sub">From zero to governed AI agent in 6 steps.</p>
+<div class="step"><div class="step-num">Step 1</div><h2>Install</h2><pre>pip install haldir</pre></div>
+<div class="step"><div class="step-num">Step 2</div><h2>Get an API key</h2><pre>curl -X POST https://haldir.xyz/v1/keys \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-app"}'</pre><p>Save the key. You need it for every request.</p></div>
+<div class="step"><div class="step-num">Step 3</div><h2>Create a governed session</h2><pre>from sdk.client import HaldirClient
+
+h = HaldirClient(api_key="hld_xxx", base_url="https://haldir.xyz")
+session = h.create_session("my-agent", scopes=["read", "spend:50"])</pre><p>Your agent now has an identity with a $50 budget.</p></div>
+<div class="step"><div class="step-num">Step 4</div><h2>Store secrets</h2><pre>h.store_secret("stripe_key", "sk_live_xxx")</pre><p>AES encrypted. Agents access through scope checks.</p></div>
+<div class="step"><div class="step-num">Step 5</div><h2>Use the proxy</h2><pre>h.authorize_payment(session["session_id"], 29.99)
+h.log_action(session["session_id"], tool="stripe", action="charge", cost_usd=29.99)</pre><p>Budget enforced. Action logged. Every time.</p></div>
+<div class="step"><div class="step-num">Step 6</div><h2>Check the audit trail</h2><pre>spend = h.get_spend(agent_id="my-agent")
+# {"total_usd": 29.99, "by_tool": {"stripe": 29.99}}</pre></div>
+<p style="margin-top:2rem;text-align:center;font-size:0.85rem;color:rgba(224,221,213,0.5)">
+Full API docs at <a href="/docs">haldir.xyz/docs</a> · Examples on <a href="https://github.com/ExposureGuard/haldir/tree/main/examples">GitHub</a> · <a href="/blog">Blog</a>
+</p></body></html>

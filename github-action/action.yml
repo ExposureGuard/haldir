@@ -1,0 +1,51 @@
+name: "Haldir Agent Governance"
+description: "Create a governed Haldir session for AI agent tools in CI/CD pipelines. Enforces scoped permissions, spend limits, and full audit trails."
+author: "ExposureGuard"
+
+branding:
+  icon: "shield"
+  color: "purple"
+
+inputs:
+  haldir_api_key:
+    description: "Your Haldir API key (hld_xxx). Store as a GitHub secret."
+    required: true
+  agent_id:
+    description: "Unique identifier for this agent/pipeline (e.g., ci-pipeline, deploy-bot)."
+    required: true
+    default: "ci-pipeline"
+  scopes:
+    description: "Comma-separated permission scopes to grant (e.g., read,execute,browse,spend:50)."
+    required: false
+    default: "read,execute"
+  spend_limit:
+    description: "Maximum USD spend for this session. Leave empty for no limit."
+    required: false
+    default: ""
+  ttl:
+    description: "Session time-to-live in seconds."
+    required: false
+    default: "3600"
+  base_url:
+    description: "Haldir API base URL."
+    required: false
+    default: "https://haldir.xyz"
+
+outputs:
+  session_id:
+    description: "The created Haldir session ID. Use this in subsequent steps to make governed tool calls."
+  scopes:
+    description: "The scopes granted to the session (JSON array)."
+  expires_at:
+    description: "ISO timestamp when the session expires."
+
+runs:
+  using: "docker"
+  image: "Dockerfile"
+  env:
+    HALDIR_API_KEY: ${{ inputs.haldir_api_key }}
+    HALDIR_AGENT_ID: ${{ inputs.agent_id }}
+    HALDIR_SCOPES: ${{ inputs.scopes }}
+    HALDIR_SPEND_LIMIT: ${{ inputs.spend_limit }}
+    HALDIR_TTL: ${{ inputs.ttl }}
+    HALDIR_BASE_URL: ${{ inputs.base_url }}
