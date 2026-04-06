@@ -1,0 +1,42 @@
+{
+  "name": "haldir",
+  "version": "0.1.0",
+  "description": "The guardian layer for AI agents — identity, secrets, audit",
+  "main": "index.js",
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "require": "./index.js"
+    }
+  },
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "ai-agents",
+    "security",
+    "governance",
+    "identity",
+    "secrets",
+    "audit",
+    "model-context-protocol",
+    "compliance",
+    "haldir"
+  ],
+  "author": "Sterling <sterling@getexposureguard.com>",
+  "license": "MIT",
+  "homepage": "https://haldir.xyz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ExposureGuard/haldir"
+  },
+  "bugs": {
+    "url": "https://github.com/ExposureGuard/haldir/issues"
+  }
+}
