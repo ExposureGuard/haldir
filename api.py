@@ -1611,6 +1611,90 @@ def dashboard():
         return f.read(), 200, {"Content-Type": "text/html"}
 
 
+# ── Blog ──
+
+@app.route("/blog")
+@app.route("/blog/")
+def blog_index():
+    blog_dir = os.path.join(os.path.dirname(__file__), "blog")
+    if not os.path.isdir(blog_dir):
+        return "Coming soon", 200
+    posts = []
+    for f in sorted(os.listdir(blog_dir)):
+        if f.endswith(".md") and f != "index.md":
+            path = os.path.join(blog_dir, f)
+            with open(path) as fh:
+                first_line = fh.readline().strip().lstrip("# ")
+            slug = f.replace(".md", "")
+            posts.append({"title": first_line, "slug": slug})
+    html = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Haldir Blog</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#050505;color:#e0ddd5;font-family:'Inter',sans-serif;padding:3rem;max-width:700px;margin:0 auto}
+h1{font-weight:200;font-size:2rem;margin-bottom:2rem}a{color:#b8973a;text-decoration:none}a:hover{text-decoration:underline}
+.post{padding:1rem 0;border-bottom:1px solid rgba(224,221,213,0.08)}.post a{font-size:1.1rem;font-weight:400}</style></head><body>
+<h1><a href="/" style="color:#e0ddd5">Haldir</a> / Blog</h1>"""
+    for p in posts:
+        html += f'<div class="post"><a href="/blog/{p["slug"]}">{p["title"]}</a></div>'
+    html += "</body></html>"
+    return html, 200, {"Content-Type": "text/html"}
+
+
+@app.route("/blog/<slug>")
+def blog_post(slug):
+    blog_dir = os.path.join(os.path.dirname(__file__), "blog")
+    path = os.path.join(blog_dir, f"{slug}.md")
+    if not os.path.exists(path):
+        return "Not found", 404
+    with open(path) as f:
+        content = f.read()
+    # Simple markdown to HTML (headers, code blocks, paragraphs)
+    import re
+    lines = content.split("\n")
+    html_lines = []
+    in_code = False
+    for line in lines:
+        if line.startswith("```"):
+            if in_code:
+                html_lines.append("</pre>")
+                in_code = False
+            else:
+                lang = line[3:].strip()
+                html_lines.append(f'<pre style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:1.25rem;overflow-x:auto;font-size:0.8rem;line-height:1.8;color:rgba(224,221,213,0.6);margin:1rem 0">')
+                in_code = True
+            continue
+        if in_code:
+            html_lines.append(line)
+            continue
+        if line.startswith("# "):
+            html_lines.append(f'<h1 style="font-weight:200;font-size:2rem;margin:1rem 0">{line[2:]}</h1>')
+        elif line.startswith("## "):
+            html_lines.append(f'<h2 style="font-weight:400;font-size:1.2rem;margin:2rem 0 0.5rem;color:#b8973a">{line[3:]}</h2>')
+        elif line.startswith("### "):
+            html_lines.append(f'<h3 style="font-weight:400;font-size:1rem;margin:1.5rem 0 0.5rem">{line[4:]}</h3>')
+        elif line.startswith("- "):
+            html_lines.append(f'<li style="margin:0.3rem 0 0.3rem 1.5rem;color:rgba(224,221,213,0.6);font-size:0.9rem;line-height:1.7">{line[2:]}</li>')
+        elif line.strip():
+            # Inline code
+            line = re.sub(r'`([^`]+)`', r'<code style="background:rgba(255,255,255,0.05);padding:0.1rem 0.3rem;border-radius:3px;font-family:IBM Plex Mono,monospace;font-size:0.85em">\1</code>', line)
+            # Bold
+            line = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', line)
+            # Links
+            line = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', line)
+            html_lines.append(f'<p style="margin:0.75rem 0;color:rgba(224,221,213,0.6);font-size:0.9rem;line-height:1.8">{line}</p>')
+    body = "\n".join(html_lines)
+    page = f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{slug.replace('-',' ').title()} — Haldir</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>*{{margin:0;padding:0;box-sizing:border-box}}body{{background:#050505;color:#e0ddd5;font-family:'Inter',sans-serif;padding:3rem;max-width:700px;margin:0 auto}}
+a{{color:#b8973a;text-decoration:none}}a:hover{{text-decoration:underline}}</style></head><body>
+<p style="margin-bottom:2rem;font-size:0.8rem"><a href="/">Haldir</a> / <a href="/blog">Blog</a></p>
+{body}
+<p style="margin-top:3rem;padding-top:1rem;border-top:1px solid rgba(255,255,255,0.08);font-size:0.8rem;color:rgba(224,221,213,0.3)">&copy; 2026 Haldir &middot; <a href="https://haldir.xyz">haldir.xyz</a></p>
+</body></html>"""
+    return page, 200, {"Content-Type": "text/html"}
+
+
 # ── Agent discovery files ──
 
 @app.route("/llms.txt")
