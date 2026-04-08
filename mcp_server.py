@@ -33,7 +33,7 @@ async def list_tools() -> list[Tool]:
     return [
         # Gate tools
         Tool(
-            name="create_session",
+            name="createSession",
             description=(
                 "Create an authenticated agent session with scoped permissions. "
                 "Returns a session ID that must be passed to all subsequent tool calls. "
@@ -52,7 +52,7 @@ async def list_tools() -> list[Tool]:
             annotations={"title": "Create Agent Session", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
         ),
         Tool(
-            name="check_permission",
+            name="checkPermission",
             description="Check if an agent session has a specific permission scope before attempting an action.",
             inputSchema={
                 "type": "object",
@@ -65,7 +65,7 @@ async def list_tools() -> list[Tool]:
             annotations={"title": "Check Permission", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
         ),
         Tool(
-            name="revoke_session",
+            name="revokeSession",
             description="Immediately revoke an agent session, blocking all further actions under that session.",
             inputSchema={
                 "type": "object",
@@ -79,7 +79,7 @@ async def list_tools() -> list[Tool]:
 
         # Vault tools
         Tool(
-            name="store_secret",
+            name="storeSecret",
             description="Store an encrypted secret (API key, credential, token) in the vault. Secrets are encrypted at rest with AES-128.",
             inputSchema={
                 "type": "object",
@@ -93,7 +93,7 @@ async def list_tools() -> list[Tool]:
             annotations={"title": "Store Secret", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
         ),
         Tool(
-            name="get_secret",
+            name="getSecret",
             description="Retrieve a decrypted secret from the vault. Requires a valid session with the appropriate scope.",
             inputSchema={
                 "type": "object",
@@ -106,7 +106,7 @@ async def list_tools() -> list[Tool]:
             annotations={"title": "Get Secret", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
         ),
         Tool(
-            name="authorize_payment",
+            name="authorizePayment",
             description=(
                 "Authorize a payment against an agent's session budget. Checks that the agent has 'spend' permission "
                 "and sufficient remaining budget. Does not actually charge — returns an authorization record that the "
@@ -126,7 +126,7 @@ async def list_tools() -> list[Tool]:
 
         # Watch tools
         Tool(
-            name="log_action",
+            name="logAction",
             description="Record an agent action in the immutable audit log. Every tool call, API request, and payment should be logged.",
             inputSchema={
                 "type": "object",
@@ -141,7 +141,7 @@ async def list_tools() -> list[Tool]:
             annotations={"title": "Log Action", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
         ),
         Tool(
-            name="get_audit_trail",
+            name="getAuditTrail",
             description="Query the audit log for an agent's actions. Filter by session, agent, tool, or time range. Use for compliance and debugging.",
             inputSchema={
                 "type": "object",
@@ -156,7 +156,7 @@ async def list_tools() -> list[Tool]:
             annotations={"title": "Get Audit Trail", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
         ),
         Tool(
-            name="get_spend",
+            name="getSpend",
             description="Get a spend summary for an agent or session. Returns total USD spent and breakdown by tool.",
             inputSchema={
                 "type": "object",
@@ -184,7 +184,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
 def _dispatch(name: str, args: dict) -> dict:
     # Gate
-    if name == "create_session":
+    if name == "createSession":
         session = gate.create_session(
             agent_id=args["agent_id"],
             scopes=args.get("scopes"),
@@ -198,20 +198,20 @@ def _dispatch(name: str, args: dict) -> dict:
             "expires_in": int(session.expires_at - session.created_at),
         }
 
-    if name == "check_permission":
+    if name == "checkPermission":
         allowed = gate.check_permission(args["session_id"], args["scope"])
         return {"allowed": allowed, "scope": args["scope"]}
 
-    if name == "revoke_session":
+    if name == "revokeSession":
         revoked = gate.revoke_session(args["session_id"])
         return {"revoked": revoked}
 
     # Vault
-    if name == "store_secret":
+    if name == "storeSecret":
         vault.store_secret(args["name"], args["value"], args.get("scope_required", "read"))
         return {"stored": True, "name": args["name"]}
 
-    if name == "get_secret":
+    if name == "getSecret":
         session = gate.get_session(args["session_id"])
         if not session:
             return {"error": "Invalid or expired session"}
@@ -220,14 +220,14 @@ def _dispatch(name: str, args: dict) -> dict:
             return {"error": f"Secret '{args['name']}' not found"}
         return {"name": args["name"], "value": value}
 
-    if name == "authorize_payment":
+    if name == "authorizePayment":
         session = gate.get_session(args["session_id"])
         if not session:
             return {"authorized": False, "reason": "Invalid or expired session"}
         return vault.authorize_payment(session, args["amount"], description=args.get("description", ""))
 
     # Watch
-    if name == "log_action":
+    if name == "logAction":
         session = gate.get_session(args["session_id"])
         if not session:
             return {"error": "Invalid or expired session"}
@@ -237,7 +237,7 @@ def _dispatch(name: str, args: dict) -> dict:
         )
         return {"logged": True, "entry_id": entry.entry_id, "flagged": entry.flagged}
 
-    if name == "get_audit_trail":
+    if name == "getAuditTrail":
         entries = watch.get_audit_trail(
             session_id=args.get("session_id"),
             agent_id=args.get("agent_id"),
@@ -251,7 +251,7 @@ def _dispatch(name: str, args: dict) -> dict:
             for e in entries
         ]}
 
-    if name == "get_spend":
+    if name == "getSpend":
         return watch.get_spend(
             session_id=args.get("session_id"),
             agent_id=args.get("agent_id"),

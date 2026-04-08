@@ -32,6 +32,7 @@ import hashlib
 from functools import wraps
 
 from flask import Flask, request, jsonify, abort, redirect
+from flask_cors import CORS
 
 from haldir_db import init_db, get_db
 from haldir_gate.gate import Gate
@@ -44,6 +45,7 @@ DB_PATH = os.environ.get("HALDIR_DB_PATH", "/data/haldir.db" if os.path.isdir("/
 ENCRYPTION_KEY = os.environ.get("HALDIR_ENCRYPTION_KEY", "").encode() or None
 
 app = Flask(__name__)
+CORS(app, resources={r"/v1/*": {"origins": "*"}, r"/mcp": {"origins": "*"}})
 
 # Init DB on startup
 init_db(DB_PATH)
@@ -229,8 +231,21 @@ def create_session():
         }), 403
 
     scopes = data.get("scopes", ["read", "browse"])
-    ttl = data.get("ttl", 3600)
+    try:
+        ttl = int(data.get("ttl", 3600))
+    except (TypeError, ValueError):
+        return jsonify({"error": "ttl must be an integer"}), 400
+    if ttl < 0 or ttl > 86400 * 30:
+        return jsonify({"error": "ttl must be between 0 and 2592000 (30 days)"}), 400
+
     spend_limit = data.get("spend_limit")
+    if spend_limit is not None:
+        try:
+            spend_limit = float(spend_limit)
+        except (TypeError, ValueError):
+            return jsonify({"error": "spend_limit must be a number"}), 400
+        if spend_limit < 0:
+            return jsonify({"error": "spend_limit must be non-negative"}), 400
 
     tenant = getattr(request, "tenant_id", "")
     gate.register_agent(agent_id, default_scopes=scopes, tenant_id=tenant)
@@ -361,6 +376,15 @@ def authorize_payment():
     if not session_id or amount is None:
         return jsonify({"error": "session_id and amount are required"}), 400
 
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return jsonify({"error": "amount must be a number"}), 400
+    if amount <= 0:
+        return jsonify({"error": "amount must be positive"}), 400
+    if amount > 1_000_000:
+        return jsonify({"error": "amount exceeds maximum ($1,000,000)"}), 400
+
     tenant = getattr(request, "tenant_id", "")
     session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
@@ -389,6 +413,14 @@ def log_action():
     if not session_id or not action:
         return jsonify({"error": "session_id and action are required"}), 400
 
+    cost_usd = data.get("cost_usd", 0)
+    try:
+        cost_usd = float(cost_usd)
+    except (TypeError, ValueError):
+        return jsonify({"error": "cost_usd must be a number"}), 400
+    if cost_usd < 0:
+        return jsonify({"error": "cost_usd must be non-negative"}), 400
+
     tenant = getattr(request, "tenant_id", "")
     session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
@@ -397,7 +429,7 @@ def log_action():
     entry = watch.log_action(
         session, tool=tool, action=action,
         details=data.get("details"),
-        cost_usd=float(data.get("cost_usd", 0)),
+        cost_usd=cost_usd,
         tenant_id=tenant,
     )
 
@@ -470,8 +502,8 @@ def track_usage(response):
             )
             conn.commit()
             conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Usage tracking failed for tenant {tenant}: {e}")
     return response
 
 
@@ -1536,7 +1568,7 @@ def mcp_server_card():
             "name": "0xN0rD",
             "url": "https://haldir.xyz",
         },
-        "license": "AGPL-3.0",
+        "license": "MIT",
         "tags": [
             "security", "governance", "ai-agents", "permissions", "audit",
             "secrets", "budget", "compliance", "least-privilege", "mcp",
@@ -2010,7 +2042,7 @@ footer a { color: var(--gold); text-decoration: none; }
     </div>
     <div class="faq-item">
         <div class="faq-q">Is there a self-hosted option?</div>
-        <div class="faq-a">Haldir is AGPL-3.0. You can self-host for free. The paid tiers are for the managed cloud service at haldir.xyz.</div>
+        <div class="faq-a">Haldir is MIT licensed. You can self-host for free. The paid tiers are for the managed cloud service at haldir.xyz.</div>
     </div>
 </div>
 
