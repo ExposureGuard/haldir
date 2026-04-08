@@ -152,7 +152,8 @@ class TestGate:
 class TestVault:
     def test_store_and_get_secret(self, haldir):
         haldir.store_secret("test_key", "sk_test_abc123")
-        result = haldir.get_secret("test_key")
+        session = haldir.create_session("secret-agent", scopes=["read"])
+        result = haldir.get_secret("test_key", session_id=session["session_id"])
         assert result["value"] == "sk_test_abc123"
 
     def test_get_secret_with_session(self, haldir):
@@ -173,8 +174,9 @@ class TestVault:
         assert result["deleted"] is True
 
     def test_get_missing_secret_404(self, haldir):
+        session = haldir.create_session("secret-agent", scopes=["read"])
         with pytest.raises(HaldirNotFoundError):
-            haldir.get_secret("nonexistent_secret")
+            haldir.get_secret("nonexistent_secret", session_id=session["session_id"])
 
     def test_delete_missing_secret_404(self, haldir):
         with pytest.raises(HaldirNotFoundError):
@@ -281,7 +283,8 @@ class TestAsyncClient:
         async def run():
             h = self._make_async_client(api_key)
             await h.store_secret("async_key", "async_value")
-            result = await h.get_secret("async_key")
+            session = await h.create_session("async-agent", scopes=["read"])
+            result = await h.get_secret("async_key", session_id=session["session_id"])
             assert result["value"] == "async_value"
             await h.delete_secret("async_key")
             await h.close()

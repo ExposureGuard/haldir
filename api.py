@@ -715,8 +715,7 @@ def rate_limit():
             }), 429
 
         if tenant:
-            billing_tier = _get_tenant_tier(tenant)
-            tier_limits = TIER_LIMITS.get(billing_tier, TIER_LIMITS["free"])
+            tier_limits = TIER_LIMITS.get(effective_tier, TIER_LIMITS["free"])
             monthly_actions = _get_tenant_monthly_actions(tenant)
             if monthly_actions >= tier_limits["actions_per_month"]:
                 return jsonify({

@@ -208,8 +208,9 @@ class Gate:
             conn.execute("UPDATE sessions SET revoked = 1 WHERE session_id = ? AND tenant_id = ?",
                          (session_id, tenant_id))
             conn.commit()
+            affected = conn.total_changes
             conn.close()
-            return True
+            return affected > 0
         return session is not None
 
     def list_sessions(self, agent_id: str | None = None, tenant_id: str = "") -> list[Session]:

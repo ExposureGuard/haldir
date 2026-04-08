@@ -1,1 +1,12 @@
 .mcpregistry_*
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+*.db
+.env
+*.whl
+*.tar.gz
