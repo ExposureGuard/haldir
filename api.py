@@ -2239,6 +2239,9 @@ h1{font-weight:200;font-size:2rem;margin-bottom:2rem}a{color:#b8973a;text-decora
 
 @app.route("/blog/<slug>")
 def blog_post(slug):
+    import re as _re
+    if not _re.match(r'^[a-zA-Z0-9_-]+$', slug):
+        return "Not found", 404
     blog_dir = os.path.join(os.path.dirname(__file__), "blog")
     path = os.path.join(blog_dir, f"{slug}.md")
     if not os.path.exists(path):

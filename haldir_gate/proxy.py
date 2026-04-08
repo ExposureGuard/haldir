@@ -322,7 +322,7 @@ class HaldirProxy:
 
             elif ptype == "time_window":
                 import datetime
-                now = datetime.datetime.utcnow()
+                now = datetime.datetime.now(datetime.timezone.utc)
                 start_hour = policy.get("start_hour", 0)
                 end_hour = policy.get("end_hour", 24)
                 if not (start_hour <= now.hour < end_hour):

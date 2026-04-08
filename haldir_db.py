@@ -53,13 +53,20 @@ def _sqlite_to_pg(sql):
     """Convert SQLite SQL syntax to PostgreSQL."""
     sql = sql.replace("?", "%s")
     sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
-    # SQLite's INSERT OR REPLACE → Postgres ON CONFLICT
-    # Handle simple cases
-    sql = re.sub(
-        r'INSERT OR REPLACE INTO (\w+)',
-        r'INSERT INTO \1',
-        sql
-    )
+    # SQLite's INSERT OR REPLACE → Postgres ON CONFLICT DO UPDATE
+    # Match known tables with composite PKs
+    if "INSERT OR REPLACE INTO agents" in sql:
+        sql = sql.replace("INSERT OR REPLACE INTO agents", "INSERT INTO agents")
+        sql = sql.rstrip().rstrip(")") + ") ON CONFLICT (agent_id, tenant_id) DO UPDATE SET default_scopes=EXCLUDED.default_scopes, max_spend=EXCLUDED.max_spend, metadata=EXCLUDED.metadata, created_at=EXCLUDED.created_at"
+    elif "INSERT OR REPLACE INTO secrets" in sql:
+        sql = sql.replace("INSERT OR REPLACE INTO secrets", "INSERT INTO secrets")
+        sql = sql.rstrip().rstrip(")") + ") ON CONFLICT (name, tenant_id) DO UPDATE SET encrypted_value=EXCLUDED.encrypted_value, scope_required=EXCLUDED.scope_required, created_at=EXCLUDED.created_at, metadata=EXCLUDED.metadata"
+    else:
+        sql = re.sub(
+            r'INSERT OR REPLACE INTO (\w+)',
+            r'INSERT INTO \1',
+            sql
+        )
     return sql
 
 
