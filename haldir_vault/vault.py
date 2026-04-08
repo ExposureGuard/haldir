@@ -17,6 +17,7 @@ class SecretEntry:
     last_accessed: float = 0.0
     access_count: int = 0
     metadata: dict = field(default_factory=dict)
+    tenant_id: str = ""
 
 
 class Vault:
@@ -43,36 +44,39 @@ class Vault:
         return get_db(self._db_path)
 
     def store_secret(self, name: str, value: str, scope_required: str = "read",
-                     metadata: dict | None = None) -> SecretEntry:
+                     metadata: dict | None = None, tenant_id: str = "") -> SecretEntry:
         encrypted = self._fernet.encrypt(value.encode())
         entry = SecretEntry(
             name=name,
             encrypted_value=encrypted,
             scope_required=scope_required,
             metadata=metadata or {},
+            tenant_id=tenant_id,
         )
-        self._secrets[name] = entry
+        self._secrets[f"{tenant_id}:{name}"] = entry
 
         conn = self._get_db()
         if conn:
             conn.execute(
-                "INSERT OR REPLACE INTO secrets (name, encrypted_value, scope_required, created_at, metadata) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (name, encrypted, scope_required, entry.created_at, json.dumps(metadata or {}))
+                "INSERT OR REPLACE INTO secrets (name, tenant_id, encrypted_value, scope_required, created_at, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (name, tenant_id, encrypted, scope_required, entry.created_at, json.dumps(metadata or {}))
             )
             conn.commit()
             conn.close()
         return entry
 
-    def get_secret(self, name: str, session=None) -> str | None:
-        # Check memory
-        entry = self._secrets.get(name)
+    def get_secret(self, name: str, session=None, tenant_id: str = "") -> str | None:
+        cache_key = f"{tenant_id}:{name}"
+        entry = self._secrets.get(cache_key)
 
-        # Check DB
         if not entry:
             conn = self._get_db()
             if conn:
-                row = conn.execute("SELECT * FROM secrets WHERE name = ?", (name,)).fetchone()
+                row = conn.execute(
+                    "SELECT * FROM secrets WHERE name = ? AND tenant_id = ?",
+                    (name, tenant_id)
+                ).fetchone()
                 conn.close()
                 if row:
                     entry = SecretEntry(
@@ -82,8 +86,9 @@ class Vault:
                         created_at=row["created_at"],
                         last_accessed=row["last_accessed"],
                         access_count=row["access_count"],
+                        tenant_id=tenant_id,
                     )
-                    self._secrets[name] = entry
+                    self._secrets[cache_key] = entry
 
         if not entry:
             return None
@@ -101,30 +106,35 @@ class Vault:
 
         conn = self._get_db()
         if conn:
-            conn.execute("UPDATE secrets SET last_accessed = ?, access_count = ? WHERE name = ?",
-                         (entry.last_accessed, entry.access_count, name))
+            conn.execute(
+                "UPDATE secrets SET last_accessed = ?, access_count = ? WHERE name = ? AND tenant_id = ?",
+                (entry.last_accessed, entry.access_count, name, tenant_id))
             conn.commit()
             conn.close()
 
         return self._fernet.decrypt(entry.encrypted_value).decode()
 
-    def delete_secret(self, name: str) -> bool:
-        deleted = name in self._secrets
-        self._secrets.pop(name, None)
+    def delete_secret(self, name: str, tenant_id: str = "") -> bool:
+        cache_key = f"{tenant_id}:{name}"
+        deleted = cache_key in self._secrets
+        self._secrets.pop(cache_key, None)
 
         conn = self._get_db()
         if conn:
-            conn.execute("DELETE FROM secrets WHERE name = ?", (name,))
+            conn.execute("DELETE FROM secrets WHERE name = ? AND tenant_id = ?", (name, tenant_id))
             conn.commit()
             conn.close()
             return True
         return deleted
 
-    def list_secrets(self) -> list[str]:
-        names = set(self._secrets.keys())
+    def list_secrets(self, tenant_id: str = "") -> list[str]:
+        names = set()
+        for key, entry in self._secrets.items():
+            if entry.tenant_id == tenant_id:
+                names.add(entry.name)
         conn = self._get_db()
         if conn:
-            rows = conn.execute("SELECT name FROM secrets").fetchall()
+            rows = conn.execute("SELECT name FROM secrets WHERE tenant_id = ?", (tenant_id,)).fetchall()
             conn.close()
             names.update(r["name"] for r in rows)
         return sorted(names)
@@ -155,28 +165,33 @@ class Vault:
             "timestamp": time.time(),
         }
 
+        tenant_id = getattr(session, "tenant_id", "")
+
         conn = self._get_db()
         if conn:
             conn.execute(
-                "INSERT INTO payments (authorization_id, session_id, agent_id, amount, currency, description, remaining_budget, timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (auth_id, session.session_id, session.agent_id, amount, currency, description, session.remaining_budget, time.time())
+                "INSERT INTO payments (authorization_id, tenant_id, session_id, agent_id, amount, currency, description, remaining_budget, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (auth_id, tenant_id, session.session_id, session.agent_id, amount, currency, description, session.remaining_budget, time.time())
             )
-            # Update session spend in DB
-            conn.execute("UPDATE sessions SET spent = ? WHERE session_id = ?",
-                         (session.spent, session.session_id))
+            conn.execute("UPDATE sessions SET spent = ? WHERE session_id = ? AND tenant_id = ?",
+                         (session.spent, session.session_id, tenant_id))
             conn.commit()
             conn.close()
 
         return record
 
-    def get_payment_log(self, session_id: str | None = None) -> list[dict]:
+    def get_payment_log(self, session_id: str | None = None, tenant_id: str = "") -> list[dict]:
         conn = self._get_db()
         if conn:
             if session_id:
-                rows = conn.execute("SELECT * FROM payments WHERE session_id = ? ORDER BY timestamp DESC", (session_id,)).fetchall()
+                rows = conn.execute(
+                    "SELECT * FROM payments WHERE session_id = ? AND tenant_id = ? ORDER BY timestamp DESC",
+                    (session_id, tenant_id)).fetchall()
             else:
-                rows = conn.execute("SELECT * FROM payments ORDER BY timestamp DESC LIMIT 100").fetchall()
+                rows = conn.execute(
+                    "SELECT * FROM payments WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 100",
+                    (tenant_id,)).fetchall()
             conn.close()
             return [dict(r) for r in rows]
         return []

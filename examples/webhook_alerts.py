@@ -16,12 +16,13 @@ Usage:
     python3 examples/webhook_alerts.py
 """
 
+import os
 import sys
 import json
 import httpx
 
 BASE_URL = "https://haldir.xyz"
-BOOTSTRAP_TOKEN = "haldir_boot_2026"
+BOOTSTRAP_TOKEN = os.environ.get("HALDIR_BOOTSTRAP_TOKEN", "")
 
 
 def setup() -> tuple[str, dict, str]:
@@ -31,7 +32,7 @@ def setup() -> tuple[str, dict, str]:
     resp = httpx.post(
         f"{BASE_URL}/v1/keys",
         headers=headers,
-        json={"name": "webhook-demo", "tier": "pro", "bootstrap_token": BOOTSTRAP_TOKEN},
+        json={"name": "webhook-demo", "bootstrap_token": BOOTSTRAP_TOKEN},
     )
     if resp.status_code != 201:
         print(f"[-] Failed to create API key: {resp.text}")

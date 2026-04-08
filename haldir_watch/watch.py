@@ -3,6 +3,7 @@ Haldir Watch — Audit trail and cost tracking with SQLite persistence.
 """
 
 import json
+import secrets
 import time
 from dataclasses import dataclass, field
 
@@ -19,6 +20,7 @@ class AuditEntry:
     timestamp: float = field(default_factory=time.time)
     flagged: bool = False
     flag_reason: str = ""
+    tenant_id: str = ""
 
 
 class Watch:
@@ -28,7 +30,6 @@ class Watch:
         self._db_path = db_path
         self._anomaly_rules: list[dict] = []
 
-        # Load anomaly rules from DB
         conn = self._get_db()
         if conn:
             rows = conn.execute("SELECT * FROM anomaly_rules").fetchall()
@@ -47,18 +48,19 @@ class Watch:
         return get_db(self._db_path)
 
     def log_action(self, session, tool: str, action: str,
-                   details: dict | None = None, cost_usd: float = 0.0) -> AuditEntry:
+                   details: dict | None = None, cost_usd: float = 0.0,
+                   tenant_id: str = "") -> AuditEntry:
         entry = AuditEntry(
-            entry_id=f"aud_{int(time.time() * 1000)}",
+            entry_id=f"aud_{secrets.token_urlsafe(16)}",
             session_id=session.session_id,
             agent_id=session.agent_id,
             action=action,
             tool=tool,
             details=details or {},
             cost_usd=cost_usd,
+            tenant_id=tenant_id,
         )
 
-        # Check anomaly rules
         for rule in self._anomaly_rules:
             if self._check_anomaly(entry, rule):
                 entry.flagged = True
@@ -68,9 +70,9 @@ class Watch:
         conn = self._get_db()
         if conn:
             conn.execute(
-                "INSERT INTO audit_log (entry_id, session_id, agent_id, action, tool, details, cost_usd, timestamp, flagged, flag_reason) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (entry.entry_id, entry.session_id, entry.agent_id, entry.action,
+                "INSERT INTO audit_log (entry_id, tenant_id, session_id, agent_id, action, tool, details, cost_usd, timestamp, flagged, flag_reason) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (entry.entry_id, tenant_id, entry.session_id, entry.agent_id, entry.action,
                  entry.tool, json.dumps(entry.details), entry.cost_usd,
                  entry.timestamp, int(entry.flagged), entry.flag_reason)
             )
@@ -84,11 +86,12 @@ class Watch:
                         tool: str | None = None,
                         since: float | None = None,
                         flagged_only: bool = False,
-                        limit: int = 100) -> list[AuditEntry]:
+                        limit: int = 100,
+                        tenant_id: str = "") -> list[AuditEntry]:
         conn = self._get_db()
         if conn:
-            query = "SELECT * FROM audit_log WHERE 1=1"
-            params = []
+            query = "SELECT * FROM audit_log WHERE tenant_id = ?"
+            params = [tenant_id]
             if session_id:
                 query += " AND session_id = ?"
                 params.append(session_id)
@@ -120,17 +123,19 @@ class Watch:
                     timestamp=r["timestamp"],
                     flagged=bool(r["flagged"]),
                     flag_reason=r["flag_reason"],
+                    tenant_id=tenant_id,
                 )
                 for r in rows
             ]
         return []
 
     def get_spend(self, session_id: str | None = None,
-                  agent_id: str | None = None) -> dict:
+                  agent_id: str | None = None,
+                  tenant_id: str = "") -> dict:
         conn = self._get_db()
         if conn:
-            query = "SELECT tool, SUM(cost_usd) as total, COUNT(*) as cnt FROM audit_log WHERE 1=1"
-            params = []
+            query = "SELECT tool, SUM(cost_usd) as total, COUNT(*) as cnt FROM audit_log WHERE tenant_id = ?"
+            params = [tenant_id]
             if session_id:
                 query += " AND session_id = ?"
                 params.append(session_id)
@@ -140,11 +145,15 @@ class Watch:
             query += " GROUP BY tool"
             rows = conn.execute(query, params).fetchall()
 
-            total_row = conn.execute(
-                "SELECT SUM(cost_usd) as total, COUNT(*) as cnt FROM audit_log" +
-                (" WHERE session_id = ?" if session_id else " WHERE agent_id = ?" if agent_id else ""),
-                [session_id or agent_id] if (session_id or agent_id) else []
-            ).fetchone()
+            total_query = "SELECT SUM(cost_usd) as total, COUNT(*) as cnt FROM audit_log WHERE tenant_id = ?"
+            total_params = [tenant_id]
+            if session_id:
+                total_query += " AND session_id = ?"
+                total_params.append(session_id)
+            elif agent_id:
+                total_query += " AND agent_id = ?"
+                total_params.append(agent_id)
+            total_row = conn.execute(total_query, total_params).fetchone()
             conn.close()
 
             by_tool = {r["tool"]: round(r["total"], 4) for r in rows if r["tool"]}
@@ -155,7 +164,8 @@ class Watch:
             }
         return {"total_usd": 0, "action_count": 0, "by_tool": {}}
 
-    def add_anomaly_rule(self, rule_type: str, threshold: float, reason: str = ""):
+    def add_anomaly_rule(self, rule_type: str, threshold: float, reason: str = "",
+                         tenant_id: str = ""):
         rule = {
             "type": rule_type,
             "threshold": threshold,
@@ -166,8 +176,8 @@ class Watch:
         conn = self._get_db()
         if conn:
             conn.execute(
-                "INSERT INTO anomaly_rules (rule_type, threshold, reason, created_at) VALUES (?, ?, ?, ?)",
-                (rule_type, threshold, rule["reason"], time.time())
+                "INSERT INTO anomaly_rules (tenant_id, rule_type, threshold, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+                (tenant_id, rule_type, threshold, rule["reason"], time.time())
             )
             conn.commit()
             conn.close()
@@ -180,8 +190,8 @@ class Watch:
             if conn:
                 one_min_ago = time.time() - 60
                 count = conn.execute(
-                    "SELECT COUNT(*) FROM audit_log WHERE agent_id = ? AND timestamp >= ?",
-                    (entry.agent_id, one_min_ago)
+                    "SELECT COUNT(*) FROM audit_log WHERE agent_id = ? AND tenant_id = ? AND timestamp >= ?",
+                    (entry.agent_id, entry.tenant_id, one_min_ago)
                 ).fetchone()[0]
                 conn.close()
                 return count >= rule["threshold"]
@@ -189,19 +199,20 @@ class Watch:
             return entry.tool == str(rule["threshold"])
         return False
 
-    def flag_anomaly(self, entry_id: str, reason: str) -> bool:
+    def flag_anomaly(self, entry_id: str, reason: str, tenant_id: str = "") -> bool:
         conn = self._get_db()
         if conn:
-            conn.execute("UPDATE audit_log SET flagged = 1, flag_reason = ? WHERE entry_id = ?",
-                         (reason, entry_id))
+            conn.execute(
+                "UPDATE audit_log SET flagged = 1, flag_reason = ? WHERE entry_id = ? AND tenant_id = ?",
+                (reason, entry_id, tenant_id))
             conn.commit()
             affected = conn.total_changes
             conn.close()
             return affected > 0
         return False
 
-    def export_log(self, format: str = "json", limit: int = 1000) -> str | list[dict]:
-        entries = self.get_audit_trail(limit=limit)
+    def export_log(self, format: str = "json", limit: int = 1000, tenant_id: str = "") -> str | list[dict]:
+        entries = self.get_audit_trail(limit=limit, tenant_id=tenant_id)
         records = [
             {"id": e.entry_id, "session": e.session_id, "agent": e.agent_id,
              "action": e.action, "tool": e.tool, "cost_usd": e.cost_usd,

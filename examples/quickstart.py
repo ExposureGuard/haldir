@@ -10,11 +10,12 @@ Usage:
     python3 examples/quickstart.py
 """
 
+import os
 import sys
 import httpx
 
 BASE_URL = "https://haldir.xyz"
-BOOTSTRAP_TOKEN = "haldir_boot_2026"
+BOOTSTRAP_TOKEN = os.environ.get("HALDIR_BOOTSTRAP_TOKEN", "")
 HEADERS = {"Content-Type": "application/json"}
 
 
@@ -30,7 +31,6 @@ def main():
         headers=HEADERS,
         json={
             "name": "quickstart-demo",
-            "tier": "pro",
             "bootstrap_token": BOOTSTRAP_TOKEN,
         },
     )

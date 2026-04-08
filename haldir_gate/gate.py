@@ -31,6 +31,7 @@ class Session:
     expires_at: float = 0.0
     revoked: bool = False
     metadata: dict = field(default_factory=dict)
+    tenant_id: str = ""
 
     @property
     def is_valid(self) -> bool:
@@ -78,28 +79,30 @@ class Gate:
         return get_db(self._db_path)
 
     def register_agent(self, agent_id: str, default_scopes: list[str] | None = None,
-                       max_spend: float = 0.0, metadata: dict | None = None):
+                       max_spend: float = 0.0, metadata: dict | None = None,
+                       tenant_id: str = ""):
         scopes = default_scopes or ["read", "browse"]
         policy = {
             "default_scopes": scopes,
             "max_spend": max_spend,
             "metadata": metadata or {},
         }
-        self._agent_policies[agent_id] = policy
+        self._agent_policies[f"{tenant_id}:{agent_id}"] = policy
 
         conn = self._get_db()
         if conn:
             conn.execute(
-                "INSERT OR REPLACE INTO agents (agent_id, default_scopes, max_spend, metadata, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (agent_id, json.dumps(scopes), max_spend, json.dumps(metadata or {}), time.time())
+                "INSERT OR REPLACE INTO agents (agent_id, tenant_id, default_scopes, max_spend, metadata, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (agent_id, tenant_id, json.dumps(scopes), max_spend, json.dumps(metadata or {}), time.time())
             )
             conn.commit()
             conn.close()
 
     def create_session(self, agent_id: str, scopes: list[str] | None = None,
-                       ttl: int = 3600, spend_limit: float | None = None) -> Session:
-        policy = self._agent_policies.get(agent_id, {})
+                       ttl: int = 3600, spend_limit: float | None = None,
+                       tenant_id: str = "") -> Session:
+        policy = self._agent_policies.get(f"{tenant_id}:{agent_id}", {})
         effective_scopes = scopes or policy.get("default_scopes", ["read"])
 
         effective_spend = spend_limit
@@ -119,15 +122,16 @@ class Gate:
             scopes=[s.split(":")[0] for s in effective_scopes],
             spend_limit=effective_spend,
             expires_at=time.time() + ttl if ttl > 0 else 0,
+            tenant_id=tenant_id,
         )
         self._sessions[session.session_id] = session
 
         conn = self._get_db()
         if conn:
             conn.execute(
-                "INSERT INTO sessions (session_id, agent_id, scopes, spend_limit, spent, created_at, expires_at, revoked) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (session.session_id, session.agent_id, json.dumps(session.scopes),
+                "INSERT INTO sessions (session_id, tenant_id, agent_id, scopes, spend_limit, spent, created_at, expires_at, revoked) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (session.session_id, tenant_id, session.agent_id, json.dumps(session.scopes),
                  session.spend_limit, 0.0, session.created_at, session.expires_at, 0)
             )
             conn.commit()
@@ -135,11 +139,13 @@ class Gate:
 
         return session
 
-    def get_session(self, session_id: str) -> Session | None:
-        # If we have a DB, always check it for fresh revocation status
+    def get_session(self, session_id: str, tenant_id: str = "") -> Session | None:
         conn = self._get_db()
         if conn:
-            row = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE session_id = ? AND tenant_id = ?",
+                (session_id, tenant_id)
+            ).fetchone()
             conn.close()
             if not row or int(row["revoked"]):
                 self._sessions.pop(session_id, None)
@@ -153,6 +159,7 @@ class Gate:
                 created_at=row["created_at"],
                 expires_at=row["expires_at"],
                 revoked=bool(int(row["revoked"])),
+                tenant_id=row["tenant_id"],
             )
             if session.is_valid:
                 self._sessions[session_id] = session
@@ -161,71 +168,75 @@ class Gate:
 
         # In-memory fallback
         session = self._sessions.get(session_id)
-        if session and session.is_valid:
+        if session and session.is_valid and session.tenant_id == tenant_id:
             return session
-
-        # Check DB
-        conn = self._get_db()
-        if conn:
-            row = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
-            conn.close()
-            if row and not int(row["revoked"]):
-                session = Session(
-                    session_id=row["session_id"],
-                    agent_id=row["agent_id"],
-                    scopes=json.loads(row["scopes"]),
-                    spend_limit=row["spend_limit"],
-                    spent=row["spent"],
-                    created_at=row["created_at"],
-                    expires_at=row["expires_at"],
-                    revoked=bool(row["revoked"]),
-                )
-                if session.is_valid:
-                    self._sessions[session_id] = session
-                    return session
         return None
 
-    def check_permission(self, session_id: str, scope: str) -> bool:
-        session = self.get_session(session_id)
+    def check_permission(self, session_id: str, scope: str, tenant_id: str = "") -> bool:
+        session = self.get_session(session_id, tenant_id=tenant_id)
         if not session:
             return False
         return session.has_permission(scope)
 
-    def authorize_spend(self, session_id: str, amount: float) -> bool:
-        session = self.get_session(session_id)
+    def authorize_spend(self, session_id: str, amount: float, tenant_id: str = "") -> bool:
+        session = self.get_session(session_id, tenant_id=tenant_id)
         if not session:
             return False
         return session.authorize_spend(amount)
 
-    def record_spend(self, session_id: str, amount: float) -> bool:
-        session = self.get_session(session_id)
+    def record_spend(self, session_id: str, amount: float, tenant_id: str = "") -> bool:
+        session = self.get_session(session_id, tenant_id=tenant_id)
         if not session or not session.authorize_spend(amount):
             return False
         session.record_spend(amount)
 
         conn = self._get_db()
         if conn:
-            conn.execute("UPDATE sessions SET spent = ? WHERE session_id = ?",
-                         (session.spent, session_id))
+            conn.execute("UPDATE sessions SET spent = ? WHERE session_id = ? AND tenant_id = ?",
+                         (session.spent, session_id, tenant_id))
             conn.commit()
             conn.close()
         return True
 
-    def revoke_session(self, session_id: str) -> bool:
+    def revoke_session(self, session_id: str, tenant_id: str = "") -> bool:
         session = self._sessions.get(session_id)
-        if session:
+        if session and session.tenant_id == tenant_id:
             session.revoked = True
 
         conn = self._get_db()
         if conn:
-            conn.execute("UPDATE sessions SET revoked = 1 WHERE session_id = ?", (session_id,))
+            conn.execute("UPDATE sessions SET revoked = 1 WHERE session_id = ? AND tenant_id = ?",
+                         (session_id, tenant_id))
             conn.commit()
             conn.close()
             return True
         return session is not None
 
-    def list_sessions(self, agent_id: str | None = None) -> list[Session]:
-        sessions = [s for s in self._sessions.values() if s.is_valid]
+    def list_sessions(self, agent_id: str | None = None, tenant_id: str = "") -> list[Session]:
+        conn = self._get_db()
+        if conn:
+            if agent_id:
+                rows = conn.execute(
+                    "SELECT * FROM sessions WHERE tenant_id = ? AND agent_id = ? AND revoked = 0",
+                    (tenant_id, agent_id)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM sessions WHERE tenant_id = ? AND revoked = 0",
+                    (tenant_id,)
+                ).fetchall()
+            conn.close()
+            return [
+                Session(
+                    session_id=r["session_id"], agent_id=r["agent_id"],
+                    scopes=json.loads(r["scopes"]), spend_limit=r["spend_limit"],
+                    spent=r["spent"], created_at=r["created_at"],
+                    expires_at=r["expires_at"], revoked=bool(int(r["revoked"])),
+                    tenant_id=r["tenant_id"],
+                )
+                for r in rows
+            ]
+        sessions = [s for s in self._sessions.values() if s.is_valid and s.tenant_id == tenant_id]
         if agent_id:
             sessions = [s for s in sessions if s.agent_id == agent_id]
         return sessions

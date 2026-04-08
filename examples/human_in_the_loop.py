@@ -17,12 +17,13 @@ Usage:
     python3 examples/human_in_the_loop.py
 """
 
+import os
 import sys
 import time
 import httpx
 
 BASE_URL = "https://haldir.xyz"
-BOOTSTRAP_TOKEN = "haldir_boot_2026"
+BOOTSTRAP_TOKEN = os.environ.get("HALDIR_BOOTSTRAP_TOKEN", "")
 
 
 def setup() -> tuple[str, dict, str]:
@@ -33,7 +34,7 @@ def setup() -> tuple[str, dict, str]:
     resp = httpx.post(
         f"{BASE_URL}/v1/keys",
         headers=headers,
-        json={"name": "approval-demo", "tier": "pro", "bootstrap_token": BOOTSTRAP_TOKEN},
+        json={"name": "approval-demo", "bootstrap_token": BOOTSTRAP_TOKEN},
     )
     if resp.status_code != 201:
         print(f"[-] Failed to create API key: {resp.text}")

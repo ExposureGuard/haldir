@@ -17,19 +17,20 @@ Usage:
     python3 examples/proxy_mode.py
 """
 
+import os
 import sys
 import json
 import httpx
 
 BASE_URL = "https://haldir.xyz"
-BOOTSTRAP_TOKEN = "haldir_boot_2026"
+BOOTSTRAP_TOKEN = os.environ.get("HALDIR_BOOTSTRAP_TOKEN", "")
 
 
 def setup_auth() -> tuple[str, dict]:
     """Create an API key and return (api_key, auth_headers)."""
     resp = httpx.post(
         f"{BASE_URL}/v1/keys",
-        json={"name": "proxy-demo", "tier": "pro", "bootstrap_token": BOOTSTRAP_TOKEN},
+        json={"name": "proxy-demo", "bootstrap_token": BOOTSTRAP_TOKEN},
         headers={"Content-Type": "application/json"},
     )
     if resp.status_code != 201:

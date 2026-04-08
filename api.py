@@ -53,10 +53,10 @@ gate = Gate(db_path=DB_PATH)
 vault = Vault(encryption_key=ENCRYPTION_KEY, db_path=DB_PATH)
 watch = Watch(db_path=DB_PATH)
 
-# If no encryption key was set, save the generated one
+# Require encryption key in production
 if not ENCRYPTION_KEY:
-    print(f"[!] No HALDIR_ENCRYPTION_KEY set. Generated: {vault.encryption_key.decode()}")
-    print(f"[!] Set this as an environment variable to persist secrets across restarts.")
+    print("[!] WARNING: No HALDIR_ENCRYPTION_KEY set. A random key was generated.")
+    print("[!] Secrets will be LOST on restart. Set HALDIR_ENCRYPTION_KEY env var.")
 
 # ── Billing tier limits ──
 
@@ -173,7 +173,7 @@ def create_api_key():
 
     data = request.json or {}
     name = data.get("name", "default")
-    tier = data.get("tier", "free")
+    tier = "free"  # Always free on creation — only Stripe webhooks can upgrade
 
     full_key = f"hld_{secrets.token_urlsafe(32)}"
     key_hash = _hash_key(full_key)
@@ -232,8 +232,9 @@ def create_session():
     ttl = data.get("ttl", 3600)
     spend_limit = data.get("spend_limit")
 
-    gate.register_agent(agent_id, default_scopes=scopes)
-    session = gate.create_session(agent_id, scopes=scopes, ttl=ttl, spend_limit=spend_limit)
+    tenant = getattr(request, "tenant_id", "")
+    gate.register_agent(agent_id, default_scopes=scopes, tenant_id=tenant)
+    session = gate.create_session(agent_id, scopes=scopes, ttl=ttl, spend_limit=spend_limit, tenant_id=tenant)
 
     return jsonify({
         "session_id": session.session_id,
@@ -248,7 +249,8 @@ def create_session():
 @app.route("/v1/sessions/<session_id>", methods=["GET"])
 @require_api_key
 def get_session(session_id):
-    session = gate.get_session(session_id)
+    tenant = getattr(request, "tenant_id", "")
+    session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
         return jsonify({"error": "Session not found or expired"}), 404
 
@@ -268,7 +270,8 @@ def get_session(session_id):
 @app.route("/v1/sessions/<session_id>", methods=["DELETE"])
 @require_api_key
 def revoke_session(session_id):
-    revoked = gate.revoke_session(session_id)
+    tenant = getattr(request, "tenant_id", "")
+    revoked = gate.revoke_session(session_id, tenant_id=tenant)
     if not revoked:
         return jsonify({"error": "Session not found"}), 404
     return jsonify({"revoked": True, "session_id": session_id})
@@ -282,7 +285,8 @@ def check_permission(session_id):
     if not scope:
         return jsonify({"error": "scope is required"}), 400
 
-    allowed = gate.check_permission(session_id, scope)
+    tenant = getattr(request, "tenant_id", "")
+    allowed = gate.check_permission(session_id, scope, tenant_id=tenant)
     return jsonify({"allowed": allowed, "session_id": session_id, "scope": scope})
 
 
@@ -298,7 +302,8 @@ def store_secret():
         return jsonify({"error": "name and value are required"}), 400
 
     scope_required = data.get("scope_required", "read")
-    vault.store_secret(name, value, scope_required=scope_required)
+    tenant = getattr(request, "tenant_id", "")
+    vault.store_secret(name, value, scope_required=scope_required, tenant_id=tenant)
 
     return jsonify({"stored": True, "name": name}), 201
 
@@ -306,15 +311,17 @@ def store_secret():
 @app.route("/v1/secrets/<name>", methods=["GET"])
 @require_api_key
 def get_secret(name):
+    tenant = getattr(request, "tenant_id", "")
     session_id = request.headers.get("X-Session-ID") or request.args.get("session_id")
-    session = None
-    if session_id:
-        session = gate.get_session(session_id)
-        if not session:
-            return jsonify({"error": "Invalid or expired session"}), 401
+    if not session_id:
+        return jsonify({"error": "X-Session-ID header or session_id param required to access secrets"}), 400
+
+    session = gate.get_session(session_id, tenant_id=tenant)
+    if not session:
+        return jsonify({"error": "Invalid or expired session"}), 401
 
     try:
-        value = vault.get_secret(name, session=session)
+        value = vault.get_secret(name, session=session, tenant_id=tenant)
     except PermissionError as e:
         return jsonify({"error": str(e)}), 403
 
@@ -327,7 +334,8 @@ def get_secret(name):
 @app.route("/v1/secrets/<name>", methods=["DELETE"])
 @require_api_key
 def delete_secret(name):
-    deleted = vault.delete_secret(name)
+    tenant = getattr(request, "tenant_id", "")
+    deleted = vault.delete_secret(name, tenant_id=tenant)
     if not deleted:
         return jsonify({"error": f"Secret '{name}' not found"}), 404
     return jsonify({"deleted": True, "name": name})
@@ -336,7 +344,8 @@ def delete_secret(name):
 @app.route("/v1/secrets", methods=["GET"])
 @require_api_key
 def list_secrets():
-    names = vault.list_secrets()
+    tenant = getattr(request, "tenant_id", "")
+    names = vault.list_secrets(tenant_id=tenant)
     return jsonify({"secrets": names, "count": len(names)})
 
 
@@ -352,7 +361,8 @@ def authorize_payment():
     if not session_id or amount is None:
         return jsonify({"error": "session_id and amount are required"}), 400
 
-    session = gate.get_session(session_id)
+    tenant = getattr(request, "tenant_id", "")
+    session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
         return jsonify({"error": "Invalid or expired session"}), 401
 
@@ -379,7 +389,8 @@ def log_action():
     if not session_id or not action:
         return jsonify({"error": "session_id and action are required"}), 400
 
-    session = gate.get_session(session_id)
+    tenant = getattr(request, "tenant_id", "")
+    session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
         return jsonify({"error": "Invalid or expired session"}), 401
 
@@ -387,6 +398,7 @@ def log_action():
         session, tool=tool, action=action,
         details=data.get("details"),
         cost_usd=float(data.get("cost_usd", 0)),
+        tenant_id=tenant,
     )
 
     return jsonify({
@@ -400,12 +412,14 @@ def log_action():
 @app.route("/v1/audit", methods=["GET"])
 @require_api_key
 def get_audit_trail():
+    tenant = getattr(request, "tenant_id", "")
     entries = watch.get_audit_trail(
         session_id=request.args.get("session_id"),
         agent_id=request.args.get("agent_id"),
         tool=request.args.get("tool"),
         flagged_only=request.args.get("flagged") == "true",
         limit=int(request.args.get("limit", 100)),
+        tenant_id=tenant,
     )
 
     return jsonify({
@@ -431,9 +445,11 @@ def get_audit_trail():
 @app.route("/v1/audit/spend", methods=["GET"])
 @require_api_key
 def get_spend():
+    tenant = getattr(request, "tenant_id", "")
     return jsonify(watch.get_spend(
         session_id=request.args.get("session_id"),
         agent_id=request.args.get("agent_id"),
+        tenant_id=tenant,
     ))
 
 
@@ -508,7 +524,8 @@ def request_approval():
     session_id = data.get("session_id")
     if not session_id:
         return jsonify({"error": "session_id is required"}), 400
-    session = gate.get_session(session_id)
+    tenant = getattr(request, "tenant_id", "")
+    session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
         return jsonify({"error": "Invalid or expired session"}), 401
 
@@ -642,23 +659,29 @@ def rate_limit():
         entry["count"] += 1
         _rate_limits[key_hash] = entry
 
-        tier = getattr(request, "api_key_tier", "free")
-        limit = RATE_LIMITS.get(tier, 100)
+        # Look up tier and tenant from DB (runs before @require_api_key)
+        conn = get_db(DB_PATH)
+        row = conn.execute("SELECT tenant_id, tier FROM api_keys WHERE key_hash = ? AND revoked = 0", (key_hash,)).fetchone()
+        conn.close()
+        if not row:
+            return  # Let @require_api_key handle invalid keys
+
+        tier = row["tier"]
+        tenant = row["tenant_id"]
+
+        # Check subscription tier (may override key tier)
+        billing_tier = _get_tenant_tier(tenant)
+        effective_tier = billing_tier if billing_tier != "free" else tier
+
+        limit = RATE_LIMITS.get(effective_tier, 100)
         if entry["count"] > limit:
             return jsonify({
                 "error": "Rate limit exceeded",
                 "limit": limit,
-                "tier": tier,
+                "tier": effective_tier,
                 "retry_after": int(entry["start"] + window - now),
             }), 429
 
-        # Monthly action quota check (billing tier)
-        tenant = None
-        conn = get_db(DB_PATH)
-        row = conn.execute("SELECT tenant_id FROM api_keys WHERE key_hash = ? AND revoked = 0", (key_hash,)).fetchone()
-        conn.close()
-        if row:
-            tenant = row["tenant_id"]
         if tenant:
             billing_tier = _get_tenant_tier(tenant)
             tier_limits = TIER_LIMITS.get(billing_tier, TIER_LIMITS["free"])
@@ -1245,6 +1268,7 @@ def _mcp_error(id, code, message):
 
 def _mcp_call_tool(name, arguments):
     """Dispatch an MCP tool call to the existing Gate/Vault/Watch logic."""
+    tenant = getattr(request, "tenant_id", "")
 
     # -- Gate --
     if name == "createSession":
@@ -1254,8 +1278,8 @@ def _mcp_call_tool(name, arguments):
         scopes = arguments.get("scopes", ["read", "browse"])
         ttl = arguments.get("ttl", 3600)
         spend_limit = arguments.get("spend_limit")
-        gate.register_agent(agent_id, default_scopes=scopes)
-        session = gate.create_session(agent_id, scopes=scopes, ttl=ttl, spend_limit=spend_limit)
+        gate.register_agent(agent_id, default_scopes=scopes, tenant_id=tenant)
+        session = gate.create_session(agent_id, scopes=scopes, ttl=ttl, spend_limit=spend_limit, tenant_id=tenant)
         return {"content": [{"type": "text", "text": json.dumps({
             "session_id": session.session_id,
             "agent_id": session.agent_id,
@@ -1266,7 +1290,7 @@ def _mcp_call_tool(name, arguments):
         })}]}
 
     if name == "getSession":
-        session = gate.get_session(arguments.get("session_id", ""))
+        session = gate.get_session(arguments.get("session_id", ""), tenant_id=tenant)
         if not session:
             return {"isError": True, "content": [{"type": "text", "text": "Session not found or expired"}]}
         return {"content": [{"type": "text", "text": json.dumps({
@@ -1283,7 +1307,7 @@ def _mcp_call_tool(name, arguments):
 
     if name == "revokeSession":
         sid = arguments.get("session_id", "")
-        revoked = gate.revoke_session(sid)
+        revoked = gate.revoke_session(sid, tenant_id=tenant)
         if not revoked:
             return {"isError": True, "content": [{"type": "text", "text": "Session not found"}]}
         return {"content": [{"type": "text", "text": json.dumps({"revoked": True, "session_id": sid})}]}
@@ -1293,7 +1317,7 @@ def _mcp_call_tool(name, arguments):
         scope = arguments.get("scope", "")
         if not scope:
             return {"isError": True, "content": [{"type": "text", "text": "scope is required"}]}
-        allowed = gate.check_permission(sid, scope)
+        allowed = gate.check_permission(sid, scope, tenant_id=tenant)
         return {"content": [{"type": "text", "text": json.dumps({"allowed": allowed, "session_id": sid, "scope": scope})}]}
 
     # -- Vault --
@@ -1303,19 +1327,19 @@ def _mcp_call_tool(name, arguments):
         if not sname or not value:
             return {"isError": True, "content": [{"type": "text", "text": "name and value are required"}]}
         scope_req = arguments.get("scope_required", "read")
-        vault.store_secret(sname, value, scope_required=scope_req)
+        vault.store_secret(sname, value, scope_required=scope_req, tenant_id=tenant)
         return {"content": [{"type": "text", "text": json.dumps({"stored": True, "name": sname})}]}
 
     if name == "getSecret":
         sname = arguments.get("name", "")
         session_id = arguments.get("session_id")
-        session = None
-        if session_id:
-            session = gate.get_session(session_id)
-            if not session:
-                return {"isError": True, "content": [{"type": "text", "text": "Invalid or expired session"}]}
+        if not session_id:
+            return {"isError": True, "content": [{"type": "text", "text": "session_id is required to access secrets"}]}
+        session = gate.get_session(session_id, tenant_id=tenant)
+        if not session:
+            return {"isError": True, "content": [{"type": "text", "text": "Invalid or expired session"}]}
         try:
-            value = vault.get_secret(sname, session=session)
+            value = vault.get_secret(sname, session=session, tenant_id=tenant)
         except PermissionError as e:
             return {"isError": True, "content": [{"type": "text", "text": str(e)}]}
         if value is None:
@@ -1327,7 +1351,7 @@ def _mcp_call_tool(name, arguments):
         amount = arguments.get("amount")
         if not sid or amount is None:
             return {"isError": True, "content": [{"type": "text", "text": "session_id and amount are required"}]}
-        session = gate.get_session(sid)
+        session = gate.get_session(sid, tenant_id=tenant)
         if not session:
             return {"isError": True, "content": [{"type": "text", "text": "Invalid or expired session"}]}
         result = vault.authorize_payment(
@@ -1343,13 +1367,14 @@ def _mcp_call_tool(name, arguments):
         action = arguments.get("action", "")
         if not sid or not action:
             return {"isError": True, "content": [{"type": "text", "text": "session_id and action are required"}]}
-        session = gate.get_session(sid)
+        session = gate.get_session(sid, tenant_id=tenant)
         if not session:
             return {"isError": True, "content": [{"type": "text", "text": "Invalid or expired session"}]}
         entry = watch.log_action(
             session, tool=arguments.get("tool", ""), action=action,
             details=arguments.get("details"),
             cost_usd=float(arguments.get("cost_usd", 0)),
+            tenant_id=tenant,
         )
         return {"content": [{"type": "text", "text": json.dumps({
             "logged": True, "entry_id": entry.entry_id,
@@ -1363,6 +1388,7 @@ def _mcp_call_tool(name, arguments):
             tool=arguments.get("tool"),
             flagged_only=arguments.get("flagged_only", False),
             limit=int(arguments.get("limit", 100)),
+            tenant_id=tenant,
         )
         return {"content": [{"type": "text", "text": json.dumps({
             "count": len(entries),
@@ -1382,12 +1408,14 @@ def _mcp_call_tool(name, arguments):
         return {"content": [{"type": "text", "text": json.dumps(watch.get_spend(
             session_id=arguments.get("session_id"),
             agent_id=arguments.get("agent_id"),
+            tenant_id=tenant,
         ))}]}
 
     return {"isError": True, "content": [{"type": "text", "text": f"Unknown tool: {name}"}]}
 
 
 @app.route("/mcp", methods=["POST"])
+@require_api_key
 def mcp_jsonrpc():
     """MCP JSON-RPC 2.0 endpoint for Smithery.ai and MCP clients."""
     body = request.get_json(silent=True)
@@ -1595,7 +1623,8 @@ def proxy_call():
     if not session_id:
         return jsonify({"error": "session_id is required"}), 400
 
-    session = gate.get_session(session_id)
+    tenant = getattr(request, "tenant_id", "")
+    session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
         return jsonify({"error": "Invalid or expired session"}), 401
 
