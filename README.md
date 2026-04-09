@@ -1,7 +1,7 @@
 <!-- mcp-name: io.github.ExposureGuard/haldir -->
 # Haldir — The Guardian Layer for AI Agents
 
-[![Smithery Score](https://img.shields.io/badge/Smithery-98%2F100-gold)](https://smithery.ai/server/haldir/haldir)
+[![Smithery](https://smithery.ai/badge/haldir)](https://smithery.ai/server/haldir/haldir)
 [![PyPI](https://img.shields.io/pypi/v/haldir)](https://pypi.org/project/haldir/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -217,6 +217,6 @@ MIT
 
 - **Website:** [haldir.xyz](https://haldir.xyz)
 - **API Docs:** [haldir.xyz/docs](https://haldir.xyz/docs)
-- **Smithery:** [98/100](https://smithery.ai/server/haldir/haldir)
+- **Smithery:** [View on Smithery](https://smithery.ai/server/haldir/haldir)
 - **PyPI:** [haldir](https://pypi.org/project/haldir/)
 - **OpenAPI:** [haldir.xyz/openapi.json](https://haldir.xyz/openapi.json)
