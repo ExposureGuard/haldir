@@ -10,3 +10,5 @@ build/
 .env
 *.whl
 *.tar.gz
+YC_APPLICATION_DRAFT.md
+YC_NOTES.md
