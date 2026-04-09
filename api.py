@@ -1530,6 +1530,17 @@ def mcp_info():
     })
 
 
+@app.route("/.well-known/mcp/mcp.json")
+def mcp_discovery():
+    """Lightweight MCP discovery metadata."""
+    mcp_dir = os.path.join(os.path.dirname(__file__), ".well-known", "mcp")
+    path = os.path.join(mcp_dir, "mcp.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            return jsonify(json.load(f))
+    return jsonify({"error": "not found"}), 404
+
+
 @app.route("/.well-known/mcp/server-card.json")
 def mcp_server_card():
     """MCP server card for automated discovery and Smithery listing."""

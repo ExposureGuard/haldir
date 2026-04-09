@@ -1,0 +1,25 @@
+{
+  "name": "haldir",
+  "version": "0.1.0",
+  "description": "The guardian layer for AI agents — identity, secrets, audit, proxy enforcement via MCP",
+  "url": "https://haldir.xyz",
+  "mcpEndpoint": "https://haldir.xyz/mcp",
+  "transport": "http",
+  "authentication": {
+    "type": "bearer",
+    "instructions": "Pass your API key via Authorization: Bearer <key> header"
+  },
+  "capabilities": {
+    "tools": true,
+    "prompts": true,
+    "resources": false
+  },
+  "links": {
+    "docs": "https://haldir.xyz/docs",
+    "openapi": "https://haldir.xyz/openapi.json",
+    "llms": "https://haldir.xyz/llms.txt",
+    "serverCard": "https://haldir.xyz/.well-known/mcp/server-card.json",
+    "pypi": "https://pypi.org/project/haldir/",
+    "github": "https://github.com/ExposureGuard/haldir"
+  }
+}
