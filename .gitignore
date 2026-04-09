@@ -10,12 +10,14 @@ build/
 .env
 *.whl
 *.tar.gz
-YC_APPLICATION_DRAFT.md
-YC_NOTES.md
-FUNDING_OPTIONS.md
+
+# Private docs (local only)
+/private/
 CONVERSATION_HISTORY.md
 DAILY_REALITY_CHECK.md
 DAILY_PLAYBOOK.md
 FUNDING_PATH.md
+FUNDING_OPTIONS.md
 SOUL.md
 USER_CONVERSATIONS.md
+YC_*.md
