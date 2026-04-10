@@ -382,7 +382,7 @@
 
         // Step 1: create key
         addLine('dim', '$ creating API key...');
-        fetch(BASE + '/v1/keys', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:'demo-'+Date.now()})})
+        fetch(BASE + '/v1/demo/key', {method:'POST', headers:{'Content-Type':'application/json'}})
         .then(function(r){return r.json()})
         .then(function(d){
             var key = d.key;
