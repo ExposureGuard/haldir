@@ -383,8 +383,9 @@
         // Step 1: create key
         addLine('dim', '$ creating API key...');
         fetch(BASE + '/v1/demo/key', {method:'POST', headers:{'Content-Type':'application/json'}})
-        .then(function(r){return r.json()})
+        .then(function(r){if(!r.ok) throw new Error('Server returned '+r.status); return r.json()})
         .then(function(d){
+            if(!d.key) throw new Error(d.error || 'Failed to create key');
             var key = d.key;
             var H = {'Authorization':'Bearer '+key, 'Content-Type':'application/json'};
             addLine('success', '+ Key: ' + key.substring(0,12) + '...');

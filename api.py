@@ -201,24 +201,28 @@ def create_api_key():
 @app.route("/v1/demo/key", methods=["POST"])
 def create_demo_key():
     """Create a temporary demo API key for the landing page. No auth required."""
-    full_key = f"hld_{secrets.token_urlsafe(32)}"
-    key_hash = _hash_key(full_key)
-    tenant_id = f"demo_{key_hash[:12]}"
+    try:
+        full_key = f"hld_{secrets.token_urlsafe(32)}"
+        key_hash = _hash_key(full_key)
+        tenant_id = f"demo_{key_hash[:12]}"
 
-    conn = get_db(DB_PATH)
-    conn.execute(
-        "INSERT INTO api_keys (key_hash, key_prefix, tenant_id, name, tier, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (key_hash, full_key[:12], tenant_id, "landing-demo", "free", time.time())
-    )
-    conn.commit()
-    conn.close()
+        conn = get_db(DB_PATH)
+        conn.execute(
+            "INSERT INTO api_keys (key_hash, key_prefix, tenant_id, name, tier, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (key_hash, full_key[:12], tenant_id, "landing-demo", "free", time.time())
+        )
+        conn.commit()
+        conn.close()
 
-    return jsonify({
-        "key": full_key,
-        "prefix": full_key[:12],
-        "name": "landing-demo",
-        "tier": "free",
-    }), 201
+        return jsonify({
+            "key": full_key,
+            "prefix": full_key[:12],
+            "name": "landing-demo",
+            "tier": "free",
+        }), 201
+    except Exception as e:
+        print(f"[!] Demo key creation failed: {e}")
+        return jsonify({"error": "Demo temporarily unavailable. Try again in a moment."}), 503
 
 
 # ── Gate: Sessions ──
