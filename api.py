@@ -705,7 +705,7 @@ RATE_LIMITS = {"free": 100, "pro": 5000, "enterprise": 50000}
 
 @app.before_request
 def rate_limit():
-    if request.path.startswith("/v1/") and request.path != "/v1/keys":
+    if request.path.startswith("/v1/") and request.path not in ("/v1/keys", "/v1/demo/key"):
         key = request.headers.get("Authorization", "").replace("Bearer ", "") or request.headers.get("X-API-Key", "")
         if not key:
             return

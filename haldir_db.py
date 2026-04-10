@@ -42,11 +42,22 @@ def _get_pg():
     import psycopg2.pool
 
     if _pg_pool is None:
-        _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 10, DATABASE_URL)
+        _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
 
-    conn = _pg_pool.getconn()
-    conn.autocommit = False
-    return PgConnectionWrapper(conn, _pg_pool)
+    try:
+        conn = _pg_pool.getconn()
+        conn.autocommit = False
+        return PgConnectionWrapper(conn, _pg_pool)
+    except psycopg2.pool.PoolError:
+        # Pool exhausted — reset it
+        try:
+            _pg_pool.closeall()
+        except Exception:
+            pass
+        _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
+        conn = _pg_pool.getconn()
+        conn.autocommit = False
+        return PgConnectionWrapper(conn, _pg_pool)
 
 
 def _sqlite_to_pg(sql):
