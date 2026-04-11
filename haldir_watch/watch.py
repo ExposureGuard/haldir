@@ -1,5 +1,5 @@
 """
-Haldir Watch — Audit trail and cost tracking with SQLite persistence.
+Haldir Watch — Audit trail and cost tracking with persistent storage.
 """
 
 import json

@@ -1,5 +1,5 @@
 """
-Haldir Vault — Encrypted secrets and payment authorization with SQLite persistence.
+Haldir Vault — Encrypted secrets and payment authorization with persistent storage.
 """
 
 import json

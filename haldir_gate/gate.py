@@ -1,5 +1,5 @@
 """
-Haldir Gate — Core identity and permission engine with SQLite persistence.
+Haldir Gate — Core identity and permission engine with persistent storage.
 """
 
 import json
