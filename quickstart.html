@@ -11,13 +11,22 @@ h1{font-weight:200;font-size:2rem;margin-bottom:0.5rem}
 .step-num{font-family:'IBM Plex Mono',monospace;font-size:0.6rem;color:#b8973a;letter-spacing:2px;text-transform:uppercase;margin-bottom:0.5rem}
 .step h2{font-weight:400;font-size:1rem;margin-bottom:0.75rem}
 .step p{font-size:0.85rem;color:rgba(224,221,213,0.5);line-height:1.7;margin-bottom:0.75rem}
-pre{background:rgba(255,255,255,0.03);border:1px solid rgba(224,221,213,0.08);border-radius:4px;padding:1rem;font-family:'IBM Plex Mono',monospace;font-size:0.75rem;color:rgba(224,221,213,0.6);overflow-x:auto;line-height:1.8;margin:0.5rem 0;position:relative}
+pre{background:rgba(255,255,255,0.03);border:1px solid rgba(224,221,213,0.08);border-radius:4px;padding:1rem;font-family:'IBM Plex Mono',monospace;font-size:0.75rem;color:rgba(224,221,213,0.6);overflow-x:auto;line-height:1.8;margin:0.5rem 0;position:relative;white-space:pre-wrap;word-wrap:break-word}
 a{color:#b8973a;text-decoration:none}a:hover{text-decoration:underline}
-.btn{display:inline-block;padding:0.75rem 2rem;border:1px solid #b8973a;color:#b8973a;font-family:'IBM Plex Mono',monospace;font-size:0.8rem;letter-spacing:1px;cursor:pointer;background:transparent;border-radius:4px;transition:all 0.2s}
+.btn{display:inline-block;padding:0.75rem 2rem;border:1px solid #b8973a;color:#b8973a;font-family:'IBM Plex Mono',monospace;font-size:0.8rem;letter-spacing:1px;cursor:pointer;background:transparent;border-radius:4px;transition:all 0.2s;width:100%;text-align:center}
 .btn:hover{background:#b8973a;color:#050505}
 .btn:disabled{opacity:0.3;cursor:not-allowed}
-.key-display{background:rgba(184,151,58,0.1);border:1px solid rgba(184,151,58,0.3);border-radius:4px;padding:1rem;font-family:'IBM Plex Mono',monospace;font-size:0.85rem;color:#b8973a;margin:1rem 0;word-break:break-all;display:none}
+.key-display{background:rgba(184,151,58,0.1);border:1px solid rgba(184,151,58,0.3);border-radius:4px;padding:1rem;font-family:'IBM Plex Mono',monospace;font-size:0.7rem;color:#b8973a;margin:1rem 0;word-break:break-all;display:none}
 .copy-btn{position:absolute;top:0.5rem;right:0.5rem;background:rgba(184,151,58,0.15);border:1px solid rgba(184,151,58,0.3);color:#b8973a;font-family:'IBM Plex Mono',monospace;font-size:0.6rem;padding:0.3rem 0.6rem;border-radius:3px;cursor:pointer;letter-spacing:1px}
+@media(max-width:600px){
+body{padding:1rem}
+h1{font-size:1.5rem}
+.step{padding:1rem}
+pre{font-size:0.65rem;padding:0.75rem;line-height:1.6}
+.key-display{font-size:0.6rem;padding:0.75rem}
+.btn{font-size:0.7rem;padding:0.6rem 1rem}
+.copy-btn{font-size:0.5rem;padding:0.2rem 0.4rem}
+}
 .copy-btn:hover{background:rgba(184,151,58,0.3)}
 .hidden{display:none}
 .success{color:#6bbd6b}
