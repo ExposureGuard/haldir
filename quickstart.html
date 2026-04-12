@@ -48,8 +48,10 @@ pre{font-size:0.65rem;padding:0.75rem;line-height:1.6}
 
 <div class="step" id="step-2" style="opacity:0.3;pointer-events:none">
     <div class="step-num">Step 2 — Install</div>
-    <h2>One command.</h2>
-    <pre>pip install haldir httpx<button class="copy-btn" onclick="copyText('pip install haldir httpx')">COPY</button></pre>
+    <h2>Two commands.</h2>
+    <pre>python3 -m venv haldir-env && source haldir-env/bin/activate
+pip install haldir httpx<button class="copy-btn" onclick="copyText('python3 -m venv haldir-env && source haldir-env/bin/activate && pip install haldir httpx')">COPY</button></pre>
+    <p>The copy button chains both commands so you can paste and run in one go.</p>
 </div>
 
 <div class="step" id="step-3" style="opacity:0.3;pointer-events:none">
