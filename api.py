@@ -495,6 +495,8 @@ def get_audit_trail():
                 "flag_reason": e.flag_reason,
                 "timestamp": e.timestamp,
                 "details": e.details,
+                "prev_hash": e.prev_hash,
+                "entry_hash": e.entry_hash,
             }
             for e in entries
         ],
@@ -510,6 +512,15 @@ def get_spend():
         agent_id=request.args.get("agent_id"),
         tenant_id=tenant,
     ))
+
+
+@app.route("/v1/audit/verify", methods=["GET"])
+@require_api_key
+def verify_audit_chain():
+    """Verify the cryptographic integrity of the audit log hash chain."""
+    tenant = getattr(request, "tenant_id", "")
+    result = watch.verify_chain(tenant_id=tenant)
+    return jsonify(result)
 
 
 # ── Usage tracking (for billing) ──

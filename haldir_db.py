@@ -262,7 +262,9 @@ _SCHEMA = """
         cost_usd REAL NOT NULL DEFAULT 0.0,
         timestamp REAL NOT NULL,
         flagged INTEGER NOT NULL DEFAULT 0,
-        flag_reason TEXT NOT NULL DEFAULT ''
+        flag_reason TEXT NOT NULL DEFAULT '',
+        prev_hash TEXT NOT NULL DEFAULT '',
+        entry_hash TEXT NOT NULL DEFAULT ''
     );
 
     CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id);

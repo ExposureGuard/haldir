@@ -1,7 +1,12 @@
 """
 Haldir Watch — Audit trail and cost tracking with persistent storage.
+
+Audit entries are hash-chained: each entry contains a SHA-256 hash of its
+contents plus the hash of the previous entry, creating a tamper-evident chain.
+If any past entry is modified, all subsequent hashes break.
 """
 
+import hashlib
 import json
 import secrets
 import time
@@ -21,6 +26,13 @@ class AuditEntry:
     flagged: bool = False
     flag_reason: str = ""
     tenant_id: str = ""
+    prev_hash: str = ""
+    entry_hash: str = ""
+
+    def compute_hash(self) -> str:
+        """SHA-256 hash of entry contents + previous hash = tamper-evident chain."""
+        payload = f"{self.entry_id}|{self.session_id}|{self.agent_id}|{self.action}|{self.tool}|{json.dumps(self.details, sort_keys=True)}|{self.cost_usd}|{self.timestamp}|{self.flagged}|{self.prev_hash}"
+        return hashlib.sha256(payload.encode()).hexdigest()
 
 
 class Watch:
@@ -50,6 +62,18 @@ class Watch:
     def log_action(self, session, tool: str, action: str,
                    details: dict | None = None, cost_usd: float = 0.0,
                    tenant_id: str = "") -> AuditEntry:
+        # Get previous entry hash for chaining
+        prev_hash = ""
+        conn = self._get_db()
+        if conn:
+            row = conn.execute(
+                "SELECT entry_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 1",
+                (tenant_id,)
+            ).fetchone()
+            if row:
+                prev_hash = row["entry_hash"]
+            conn.close()
+
         entry = AuditEntry(
             entry_id=f"aud_{secrets.token_urlsafe(16)}",
             session_id=session.session_id,
@@ -59,7 +83,9 @@ class Watch:
             details=details or {},
             cost_usd=cost_usd,
             tenant_id=tenant_id,
+            prev_hash=prev_hash,
         )
+        entry.entry_hash = entry.compute_hash()
 
         for rule in self._anomaly_rules:
             if self._check_anomaly(entry, rule):
@@ -70,11 +96,12 @@ class Watch:
         conn = self._get_db()
         if conn:
             conn.execute(
-                "INSERT INTO audit_log (entry_id, tenant_id, session_id, agent_id, action, tool, details, cost_usd, timestamp, flagged, flag_reason) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO audit_log (entry_id, tenant_id, session_id, agent_id, action, tool, details, cost_usd, timestamp, flagged, flag_reason, prev_hash, entry_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (entry.entry_id, tenant_id, entry.session_id, entry.agent_id, entry.action,
                  entry.tool, json.dumps(entry.details), entry.cost_usd,
-                 entry.timestamp, int(entry.flagged), entry.flag_reason)
+                 entry.timestamp, int(entry.flagged), entry.flag_reason,
+                 entry.prev_hash, entry.entry_hash)
             )
             conn.commit()
             conn.close()
@@ -124,6 +151,8 @@ class Watch:
                     flagged=bool(r["flagged"]),
                     flag_reason=r["flag_reason"],
                     tenant_id=tenant_id,
+                    prev_hash=r["prev_hash"] if "prev_hash" in r.keys() else "",
+                    entry_hash=r["entry_hash"] if "entry_hash" in r.keys() else "",
                 )
                 for r in rows
             ]
@@ -210,6 +239,59 @@ class Watch:
             conn.close()
             return affected > 0
         return False
+
+    def verify_chain(self, tenant_id: str = "", limit: int = 10000) -> dict:
+        """Verify the hash chain integrity of the audit log.
+
+        Walks the chain from oldest to newest, recomputing each hash.
+        If any entry was tampered with, the chain breaks at that point.
+        """
+        conn = self._get_db()
+        if not conn:
+            return {"verified": False, "error": "No database"}
+
+        rows = conn.execute(
+            "SELECT * FROM audit_log WHERE tenant_id = ? ORDER BY timestamp ASC LIMIT ?",
+            (tenant_id, limit)
+        ).fetchall()
+        conn.close()
+
+        if not rows:
+            return {"verified": True, "entries_checked": 0, "message": "Empty audit log"}
+
+        prev_hash = ""
+        for i, r in enumerate(rows):
+            entry = AuditEntry(
+                entry_id=r["entry_id"], session_id=r["session_id"],
+                agent_id=r["agent_id"], action=r["action"], tool=r["tool"],
+                details=json.loads(r["details"]), cost_usd=r["cost_usd"],
+                timestamp=r["timestamp"], flagged=bool(r["flagged"]),
+                prev_hash=r["prev_hash"],
+            )
+            expected_hash = entry.compute_hash()
+            stored_hash = r["entry_hash"]
+
+            if stored_hash and stored_hash != expected_hash:
+                return {
+                    "verified": False,
+                    "entries_checked": i + 1,
+                    "tampered_entry": r["entry_id"],
+                    "error": "Entry hash mismatch — data was modified",
+                }
+            if entry.prev_hash and entry.prev_hash != prev_hash:
+                return {
+                    "verified": False,
+                    "entries_checked": i + 1,
+                    "broken_at": r["entry_id"],
+                    "error": "Chain broken — previous entry was modified or deleted",
+                }
+            prev_hash = stored_hash or expected_hash
+
+        return {
+            "verified": True,
+            "entries_checked": len(rows),
+            "message": "Audit chain integrity verified",
+        }
 
     def export_log(self, format: str = "json", limit: int = 1000, tenant_id: str = "") -> str | list[dict]:
         entries = self.get_audit_trail(limit=limit, tenant_id=tenant_id)
