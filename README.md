@@ -4,6 +4,7 @@
 [![Smithery](https://smithery.ai/badge/haldir)](https://smithery.ai/server/haldir/haldir)
 [![PyPI](https://img.shields.io/pypi/v/haldir)](https://pypi.org/project/haldir/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![SafeSkill 89/100](https://img.shields.io/badge/SafeSkill-89%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/exposureguard-haldir)
 
 **Identity, secrets, and audit for AI agents. MCP-native. Model-agnostic.**
 
