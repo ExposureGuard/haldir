@@ -1,35 +1,156 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Haldir Quickstart — Get Started in 30 Seconds</title>
-<meta name="description" content="Get started with Haldir in 30 seconds. Install, create a session, store secrets, authorize payments, audit everything.">
+<title>Haldir Quickstart — Governed Agent in 60 Seconds</title>
+<meta name="description" content="Get your first governed AI agent running in 60 seconds. One click to get your API key, copy the script, run it.">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#050505;color:#e0ddd5;font-family:'Inter',sans-serif;padding:3rem;max-width:700px;margin:0 auto}
+body{background:#050505;color:#e0ddd5;font-family:'Inter',sans-serif;padding:3rem;max-width:750px;margin:0 auto}
 h1{font-weight:200;font-size:2rem;margin-bottom:0.5rem}
 .sub{font-size:0.85rem;color:rgba(224,221,213,0.5);margin-bottom:2.5rem}
-.step{margin-bottom:2rem;padding:1.5rem;border:1px solid rgba(224,221,213,0.08);border-radius:6px}
+.step{margin-bottom:1.5rem;padding:1.5rem;border:1px solid rgba(224,221,213,0.08);border-radius:6px}
 .step-num{font-family:'IBM Plex Mono',monospace;font-size:0.6rem;color:#b8973a;letter-spacing:2px;text-transform:uppercase;margin-bottom:0.5rem}
 .step h2{font-weight:400;font-size:1rem;margin-bottom:0.75rem}
 .step p{font-size:0.85rem;color:rgba(224,221,213,0.5);line-height:1.7;margin-bottom:0.75rem}
-pre{background:rgba(255,255,255,0.03);border:1px solid rgba(224,221,213,0.08);border-radius:4px;padding:1rem;font-family:'IBM Plex Mono',monospace;font-size:0.75rem;color:rgba(224,221,213,0.6);overflow-x:auto;line-height:1.8;margin:0.5rem 0}
+pre{background:rgba(255,255,255,0.03);border:1px solid rgba(224,221,213,0.08);border-radius:4px;padding:1rem;font-family:'IBM Plex Mono',monospace;font-size:0.75rem;color:rgba(224,221,213,0.6);overflow-x:auto;line-height:1.8;margin:0.5rem 0;position:relative}
 a{color:#b8973a;text-decoration:none}a:hover{text-decoration:underline}
+.btn{display:inline-block;padding:0.75rem 2rem;border:1px solid #b8973a;color:#b8973a;font-family:'IBM Plex Mono',monospace;font-size:0.8rem;letter-spacing:1px;cursor:pointer;background:transparent;border-radius:4px;transition:all 0.2s}
+.btn:hover{background:#b8973a;color:#050505}
+.btn:disabled{opacity:0.3;cursor:not-allowed}
+.key-display{background:rgba(184,151,58,0.1);border:1px solid rgba(184,151,58,0.3);border-radius:4px;padding:1rem;font-family:'IBM Plex Mono',monospace;font-size:0.85rem;color:#b8973a;margin:1rem 0;word-break:break-all;display:none}
+.copy-btn{position:absolute;top:0.5rem;right:0.5rem;background:rgba(184,151,58,0.15);border:1px solid rgba(184,151,58,0.3);color:#b8973a;font-family:'IBM Plex Mono',monospace;font-size:0.6rem;padding:0.3rem 0.6rem;border-radius:3px;cursor:pointer;letter-spacing:1px}
+.copy-btn:hover{background:rgba(184,151,58,0.3)}
+.hidden{display:none}
+.success{color:#6bbd6b}
+.dim{color:rgba(224,221,213,0.3)}
+#script-block{display:none}
 </style></head><body>
 <p style="margin-bottom:1.5rem;font-size:0.8rem"><a href="/">Haldir</a> / Quickstart</p>
-<h1>Get started in 30 seconds</h1>
-<p class="sub">From zero to governed AI agent in 6 steps.</p>
-<div class="step"><div class="step-num">Step 1</div><h2>Install</h2><pre>pip install haldir</pre></div>
-<div class="step"><div class="step-num">Step 2</div><h2>Get an API key</h2><pre>curl -X POST https://haldir.xyz/v1/keys \
-  -H "Content-Type: application/json" \
-  -d '{"name": "my-app"}'</pre><p>Save the key. You need it for every request.</p></div>
-<div class="step"><div class="step-num">Step 3</div><h2>Create a governed session</h2><pre>from sdk.client import HaldirClient
+<h1>Governed agent in 60 seconds</h1>
+<p class="sub">One click. One script. Real governance on a real agent.</p>
 
-h = HaldirClient(api_key="hld_xxx", base_url="https://haldir.xyz")
-session = h.create_session("my-agent", scopes=["read", "spend:50"])</pre><p>Your agent now has an identity with a $50 budget.</p></div>
-<div class="step"><div class="step-num">Step 4</div><h2>Store secrets</h2><pre>h.store_secret("stripe_key", "sk_live_xxx")</pre><p>AES encrypted. Agents access through scope checks.</p></div>
-<div class="step"><div class="step-num">Step 5</div><h2>Use the proxy</h2><pre>h.authorize_payment(session["session_id"], 29.99)
-h.log_action(session["session_id"], tool="stripe", action="charge", cost_usd=29.99)</pre><p>Budget enforced. Action logged. Every time.</p></div>
-<div class="step"><div class="step-num">Step 6</div><h2>Check the audit trail</h2><pre>spend = h.get_spend(agent_id="my-agent")
-# {"total_usd": 29.99, "by_tool": {"stripe": 29.99}}</pre></div>
+<div class="step">
+    <div class="step-num">Step 1 — Get your API key</div>
+    <h2>Click the button. That's it.</h2>
+    <p>No signup. No email. Just a key.</p>
+    <button class="btn" id="get-key-btn" onclick="getKey()">Get my API key</button>
+    <div class="key-display" id="key-display"></div>
+    <p id="key-warning" class="hidden" style="color:rgba(224,221,213,0.4);font-size:0.75rem;margin-top:0.5rem">Save this key — it won't be shown again.</p>
+</div>
+
+<div class="step" id="step-2" style="opacity:0.3;pointer-events:none">
+    <div class="step-num">Step 2 — Install</div>
+    <h2>One command.</h2>
+    <pre>pip install haldir httpx<button class="copy-btn" onclick="copyText('pip install haldir httpx')">COPY</button></pre>
+</div>
+
+<div class="step" id="step-3" style="opacity:0.3;pointer-events:none">
+    <div class="step-num">Step 3 — Run this script</div>
+    <h2>Copy, paste, run. Watch governance happen.</h2>
+    <p>This script creates a session, checks permissions, stores a secret, authorizes a payment, logs to the audit trail, verifies the hash chain, and revokes the session. All live against haldir.xyz.</p>
+    <pre id="script-block"><code id="script-code"></code><button class="copy-btn" onclick="copyScript()">COPY</button></pre>
+</div>
+
+<div class="step" id="step-4" style="opacity:0.3;pointer-events:none">
+    <div class="step-num">What just happened</div>
+    <h2>Your agent was governed.</h2>
+    <p>Every action was scoped to a session with permissions and a spend limit. The secret was AES-128 encrypted. The payment was authorized against the session budget. Every action was logged to a hash-chained, tamper-evident audit trail. And when you revoked the session, the agent lost all access instantly.</p>
+    <p>That's Haldir. <a href="/docs">Read the full docs</a> or <a href="https://github.com/ExposureGuard/haldir">view the source</a>.</p>
+</div>
+
 <p style="margin-top:2rem;text-align:center;font-size:0.85rem;color:rgba(224,221,213,0.5)">
-Full API docs at <a href="/docs">haldir.xyz/docs</a> · Examples on <a href="https://github.com/ExposureGuard/haldir/tree/main/examples">GitHub</a> · <a href="/blog">Blog</a>
-</p></body></html>
+Full API docs at <a href="/docs">haldir.xyz/docs</a> · <a href="/blog">Blog</a> · <a href="https://github.com/ExposureGuard/haldir">GitHub</a>
+</p>
+
+<script>
+var BASE = window.location.origin;
+var apiKey = '';
+
+function getKey() {
+    var btn = document.getElementById('get-key-btn');
+    btn.disabled = true;
+    btn.textContent = 'Creating...';
+    fetch(BASE + '/v1/demo/key', {method:'POST', headers:{'Content-Type':'application/json'}})
+    .then(function(r){if(!r.ok) throw new Error('Server error'); return r.json()})
+    .then(function(d){
+        if(!d.key) throw new Error('No key returned');
+        apiKey = d.key;
+        var kd = document.getElementById('key-display');
+        kd.textContent = apiKey;
+        kd.style.display = 'block';
+        document.getElementById('key-warning').classList.remove('hidden');
+        btn.textContent = 'Key created';
+        btn.style.borderColor = '#6bbd6b';
+        btn.style.color = '#6bbd6b';
+
+        // Unlock steps 2 and 3
+        document.getElementById('step-2').style.opacity = '1';
+        document.getElementById('step-2').style.pointerEvents = 'auto';
+        document.getElementById('step-3').style.opacity = '1';
+        document.getElementById('step-3').style.pointerEvents = 'auto';
+        document.getElementById('step-4').style.opacity = '1';
+        document.getElementById('step-4').style.pointerEvents = 'auto';
+
+        // Generate the script with the real key
+        var script = generateScript(apiKey);
+        document.getElementById('script-code').textContent = script;
+        document.getElementById('script-block').style.display = 'block';
+    })
+    .catch(function(e){
+        btn.textContent = 'Error — try again';
+        btn.disabled = false;
+        btn.style.borderColor = '#e87b7b';
+        btn.style.color = '#e87b7b';
+    });
+}
+
+function generateScript(key) {
+    return '"""Haldir quickstart — run this and watch governance happen."""\n' +
+        'import httpx, json\n\n' +
+        'BASE = "https://haldir.xyz"\n' +
+        'KEY = "' + key + '"\n' +
+        'H = {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"}\n\n' +
+        '# 1. Create a governed session (read + execute + spend, $50 budget)\n' +
+        'r = httpx.post(f"{BASE}/v1/sessions", headers=H, json={"agent_id": "my-agent", "scopes": ["read", "execute", "spend"], "spend_limit": 50})\n' +
+        'session = r.json()\n' +
+        'sid = session["session_id"]\n' +
+        'print(f"Session: {sid}")\n' +
+        'print(f"  Scopes: {session[\'scopes\']}")\n' +
+        'print(f"  Budget: ${session[\'spend_limit\']}")\n\n' +
+        '# 2. Check permissions — read allowed, delete blocked\n' +
+        'r = httpx.post(f"{BASE}/v1/sessions/{sid}/check", headers=H, json={"scope": "read"})\n' +
+        'print(f"  read: {r.json()[\'allowed\']}")\n' +
+        'r = httpx.post(f"{BASE}/v1/sessions/{sid}/check", headers=H, json={"scope": "delete"})\n' +
+        'print(f"  delete: {r.json()[\'allowed\']} (blocked)")\n\n' +
+        '# 3. Store an encrypted secret\n' +
+        'httpx.post(f"{BASE}/v1/secrets", headers=H, json={"name": "api_key", "value": "sk_live_secret_123"})\n' +
+        'print("Secret stored (AES-128 encrypted)")\n\n' +
+        '# 4. Authorize a payment against the session budget\n' +
+        'r = httpx.post(f"{BASE}/v1/payments/authorize", headers=H, json={"session_id": sid, "amount": 29.99})\n' +
+        'pay = r.json()\n' +
+        'print(f"Payment: ${pay[\'amount\']} authorized, ${pay[\'remaining_budget\']:.2f} remaining")\n\n' +
+        '# 5. Log the action to the audit trail\n' +
+        'r = httpx.post(f"{BASE}/v1/audit", headers=H, json={"session_id": sid, "tool": "stripe", "action": "charge", "cost_usd": 29.99})\n' +
+        'print(f"Audit logged: {r.json()[\'entry_id\']}")\n\n' +
+        '# 6. Verify the hash chain (tamper-evident)\n' +
+        'r = httpx.get(f"{BASE}/v1/audit/verify", headers=H)\n' +
+        'v = r.json()\n' +
+        'print(f"Chain integrity: {v[\'verified\']} ({v.get(\'entries_checked\', 0)} entries checked)")\n\n' +
+        '# 7. Revoke the session — agent loses all access\n' +
+        'httpx.delete(f"{BASE}/v1/sessions/{sid}", headers=H)\n' +
+        'print("Session revoked. Agent is locked out.")\n\n' +
+        '# 8. Prove it — try to check permission after revocation\n' +
+        'r = httpx.post(f"{BASE}/v1/sessions/{sid}/check", headers=H, json={"scope": "read"})\n' +
+        'print(f"Post-revoke read: {r.json()[\'allowed\']} (blocked)")\n\n' +
+        'print("\\nDone. Every action was governed, logged, and hash-chained.")';
+}
+
+function copyText(text) {
+    navigator.clipboard.writeText(text);
+}
+
+function copyScript() {
+    var code = document.getElementById('script-code').textContent;
+    navigator.clipboard.writeText(code);
+}
+</script>
+</body></html>
