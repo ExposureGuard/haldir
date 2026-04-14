@@ -30,8 +30,17 @@ class AuditEntry:
     entry_hash: str = ""
 
     def compute_hash(self) -> str:
-        """SHA-256 hash of entry contents + previous hash = tamper-evident chain."""
-        payload = f"{self.entry_id}|{self.session_id}|{self.agent_id}|{self.action}|{self.tool}|{json.dumps(self.details, sort_keys=True)}|{self.cost_usd}|{self.timestamp}|{self.flagged}|{self.prev_hash}"
+        """SHA-256 hash of entry contents + previous hash = tamper-evident chain.
+
+        Uses normalized float representations to avoid precision drift between
+        Python float and Postgres numeric storage.
+        """
+        payload = (
+            f"{self.entry_id}|{self.session_id}|{self.agent_id}|{self.action}|"
+            f"{self.tool}|{json.dumps(self.details, sort_keys=True)}|"
+            f"{self.cost_usd:.6f}|{self.timestamp:.6f}|"
+            f"{1 if self.flagged else 0}|{self.prev_hash}"
+        )
         return hashlib.sha256(payload.encode()).hexdigest()
 
 
@@ -85,13 +94,15 @@ class Watch:
             tenant_id=tenant_id,
             prev_hash=prev_hash,
         )
-        entry.entry_hash = entry.compute_hash()
 
+        # Apply anomaly rules BEFORE hashing so flagged state is part of the hash
         for rule in self._anomaly_rules:
             if self._check_anomaly(entry, rule):
                 entry.flagged = True
                 entry.flag_reason = rule.get("reason", "Anomaly detected")
                 break
+
+        entry.entry_hash = entry.compute_hash()
 
         conn = self._get_db()
         if conn:
