@@ -245,7 +245,7 @@ _SCHEMA = """
         currency TEXT NOT NULL DEFAULT 'USD',
         description TEXT NOT NULL DEFAULT '',
         remaining_budget REAL NOT NULL DEFAULT 0.0,
-        timestamp REAL NOT NULL
+        timestamp DOUBLE PRECISION NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_payments_session ON payments(session_id);
@@ -260,7 +260,7 @@ _SCHEMA = """
         tool TEXT NOT NULL DEFAULT '',
         details TEXT NOT NULL DEFAULT '{}',
         cost_usd REAL NOT NULL DEFAULT 0.0,
-        timestamp REAL NOT NULL,
+        timestamp DOUBLE PRECISION NOT NULL,
         flagged INTEGER NOT NULL DEFAULT 0,
         flag_reason TEXT NOT NULL DEFAULT '',
         prev_hash TEXT NOT NULL DEFAULT '',
