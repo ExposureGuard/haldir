@@ -32,13 +32,15 @@ class AuditEntry:
     def compute_hash(self) -> str:
         """SHA-256 hash of entry contents + previous hash = tamper-evident chain.
 
-        Uses normalized float representations to avoid precision drift between
-        Python float and Postgres numeric storage.
+        Uses normalized representations (2 decimal places for cost, integer seconds
+        for timestamp) to avoid precision drift between Python float and Postgres
+        REAL column storage.
         """
+        ts_int = int(self.timestamp)
         payload = (
             f"{self.entry_id}|{self.session_id}|{self.agent_id}|{self.action}|"
             f"{self.tool}|{json.dumps(self.details, sort_keys=True)}|"
-            f"{self.cost_usd:.6f}|{self.timestamp:.6f}|"
+            f"{self.cost_usd:.2f}|{ts_int}|"
             f"{1 if self.flagged else 0}|{self.prev_hash}"
         )
         return hashlib.sha256(payload.encode()).hexdigest()
@@ -90,7 +92,8 @@ class Watch:
             action=action,
             tool=tool,
             details=details or {},
-            cost_usd=cost_usd,
+            cost_usd=round(cost_usd, 2),
+            timestamp=float(int(time.time())),  # integer seconds to match Postgres REAL precision
             tenant_id=tenant_id,
             prev_hash=prev_hash,
         )
