@@ -2157,8 +2157,7 @@ def billing_checkout():
         }
         if customer_id:
             checkout_params["customer"] = customer_id
-        else:
-            checkout_params["customer_creation"] = "always"
+        # Subscription mode auto-creates customer; no customer_creation param needed
 
         session = stripe.checkout.Session.create(**checkout_params)
         return jsonify({"url": session.url, "session_id": session.id})
