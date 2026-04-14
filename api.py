@@ -2002,6 +2002,7 @@ footer a { color: var(--gold); text-decoration: none; }
 <nav>
     <a href="/" class="logo">Haldir</a>
     <div class="nav-r">
+        <a href="/quickstart">Quickstart</a>
         <a href="/docs">Docs</a>
         <a href="/blog">Blog</a>
         <a href="/dashboard">Dashboard</a>
@@ -2098,7 +2099,7 @@ footer a { color: var(--gold); text-decoration: none; }
 
 <script>
 function checkout(tier) {
-    const apiKey = prompt('Enter your Haldir API key (hld_...) to upgrade:');
+    const apiKey = prompt('Enter your Haldir API key (hld_...) to upgrade.\\n\\nDon\\'t have one yet? Get one free at haldir.xyz/quickstart');
     if (!apiKey) return;
     fetch('/v1/billing/checkout', {
         method: 'POST',
