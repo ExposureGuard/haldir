@@ -55,6 +55,30 @@ That's it — point at `https://haldir.xyz`, no signup, live API.
 >
 > 🧪 **Now accepting 5 design partners.** 30 days free, full access, direct line to the founder. If you're shipping AI agents to production, email [sterling@haldir.xyz](mailto:sterling@haldir.xyz?subject=Haldir%20Design%20Partner).
 
+## Performance
+
+Haldir's governance primitives are fast enough that they're invisible to any agent workload that talks to a remote LLM. Measured on a 2024 laptop:
+
+| Primitive | p50 | Notes |
+|---|---|---|
+| `Vault.store_secret` (AES-256-GCM encrypt + AAD binding) | **< 10 µs** | in-memory, no DB write |
+| `Vault.get_secret` (AES-256-GCM decrypt + AAD verify) | **< 10 µs** | in-memory |
+| `AuditEntry.compute_hash` (SHA-256 over canonical payload) | **< 10 µs** | |
+| `Gate.check_permission` over REST | ~50-120 ms | network + DB round-trip, Cloudflare-fronted |
+| `Watch.log_action` over REST | ~50-150 ms | includes chain lookup + DB write |
+| Full governed-tool envelope (check + log) | ~100-250 ms | |
+
+Agents typically wait 500-3000 ms for an LLM completion and 100-1000 ms for an upstream API call, so Haldir's overhead sits inside the noise. Run your own numbers:
+
+```bash
+# Local crypto + hash only (no API key needed)
+python bench/bench_primitives.py --local
+
+# End-to-end against the hosted service
+export HALDIR_API_KEY=hld_...
+python bench/bench_primitives.py
+```
+
 ## Why Haldir
 
 AI agents are calling APIs, spending money, and accessing credentials with zero oversight. Haldir is the missing layer:
