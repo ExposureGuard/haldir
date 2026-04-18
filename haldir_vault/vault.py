@@ -17,6 +17,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
+from typing import Any, Optional
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -98,7 +99,7 @@ class Vault:
         nonce, ciphertext = blob[:NONCE_LEN], blob[NONCE_LEN:]
         return self._aesgcm.decrypt(nonce, ciphertext, aad or None)
 
-    def _get_db(self):
+    def _get_db(self) -> Any:
         if not self._db_path:
             return None
         from haldir_db import get_db
@@ -130,7 +131,8 @@ class Vault:
             conn.close()
         return entry
 
-    def get_secret(self, name: str, session=None, tenant_id: str = "") -> str | None:
+    def get_secret(self, name: str, session: Optional[Any] = None,
+                   tenant_id: str = "") -> Optional[str]:
         cache_key = f"{tenant_id}:{name}"
         entry = self._secrets.get(cache_key)
 
@@ -204,8 +206,8 @@ class Vault:
             names.update(r["name"] for r in rows)
         return sorted(names)
 
-    def authorize_payment(self, session, amount: float, currency: str = "USD",
-                          description: str = "") -> dict:
+    def authorize_payment(self, session: Any, amount: float, currency: str = "USD",
+                          description: str = "") -> dict[str, Any]:
         if not session.is_valid:
             return {"authorized": False, "reason": "Session invalid or expired"}
 

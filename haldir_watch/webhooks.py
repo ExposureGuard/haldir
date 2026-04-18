@@ -36,6 +36,7 @@ import threading
 import time
 import urllib.request
 from dataclasses import dataclass, field
+from typing import Any, Optional
 
 
 # ── Public verifier (importable by webhook receivers) ────────────────────
@@ -127,13 +128,13 @@ class WebhookManager:
             self._init_table()
             self._load_webhooks()
 
-    def _get_db(self):
+    def _get_db(self) -> Any:
         if not self._db_path:
             return None
         from haldir_db import get_db
         return get_db(self._db_path)
 
-    def _init_table(self):
+    def _init_table(self) -> None:
         conn = self._get_db()
         if not conn:
             return
@@ -160,7 +161,7 @@ class WebhookManager:
         conn.commit()
         conn.close()
 
-    def _load_webhooks(self):
+    def _load_webhooks(self) -> None:
         conn = self._get_db()
         if not conn:
             return
@@ -229,7 +230,7 @@ class WebhookManager:
 
         return wh
 
-    def fire(self, event_type: str, payload: dict):
+    def fire(self, event_type: str, payload: dict[str, Any]) -> None:
         """Fire an event to all matching webhooks (non-blocking)."""
         payload["event"] = event_type
         payload["timestamp"] = time.time()
@@ -247,7 +248,7 @@ class WebhookManager:
                 target=self._send, args=(wh, data, event_type), daemon=True
             ).start()
 
-    def _send(self, wh: WebhookConfig, data: bytes, event_type: str = ""):
+    def _send(self, wh: WebhookConfig, data: bytes, event_type: str = "") -> None:
         ts = int(time.time())
         headers = {
             "Content-Type": "application/json",
@@ -285,7 +286,7 @@ class WebhookManager:
                 conn.close()
 
     def fire_anomaly(self, agent_id: str, tool: str, action: str,
-                     reason: str, cost_usd: float = 0.0):
+                     reason: str, cost_usd: float = 0.0) -> None:
         """Convenience: fire an anomaly event."""
         self.fire("anomaly", {
             "agent_id": agent_id,
@@ -296,7 +297,7 @@ class WebhookManager:
         })
 
     def fire_budget_exhausted(self, session_id: str, agent_id: str,
-                              spent: float, limit: float):
+                              spent: float, limit: float) -> None:
         """Convenience: fire when a session's budget is used up."""
         self.fire("budget_exhausted", {
             "session_id": session_id,
@@ -306,7 +307,7 @@ class WebhookManager:
         })
 
     def fire_approval_requested(self, request_id: str, agent_id: str,
-                                tool: str, action: str, amount: float, reason: str):
+                                tool: str, action: str, amount: float, reason: str) -> None:
         """Convenience: fire when human approval is needed."""
         self.fire("approval_requested", {
             "request_id": request_id,
@@ -317,7 +318,7 @@ class WebhookManager:
             "reason": reason,
         })
 
-    def list_webhooks(self) -> list[dict]:
+    def list_webhooks(self) -> list[dict[str, Any]]:
         # Note: secret is NOT returned. Once shown at registration time,
         # it lives only in the DB — receivers must persist their own copy.
         return [

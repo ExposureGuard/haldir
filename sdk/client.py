@@ -101,7 +101,7 @@ class HaldirClient:
         """Send a request and return parsed JSON, raising on errors."""
         resp = self._client.request(method, path, **kwargs)
         _raise_for_status(resp)
-        return resp.json()
+        return resp.json()  # type: ignore[no-any-return]
 
     # ── Gate ──
 
@@ -310,7 +310,7 @@ class HaldirAsyncClient:
         """Send an async request and return parsed JSON, raising on errors."""
         resp = await self._client.request(method, path, **kwargs)
         _raise_for_status(resp)
-        return resp.json()
+        return resp.json()  # type: ignore[no-any-return]
 
     # ── Gate ──
 

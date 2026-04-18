@@ -11,6 +11,7 @@ import json
 import secrets
 import time
 from dataclasses import dataclass, field
+from typing import Any, Optional
 
 
 @dataclass
@@ -64,14 +65,14 @@ class Watch:
                     "reason": r["reason"],
                 })
 
-    def _get_db(self):
+    def _get_db(self) -> Any:
         if not self._db_path:
             return None
         from haldir_db import get_db
         return get_db(self._db_path)
 
-    def log_action(self, session, tool: str, action: str,
-                   details: dict | None = None, cost_usd: float = 0.0,
+    def log_action(self, session: Any, tool: str, action: str,
+                   details: Optional[dict[str, Any]] = None, cost_usd: float = 0.0,
                    tenant_id: str = "") -> AuditEntry:
         # Get previous entry hash for chaining
         prev_hash = ""
@@ -132,7 +133,7 @@ class Watch:
         conn = self._get_db()
         if conn:
             query = "SELECT * FROM audit_log WHERE tenant_id = ?"
-            params = [tenant_id]
+            params: list[Any] = [tenant_id]
             if session_id:
                 query += " AND session_id = ?"
                 params.append(session_id)
@@ -208,8 +209,8 @@ class Watch:
         return {"total_usd": 0, "action_count": 0, "by_tool": {}}
 
     def add_anomaly_rule(self, rule_type: str, threshold: float, reason: str = "",
-                         tenant_id: str = ""):
-        rule = {
+                         tenant_id: str = "") -> None:
+        rule: dict[str, Any] = {
             "type": rule_type,
             "threshold": threshold,
             "reason": reason or f"{rule_type} exceeded {threshold}",
@@ -225,9 +226,9 @@ class Watch:
             conn.commit()
             conn.close()
 
-    def _check_anomaly(self, entry: AuditEntry, rule: dict) -> bool:
+    def _check_anomaly(self, entry: AuditEntry, rule: dict[str, Any]) -> bool:
         if rule["type"] == "spend_per_action":
-            return entry.cost_usd > rule["threshold"]
+            return bool(entry.cost_usd > rule["threshold"])
         if rule["type"] == "actions_per_minute":
             conn = self._get_db()
             if conn:
@@ -237,7 +238,7 @@ class Watch:
                     (entry.agent_id, entry.tenant_id, one_min_ago)
                 ).fetchone()[0]
                 conn.close()
-                return count >= rule["threshold"]
+                return bool(count >= rule["threshold"])
         if rule["type"] == "tool_blocked":
             return entry.tool == str(rule["threshold"])
         return False
@@ -251,7 +252,7 @@ class Watch:
             conn.commit()
             affected = conn.total_changes
             conn.close()
-            return affected > 0
+            return bool(affected > 0)
         return False
 
     def verify_chain(self, tenant_id: str = "", limit: int = 10000) -> dict:

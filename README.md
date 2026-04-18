@@ -3,6 +3,7 @@
 
 [![tests](https://github.com/ExposureGuard/haldir/actions/workflows/test.yml/badge.svg)](https://github.com/ExposureGuard/haldir/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/ExposureGuard/haldir/branch/main/graph/badge.svg)](https://codecov.io/gh/ExposureGuard/haldir)
+[![type-checked: mypy](https://img.shields.io/badge/type--checked-mypy-1f5082)](https://github.com/ExposureGuard/haldir/blob/main/mypy.ini)
 [![Smithery](https://smithery.ai/badge/haldir)](https://smithery.ai/server/haldir/haldir)
 [![PyPI](https://img.shields.io/pypi/v/haldir)](https://pypi.org/project/haldir/)
 [![PyPI Downloads](https://img.shields.io/pypi/dm/haldir)](https://pypi.org/project/haldir/)
