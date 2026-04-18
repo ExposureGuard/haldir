@@ -80,7 +80,7 @@ async def list_tools() -> list[Tool]:
         # Vault tools
         Tool(
             name="storeSecret",
-            description="Store an encrypted secret (API key, credential, token) in the vault. Secrets are encrypted at rest with AES-128.",
+            description="Store an encrypted secret (API key, credential, token) in the vault. Secrets are encrypted at rest with AES-256-GCM.",
             inputSchema={
                 "type": "object",
                 "properties": {

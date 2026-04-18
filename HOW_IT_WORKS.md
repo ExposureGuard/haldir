@@ -32,7 +32,7 @@ When the CISO asks "what did the agent do last week?" the answer is "we don't kn
    ```python
    store_secret("stripe_key", "sk_live_xxx")
    ```
-   The raw key never touches the agent — it's encrypted with AES-128 at rest.
+   The raw key never touches the agent — it's encrypted with AES-256-GCM at rest.
 
 4. **The agent calls tools through Haldir's proxy.** Instead of the agent calling Stripe directly, it calls `haldir.xyz/v1/proxy/call` with the tool name and arguments. Haldir:
    - Checks the session is valid
@@ -60,7 +60,7 @@ When the CISO asks "what did the agent do last week?" the answer is "we don't kn
 - Instant revocation (kill switch)
 
 ### Vault — Encrypted Secrets & Payments
-- AES-128 encrypted secret storage
+- AES-256-GCM encrypted secret storage
 - Agents never see raw credentials
 - Payment authorization against session budget
 - Scope-checked access control

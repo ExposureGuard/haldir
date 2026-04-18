@@ -38,7 +38,7 @@ git clone https://github.com/ExposureGuard/haldir.git
 cd haldir
 
 # 2. Generate an encryption key for Vault
-python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
 # Copy the output
 
 # 3. Write .env
@@ -209,7 +209,7 @@ Schema migrations are idempotent and run automatically on boot.
 **API returns `503 encryption key not configured`**
 You didn't set `HALDIR_ENCRYPTION_KEY` in `.env`. Generate one:
 ```bash
-python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
 ```
 
 **`docker compose up` fails with `database "haldir" does not exist`**

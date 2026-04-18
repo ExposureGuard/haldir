@@ -15,7 +15,7 @@ cd haldir
 
 # 2. Set up your environment
 cp .env.example .env
-python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
 # Paste the output into .env as HALDIR_ENCRYPTION_KEY
 
 # 3. Spin up the stack (API + Postgres)

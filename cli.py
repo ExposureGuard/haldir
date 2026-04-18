@@ -674,11 +674,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     import subprocess
     from secrets import token_urlsafe
 
-    try:
-        from cryptography.fernet import Fernet
-    except ImportError:
-        error("cryptography package not installed. Run: pip install cryptography")
-        sys.exit(1)
+    import base64
 
     target = Path(args.target or ".").resolve()
     target.mkdir(parents=True, exist_ok=True)
@@ -690,7 +686,8 @@ def cmd_init(args: argparse.Namespace) -> None:
         error(f".env already exists at {env_path}. Use --force to overwrite.")
         sys.exit(1)
 
-    encryption_key = Fernet.generate_key().decode()
+    # Generate a 256-bit AES-GCM key, base64url-encoded for env-var friendliness
+    encryption_key = base64.urlsafe_b64encode(os.urandom(32)).decode()
     bootstrap_token = token_urlsafe(24)
 
     env_path.write_text(

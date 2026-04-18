@@ -3,6 +3,21 @@
 All notable changes to Haldir are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.1] — 2026-04-18
+
+### Security — Vault cipher upgrade
+
+- **Vault now uses AES-256-GCM** (was AES-128-CBC + HMAC-SHA256 via Fernet). 256-bit key, 96-bit random nonce per encryption, 128-bit authentication tag. Standard enterprise compliance checklist for data-at-rest.
+- **Ciphertext is now bound to `(tenant_id, secret_name)` via AEAD additional authenticated data.** Swapping ciphertext between tenants or under a different secret name fails authentication — defense-in-depth against DB-tampering adversaries.
+- **Key format:** 32 raw bytes or 44-char base64url string. Backward-compatible with existing env-var pattern; `Vault(encryption_key=...)` signature unchanged.
+- **Breaking for existing secrets**: no migration path from Fernet ciphertexts. Existing self-hosted deployments must rotate secrets. The hosted service had no stored secrets from external users at the time of upgrade.
+
+### Changed
+
+- `.env.example`, `SELF_HOSTING.md`, `CONTRIBUTING.md`, `README.md`: key generation command updated to `base64.urlsafe_b64encode(os.urandom(32))`
+- `haldir init` CLI command now generates AES-256-GCM keys
+- Landing page, quickstart, MCP server tool description, HOW_IT_WORKS: AES-128 → AES-256-GCM
+
 ## [0.2.0] — 2026-04-18
 
 ### Added
@@ -59,5 +74,6 @@ All notable changes to Haldir are documented here. Format loosely follows
 - **PyPI package** — `pip install haldir`
 - **Smithery listing** — discoverable at `smithery.ai/server/haldir/haldir`
 
+[0.2.1]: https://github.com/ExposureGuard/haldir/releases/tag/v0.2.1
 [0.2.0]: https://github.com/ExposureGuard/haldir/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ExposureGuard/haldir/releases/tag/v0.1.0

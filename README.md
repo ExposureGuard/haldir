@@ -27,7 +27,7 @@ Haldir enforces governance on every AI agent tool call: scoped sessions with spe
 git clone https://github.com/ExposureGuard/haldir.git
 cd haldir
 cp .env.example .env
-python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
 # paste the output into .env as HALDIR_ENCRYPTION_KEY, then:
 docker compose up -d
 curl http://localhost:8000/health

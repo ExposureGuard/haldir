@@ -1,11 +1,28 @@
 """
-Haldir Vault — Encrypted secrets and payment authorization with persistent storage.
+Haldir Vault — AES-256-GCM encrypted secrets and payment authorization
+with persistent storage.
+
+Encryption: AES-256-GCM (authenticated encryption with associated data).
+  - 256-bit key (32 bytes), base64url-encoded in env vars
+  - 96-bit nonce (12 bytes), randomly generated per encryption
+  - 128-bit authentication tag appended to ciphertext (handled by AESGCM)
+  - Storage format: nonce (12 bytes) || ciphertext_with_tag
+
+Prior versions used Fernet (AES-128-CBC + HMAC-SHA256). Existing deployments
+must rotate secrets after upgrading.
 """
 
+import base64
 import json
+import os
 import time
 from dataclasses import dataclass, field
-from cryptography.fernet import Fernet
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+
+NONCE_LEN = 12  # 96 bits, NIST-recommended for AES-GCM
+KEY_LEN = 32    # 256 bits
 
 
 @dataclass
@@ -20,22 +37,66 @@ class SecretEntry:
     tenant_id: str = ""
 
 
-class Vault:
-    """Encrypted secrets manager with persistent storage."""
+def _decode_key(key: bytes | str) -> bytes:
+    """Accept either raw 32-byte keys or base64url-encoded keys."""
+    if isinstance(key, str):
+        key = key.encode()
+    # Raw 32-byte key passed through
+    if len(key) == KEY_LEN:
+        return key
+    # Assume base64url-encoded
+    try:
+        decoded = base64.urlsafe_b64decode(key)
+    except Exception as e:
+        raise ValueError(
+            f"HALDIR_ENCRYPTION_KEY could not be decoded. Expected 32 raw bytes "
+            f"or base64url-encoded 32 bytes. Got length {len(key)}. "
+            f"Generate a valid key with: Vault.generate_key()"
+        ) from e
+    if len(decoded) != KEY_LEN:
+        raise ValueError(
+            f"HALDIR_ENCRYPTION_KEY decoded to {len(decoded)} bytes, "
+            f"expected {KEY_LEN} (256 bits). Generate a valid key with: "
+            f"Vault.generate_key()"
+        )
+    return decoded
 
-    def __init__(self, encryption_key: bytes | None = None, db_path: str | None = None):
+
+class Vault:
+    """Encrypted secrets manager with persistent storage (AES-256-GCM)."""
+
+    def __init__(self, encryption_key: bytes | str | None = None,
+                 db_path: str | None = None):
         if encryption_key:
-            self._key = encryption_key
-            self._fernet = Fernet(encryption_key)
+            self._raw_key = _decode_key(encryption_key)
         else:
-            self._key = Fernet.generate_key()
-            self._fernet = Fernet(self._key)
+            self._raw_key = os.urandom(KEY_LEN)
+        self._aesgcm = AESGCM(self._raw_key)
         self._db_path = db_path
         self._secrets: dict[str, SecretEntry] = {}
 
+    @classmethod
+    def generate_key(cls) -> bytes:
+        """Generate a fresh base64url-encoded 256-bit key (env-var friendly)."""
+        return base64.urlsafe_b64encode(os.urandom(KEY_LEN))
+
     @property
     def encryption_key(self) -> bytes:
-        return self._key
+        """Return the current key in base64url form (for persisting to .env)."""
+        return base64.urlsafe_b64encode(self._raw_key)
+
+    def _encrypt(self, plaintext: bytes, aad: bytes = b"") -> bytes:
+        """Encrypt bytes; return nonce || ciphertext_with_tag."""
+        nonce = os.urandom(NONCE_LEN)
+        ciphertext = self._aesgcm.encrypt(nonce, plaintext, aad or None)
+        return nonce + ciphertext
+
+    def _decrypt(self, blob: bytes, aad: bytes = b"") -> bytes:
+        """Decrypt nonce || ciphertext_with_tag."""
+        if len(blob) < NONCE_LEN + 16:  # nonce + min tag size
+            raise ValueError("ciphertext too short to be a valid AES-GCM blob")
+        nonce, ciphertext = blob[:NONCE_LEN], blob[NONCE_LEN:]
+        return self._aesgcm.decrypt(nonce, ciphertext, aad or None)
 
     def _get_db(self):
         if not self._db_path:
@@ -45,7 +106,10 @@ class Vault:
 
     def store_secret(self, name: str, value: str, scope_required: str = "read",
                      metadata: dict | None = None, tenant_id: str = "") -> SecretEntry:
-        encrypted = self._fernet.encrypt(value.encode())
+        # Bind ciphertext to the (tenant, name) pair via AAD: swapping
+        # ciphertext between tenants or secret names will fail authentication.
+        aad = f"{tenant_id}:{name}".encode()
+        encrypted = self._encrypt(value.encode(), aad=aad)
         entry = SecretEntry(
             name=name,
             encrypted_value=encrypted,
@@ -112,7 +176,8 @@ class Vault:
             conn.commit()
             conn.close()
 
-        return self._fernet.decrypt(entry.encrypted_value).decode()
+        aad = f"{tenant_id}:{name}".encode()
+        return self._decrypt(entry.encrypted_value, aad=aad).decode()
 
     def delete_secret(self, name: str, tenant_id: str = "") -> bool:
         cache_key = f"{tenant_id}:{name}"

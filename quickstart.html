@@ -64,7 +64,7 @@ pip install haldir httpx<button class="copy-btn" onclick="copyText('python3 -m v
 <div class="step" id="step-4" style="opacity:0.3;pointer-events:none">
     <div class="step-num">What just happened</div>
     <h2>Your agent was governed.</h2>
-    <p>Every action was scoped to a session with permissions and a spend limit. The secret was AES-128 encrypted. The payment was authorized against the session budget. Every action was logged to a hash-chained, tamper-evident audit trail. And when you revoked the session, the agent lost all access instantly.</p>
+    <p>Every action was scoped to a session with permissions and a spend limit. The secret was AES-256-GCM encrypted. The payment was authorized against the session budget. Every action was logged to a hash-chained, tamper-evident audit trail. And when you revoked the session, the agent lost all access instantly.</p>
     <p>That's Haldir. <a href="/docs">Read the full docs</a> or <a href="https://github.com/ExposureGuard/haldir">view the source</a>.</p>
 </div>
 
@@ -134,7 +134,7 @@ function generateScript(key) {
         'print(f"  delete: {r.json()[\'allowed\']} (blocked)")\n\n' +
         '# 3. Store an encrypted secret\n' +
         'httpx.post(f"{BASE}/v1/secrets", headers=H, json={"name": "api_key", "value": "sk_live_secret_123"})\n' +
-        'print("Secret stored (AES-128 encrypted)")\n\n' +
+        'print("Secret stored (AES-256-GCM encrypted)")\n\n' +
         '# 4. Authorize a payment against the session budget\n' +
         'r = httpx.post(f"{BASE}/v1/payments/authorize", headers=H, json={"session_id": sid, "amount": 29.99})\n' +
         'pay = r.json()\n' +
