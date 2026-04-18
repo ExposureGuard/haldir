@@ -1,7 +1,7 @@
 {
   "name": "haldir",
-  "version": "0.1.0",
-  "description": "The guardian layer for AI agents — identity, secrets, audit",
+  "version": "0.2.1",
+  "description": "The guardian layer for AI agents — scoped sessions, AES-256-GCM secrets, hash-chained audit, policy proxy.",
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
@@ -18,28 +18,46 @@
   "files": [
     "index.js",
     "index.d.ts",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "keywords": [
-    "mcp",
     "ai-agents",
-    "security",
-    "governance",
-    "identity",
-    "secrets",
-    "audit",
+    "agent-governance",
+    "agent-security",
+    "mcp",
     "model-context-protocol",
+    "langchain",
+    "crewai",
+    "vercel-ai-sdk",
+    "identity",
+    "secrets-management",
+    "audit",
+    "audit-log",
+    "hash-chain",
+    "tamper-evident",
     "compliance",
+    "aes-256-gcm",
+    "proxy",
+    "policy-enforcement",
+    "spend-control",
+    "governance",
     "haldir"
   ],
-  "author": "Sterling <sterling@getexposureguard.com>",
+  "author": "Sterling Ivey <sterling@haldir.xyz>",
   "license": "MIT",
   "homepage": "https://haldir.xyz",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ExposureGuard/haldir"
+    "url": "git+https://github.com/ExposureGuard/haldir.git",
+    "directory": "sdk-js"
   },
   "bugs": {
-    "url": "https://github.com/ExposureGuard/haldir/issues"
+    "url": "https://github.com/ExposureGuard/haldir/issues",
+    "email": "sterling@haldir.xyz"
+  },
+  "funding": {
+    "type": "individual",
+    "url": "https://haldir.xyz/pricing"
   }
 }

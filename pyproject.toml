@@ -4,13 +4,40 @@ build-backend = "hatchling.build"
 
 [project]
 name = "haldir"
-version = "0.1.0"
-description = "The guardian layer for AI agents — identity, secrets, audit via MCP"
+version = "0.2.1"
+description = "The guardian layer for AI agents — scoped sessions, AES-256-GCM secrets, hash-chained audit, policy proxy."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "Sterling", email = "sterling@getexposureguard.com"}]
-keywords = ["mcp", "ai-agents", "security", "identity", "secrets", "audit", "model-context-protocol", "governance", "compliance"]
+authors = [{name = "Sterling Ivey", email = "sterling@haldir.xyz"}]
+maintainers = [{name = "Sterling Ivey", email = "sterling@haldir.xyz"}]
+keywords = [
+    "ai-agents", "agent-governance", "agent-security",
+    "mcp", "model-context-protocol",
+    "langchain", "crewai", "vercel-ai-sdk",
+    "identity", "secrets-management", "audit", "audit-log",
+    "hash-chain", "tamper-evident", "compliance",
+    "aes-256-gcm", "proxy", "policy-enforcement", "spend-control",
+    "human-in-the-loop", "governance",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Security",
+    "Topic :: Security :: Cryptography",
+    "Topic :: System :: Logging",
+    "Topic :: System :: Systems Administration :: Authentication/Directory",
+    "Typing :: Typed",
+]
 dependencies = [
     "mcp>=1.0.0",
     "httpx>=0.27.0",
@@ -18,14 +45,23 @@ dependencies = [
     "cryptography>=42.0.0",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-asyncio>=0.21"]
+
 [project.scripts]
 haldir = "cli:main"
 haldir-mcp = "mcp_server:main"
 
 [project.urls]
 Homepage = "https://haldir.xyz"
+Documentation = "https://haldir.xyz/docs"
 Repository = "https://github.com/ExposureGuard/haldir"
-Documentation = "https://haldir.xyz"
+Issues = "https://github.com/ExposureGuard/haldir/issues"
+Discussions = "https://github.com/ExposureGuard/haldir/discussions"
+Changelog = "https://github.com/ExposureGuard/haldir/blob/main/CHANGELOG.md"
+Wiki = "https://github.com/ExposureGuard/haldir/wiki"
+"Self-Hosting" = "https://github.com/ExposureGuard/haldir/blob/main/SELF_HOSTING.md"
+Security = "https://github.com/ExposureGuard/haldir/blob/main/SECURITY.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["haldir_gate", "haldir_vault", "haldir_watch", "sdk"]
