@@ -2389,6 +2389,13 @@ def llms_txt():
         return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 
+@app.route("/llms-full.txt")
+def llms_full_txt():
+    p = os.path.join(os.path.dirname(__file__), "llms-full.txt")
+    with open(p) as f:
+        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
 @app.route("/robots.txt")
 def robots_txt():
     p = os.path.join(os.path.dirname(__file__), "robots.txt")
@@ -2396,9 +2403,23 @@ def robots_txt():
         return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    p = os.path.join(os.path.dirname(__file__), "sitemap.xml")
+    with open(p) as f:
+        return f.read(), 200, {"Content-Type": "application/xml; charset=utf-8"}
+
+
 @app.route("/.well-known/security.txt")
 def security_txt():
     p = os.path.join(os.path.dirname(__file__), ".well-known", "security.txt")
+    with open(p) as f:
+        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+@app.route("/.well-known/ai.txt")
+def ai_txt():
+    p = os.path.join(os.path.dirname(__file__), ".well-known", "ai.txt")
     with open(p) as f:
         return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
 

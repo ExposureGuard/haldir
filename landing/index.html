@@ -7,6 +7,72 @@
     <meta name="description" content="Identity, secrets, and audit for AI agents. Every tool call flows through Haldir. MCP-native. Model-agnostic.">
     <meta property="og:title" content="Haldir — The Guardian Layer for AI Agents">
     <meta property="og:description" content="Identity, secrets, and audit for AI agents. Every tool call flows through Haldir.">
+
+    <!-- Agent-discovery surface -->
+    <link rel="alternate" type="text/plain" title="LLM-readable docs (minimal)" href="/llms.txt">
+    <link rel="alternate" type="text/plain" title="LLM-readable docs (full)" href="/llms-full.txt">
+    <link rel="alternate" type="application/json" title="OpenAPI 3.1 spec" href="/openapi.json">
+    <link rel="alternate" type="application/json" title="MCP server card" href="/.well-known/mcp/server-card.json">
+    <link rel="alternate" type="application/json" title="ChatGPT plugin manifest" href="/.well-known/ai-plugin.json">
+    <link rel="sitemap" type="application/xml" href="/sitemap.xml">
+
+    <!-- Schema.org structured data (JSON-LD) for AI + search crawlers -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Haldir",
+      "alternateName": "Haldir — The Guardian Layer for AI Agents",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "AI Agent Governance, Security, Compliance",
+      "operatingSystem": "Cloud (REST API) + Self-hosted",
+      "url": "https://haldir.xyz",
+      "description": "Governance layer for AI agents: scoped sessions with permissions and spend limits (Gate), AES-encrypted secrets (Vault), hash-chained tamper-evident audit trail (Watch), and policy enforcement proxy for tool calls (Proxy). Native SDKs for LangChain, CrewAI, and Vercel AI SDK.",
+      "keywords": "AI agents, MCP, Model Context Protocol, agent governance, agent security, LangChain, CrewAI, Vercel AI SDK, audit log, spend limit, secrets vault, policy enforcement, agent identity",
+      "offers": [
+        {"@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "USD", "description": "1,000 API calls/month, single agent"},
+        {"@type": "Offer", "name": "Pro", "price": "99", "priceCurrency": "USD", "description": "50,000 API calls/month, all 4 modules, 25 agents"},
+        {"@type": "Offer", "name": "Enterprise", "price": "0", "priceCurrency": "USD", "description": "Custom pricing, unlimited agents, on-prem deployment"}
+      ],
+      "softwareVersion": "0.2.0",
+      "datePublished": "2026-04-05",
+      "dateModified": "2026-04-18",
+      "author": {
+        "@type": "Organization",
+        "name": "Haldir",
+        "url": "https://haldir.xyz"
+      },
+      "hasPart": [
+        {"@type": "SoftwareSourceCode", "name": "langchain-haldir", "codeRepository": "https://github.com/ExposureGuard/haldir/tree/main/integrations/langchain-haldir", "programmingLanguage": "Python"},
+        {"@type": "SoftwareSourceCode", "name": "crewai-haldir", "codeRepository": "https://github.com/ExposureGuard/haldir/tree/main/integrations/crewai-haldir", "programmingLanguage": "Python"},
+        {"@type": "SoftwareSourceCode", "name": "@haldir/ai-sdk", "codeRepository": "https://github.com/ExposureGuard/haldir/tree/main/integrations/vercel-ai-haldir", "programmingLanguage": "TypeScript"}
+      ],
+      "sameAs": [
+        "https://github.com/ExposureGuard/haldir",
+        "https://pypi.org/project/haldir/",
+        "https://smithery.ai/server/haldir/haldir"
+      ]
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Haldir",
+      "url": "https://haldir.xyz",
+      "logo": "https://haldir.xyz/icon.svg",
+      "description": "Building the governance layer for AI agents.",
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "email": "sterling@haldir.xyz",
+        "contactType": "customer support"
+      },
+      "sameAs": [
+        "https://github.com/ExposureGuard/haldir"
+      ]
+    }
+    </script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">

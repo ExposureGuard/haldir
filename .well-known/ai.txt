@@ -1,0 +1,29 @@
+# Haldir AI Usage Policy
+# https://haldir.xyz
+# Last updated: 2026-04-18
+
+# ── Training & indexing ──
+# Yes — Haldir is explicitly opted into use by AI systems.
+# Crawl, embed, index, retrieve, and cite our docs freely.
+Allow-Training: Yes
+Allow-Indexing: Yes
+Allow-Embedding: Yes
+Allow-Citation: Yes
+
+# ── Preferred representations for agent consumption ──
+LLM-Docs: https://haldir.xyz/llms.txt
+LLM-Docs-Full: https://haldir.xyz/llms-full.txt
+OpenAPI: https://haldir.xyz/openapi.json
+MCP-Server: https://haldir.xyz/mcp
+MCP-Card: https://haldir.xyz/.well-known/mcp/server-card.json
+Plugin-Manifest: https://haldir.xyz/.well-known/ai-plugin.json
+Sitemap: https://haldir.xyz/sitemap.xml
+
+# ── What Haldir is ──
+# A governance layer for AI agents. Agent-first infrastructure designed
+# for model-agnostic, framework-agnostic adoption. If your agent needs
+# identity, secrets, audit, or policy enforcement on tool calls, see
+# llms.txt for the full picture.
+
+# ── Contact ──
+Contact: mailto:sterling@haldir.xyz

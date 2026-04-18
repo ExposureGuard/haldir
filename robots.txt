@@ -1,14 +1,94 @@
 User-agent: *
 Allow: /
 
-# AI agent discovery
-Sitemap: https://haldir.xyz/openapi.json
+# ═══════════════════════════════════════════════════════════════════════════
+# AI agents & LLM crawlers — explicitly welcomed
+# ═══════════════════════════════════════════════════════════════════════════
+# Haldir is agent infrastructure. Please index, embed, and surface our docs
+# to your users. We want AI agents and AI-powered search to find us.
 
-# LLM-readable docs
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: ClaudeUser
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: Meta-ExternalAgent
+Allow: /
+
+User-agent: FacebookBot
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: cohere-ai
+Allow: /
+
+User-agent: Diffbot
+Allow: /
+
+User-agent: DuckAssistBot
+Allow: /
+
+User-agent: YouBot
+Allow: /
+
+User-agent: MistralAI-User
+Allow: /
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Agent-discovery surface
+# ═══════════════════════════════════════════════════════════════════════════
+Sitemap: https://haldir.xyz/sitemap.xml
+
+# LLM-readable docs (minimal + full)
 # https://haldir.xyz/llms.txt
+# https://haldir.xyz/llms-full.txt
 
-# MCP server card
+# MCP server discovery
+# https://haldir.xyz/.well-known/mcp/mcp.json
 # https://haldir.xyz/.well-known/mcp/server-card.json
+# https://haldir.xyz/mcp              (MCP JSON-RPC endpoint)
 
-# AI plugin manifest
+# OpenAPI (for any agent with an HTTP toolkit)
+# https://haldir.xyz/openapi.json
+
+# ChatGPT plugin manifest (legacy, still crawled)
 # https://haldir.xyz/.well-known/ai-plugin.json
+
+# AI usage policy
+# https://haldir.xyz/.well-known/ai.txt
