@@ -71,6 +71,40 @@ Real-time alerting for anomalies, budget exhaustion, and flagged actions.
 python3 examples/webhook_alerts.py
 ```
 
+## Framework Integrations
+
+End-to-end examples using the native framework integration packages.
+
+### langchain_agent.py
+
+Governed research agent using `langchain-haldir`. Demonstrates `GovernedTool.from_tool`, `HaldirCallbackHandler`, `HaldirSecrets`, and `create_session` on a real LangChain ReAct agent.
+
+```bash
+pip install langchain-haldir langchain-openai duckduckgo-search
+export OPENAI_API_KEY=sk-... HALDIR_API_KEY=hld_...
+python3 examples/langchain_agent.py
+```
+
+### crewai_crew.py
+
+Governed research crew using `crewai-haldir`. Wraps CrewAI's `SerperDevTool` with `GovernedTool.wrap`, including a `cost_fn` for variable per-call pricing.
+
+```bash
+pip install crewai crewai-tools crewai-haldir
+export OPENAI_API_KEY=sk-... HALDIR_API_KEY=hld_... SERPER_API_KEY=...
+python3 examples/crewai_crew.py
+```
+
+### vercel_ai_sdk.ts
+
+Governed agent using `@haldir/ai-sdk`. Wraps an AI SDK tool with `governTool()` and runs it through `generateText`. Shows the full flow including `HaldirSecrets` usage.
+
+```bash
+npm install ai @ai-sdk/openai zod haldir @haldir/ai-sdk
+export OPENAI_API_KEY=sk-... HALDIR_API_KEY=hld_...
+npx tsx examples/vercel_ai_sdk.ts
+```
+
 ## Common Patterns
 
 ### Authentication
