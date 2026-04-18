@@ -36,7 +36,35 @@ jobs:
           pip install -r requirements.txt
 
       - name: Install test dependencies
-        run: pip install pytest
+        run: pip install pytest pytest-cov hypothesis
 
-      - name: Run tests
-        run: pytest tests/test_gate.py tests/test_vault.py tests/test_watch.py tests/test_proxy.py -v
+      - name: Run tests with coverage
+        run: |
+          pytest \
+            tests/test_gate.py \
+            tests/test_vault.py \
+            tests/test_watch.py \
+            tests/test_proxy.py \
+            tests/test_webhooks.py \
+            tests/test_vault_properties.py \
+            tests/test_watch_properties.py \
+            --cov=haldir_gate \
+            --cov=haldir_vault \
+            --cov=haldir_watch \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            -v
+
+      - name: Upload coverage to Codecov
+        # Only upload once per CI run (from the lowest Python in the matrix)
+        # to avoid hammering codecov with N parallel uploads of the same data.
+        if: matrix.python-version == '3.10'
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          flags: python
+          name: haldir-${{ matrix.python-version }}
+          # CODECOV_TOKEN is optional for public repos but recommended.
+          # Set in repo Settings → Secrets → Actions if you have one.
+          token: ${{ secrets.CODECOV_TOKEN }}
