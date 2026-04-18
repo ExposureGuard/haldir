@@ -1,0 +1,46 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Haldir — self-host stack
+# ═══════════════════════════════════════════════════════════════════════════
+# One command to run the full Haldir governance layer on your own infra:
+#
+#     cp .env.example .env    # set encryption key + bootstrap token
+#     docker compose up
+#
+# Then hit http://localhost:8000. Full feature parity with haldir.xyz.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: haldir-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-haldir}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-haldir}
+      POSTGRES_DB: ${POSTGRES_DB:-haldir}
+    volumes:
+      - haldir_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-haldir} -d ${POSTGRES_DB:-haldir}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    image: haldir:local
+    container_name: haldir-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-haldir}:${POSTGRES_PASSWORD:-haldir}@postgres:5432/${POSTGRES_DB:-haldir}
+      HALDIR_ENCRYPTION_KEY: ${HALDIR_ENCRYPTION_KEY:?set HALDIR_ENCRYPTION_KEY in .env — see .env.example}
+      HALDIR_BOOTSTRAP_TOKEN: ${HALDIR_BOOTSTRAP_TOKEN:-}
+      PORT: 8080
+    ports:
+      - "${HALDIR_PORT:-8000}:8080"
+
+volumes:
+  haldir_postgres:
+    name: haldir_postgres

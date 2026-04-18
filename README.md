@@ -8,9 +8,42 @@
 [![GitHub Stars](https://img.shields.io/github/stars/ExposureGuard/haldir?style=social)](https://github.com/ExposureGuard/haldir)
 [![SafeSkill 89/100](https://img.shields.io/badge/SafeSkill-89%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/exposureguard-haldir)
 
-**Identity, secrets, and audit for AI agents. MCP-native. Model-agnostic.**
+**The open-source governance layer for AI agents.** Identity, secrets, audit, and policy enforcement — MIT licensed, self-host or use our cloud.
 
-Haldir enforces governance on every AI agent tool call — scoped sessions, encrypted secrets, spend limits, immutable audit trail, human-in-the-loop approvals, and a proxy that intercepts every MCP call before it reaches your tools.
+Haldir enforces governance on every AI agent tool call: scoped sessions with spend caps, encrypted secrets the model never sees, hash-chained tamper-evident audit trail, human-in-the-loop approvals, and a proxy that intercepts every MCP call before it reaches your tools. Native SDKs for LangChain, CrewAI, and Vercel AI SDK.
+
+## Two ways to run Haldir
+
+| | Self-host | Cloud ([haldir.xyz](https://haldir.xyz)) |
+|---|---|---|
+| Price | Free forever | Free tier + paid plans |
+| Features | Everything | Everything — same API, same SDKs |
+| You run | API + Postgres | Nothing |
+| Best for | Regulated industries, air-gapped, "must own data" | "Just make it work" |
+
+### Self-host in 5 minutes
+
+```bash
+git clone https://github.com/ExposureGuard/haldir.git
+cd haldir
+cp .env.example .env
+python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+# paste the output into .env as HALDIR_ENCRYPTION_KEY, then:
+docker compose up -d
+curl http://localhost:8000/health
+```
+
+Full self-hosting guide: [SELF_HOSTING.md](SELF_HOSTING.md)
+
+### Or use our cloud
+
+```bash
+pip install haldir
+```
+
+That's it — point at `https://haldir.xyz`, no signup, live API.
+
+---
 
 > **Live now:** [haldir.xyz](https://haldir.xyz) · [API Docs](https://haldir.xyz/docs) · [OpenAPI Spec](https://haldir.xyz/openapi.json) · [Smithery](https://smithery.ai/server/haldir/haldir)
 >

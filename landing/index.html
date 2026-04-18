@@ -318,16 +318,18 @@
             <a href="/quickstart">Quickstart</a>
             <a href="/pricing">Pricing</a>
             <a href="https://haldir.xyz/docs">Docs</a>
+            <a href="https://github.com/ExposureGuard/haldir">GitHub</a>
         </div>
     </nav>
 
     <!-- ── Hero ── -->
     <section class="hero">
-        <span class="hero-eyebrow">MCP-native security infrastructure</span>
+        <span class="hero-eyebrow">Open-source · MCP-native · Self-host or cloud</span>
         <h1>The <em>guardian</em> layer<br>for AI agents</h1>
-        <p class="hero-sub">Identity, secrets, and audit for every tool call. Model-agnostic. Protocol-level.</p>
+        <p class="hero-sub">Identity, secrets, and audit for every tool call. Model-agnostic. Protocol-level. <strong style="color:var(--w);">MIT licensed — run it yourself or use our hosted service.</strong></p>
         <div class="hero-cta">
             <a href="#try" class="btn btn-w">Try it live</a>
+            <a href="https://github.com/ExposureGuard/haldir#self-hosting" class="btn btn-g">Self-host in 5 min</a>
             <a href="https://haldir.xyz/docs" class="btn btn-g">API Docs</a>
         </div>
         <div class="scroll-line"></div>
@@ -370,6 +372,31 @@
                 <div class="product-desc">Every tool call intercepted, authorized, and logged. Allow lists, rate limits, and policy enforcement before agents touch your APIs.</div>
             </div>
         </div>
+    </section>
+
+    <!-- ── Self-host or Cloud ── -->
+    <section style="min-height:auto; padding:5rem 2rem; border-top:1px solid var(--w08);">
+        <span class="hero-eyebrow" style="margin-bottom:1.5rem;">Two ways to run Haldir</span>
+        <h2 style="font-weight:200; font-size:clamp(1.5rem, 3vw, 2.2rem); letter-spacing:-0.5px; text-align:center; max-width:720px; line-height:1.3; margin-bottom:3rem;">Open-source. <em style="font-style:normal; color:var(--gold);">Self-host</em> or use our <em style="font-style:normal; color:var(--gold);">cloud</em>.</h2>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1px; max-width:900px; width:100%; background:var(--w08); border:1px solid var(--w08);">
+            <div style="background:var(--bg); padding:2.5rem 2rem; display:flex; flex-direction:column;">
+                <span style="font-family:var(--mono); font-size:0.6rem; color:var(--gold); letter-spacing:2px; margin-bottom:1rem;">SELF-HOST</span>
+                <div style="font-size:1.1rem; font-weight:600; letter-spacing:-0.5px; margin-bottom:0.75rem;">Run it yourself — free forever</div>
+                <div style="font-size:0.78rem; font-weight:300; color:var(--w50); line-height:1.8; margin-bottom:1.5rem;">MIT licensed. Full feature parity with hosted. Docker-compose up. Your data never leaves your perimeter. Perfect for regulated industries and air-gapped environments.</div>
+                <pre style="background:rgba(255,255,255,0.03); border:1px solid var(--w08); border-radius:4px; padding:0.85rem 1rem; font-family:var(--mono); font-size:0.7rem; color:var(--w50); margin-bottom:1.25rem; overflow-x:auto;">git clone github.com/ExposureGuard/haldir
+cd haldir && docker compose up</pre>
+                <a href="https://github.com/ExposureGuard/haldir/blob/main/SELF_HOSTING.md" class="btn btn-g" style="align-self:flex-start;">Self-host guide</a>
+            </div>
+            <div style="background:var(--bg); padding:2.5rem 2rem; display:flex; flex-direction:column;">
+                <span style="font-family:var(--mono); font-size:0.6rem; color:var(--gold); letter-spacing:2px; margin-bottom:1rem;">CLOUD</span>
+                <div style="font-size:1.1rem; font-weight:600; letter-spacing:-0.5px; margin-bottom:0.75rem;">We run it — you ship</div>
+                <div style="font-size:0.78rem; font-weight:300; color:var(--w50); line-height:1.8; margin-bottom:1.5rem;">Free tier + paid plans. We handle uptime, backups, scaling. SLA and compliance certifications included. Same API, same SDKs — point your client at haldir.xyz instead of localhost.</div>
+                <pre style="background:rgba(255,255,255,0.03); border:1px solid var(--w08); border-radius:4px; padding:0.85rem 1rem; font-family:var(--mono); font-size:0.7rem; color:var(--w50); margin-bottom:1.25rem; overflow-x:auto;">pip install haldir
+# that's it — live API, no signup</pre>
+                <a href="/quickstart" class="btn btn-w" style="align-self:flex-start;">Try cloud now</a>
+            </div>
+        </div>
+        <p style="font-size:0.75rem; color:var(--w20); margin-top:2rem; text-align:center; max-width:500px;">Same API. Same SDKs. Same hash-chained audit. Migrate between them anytime — only <span style="font-family:var(--mono); color:var(--gold);">DATABASE_URL</span> changes.</p>
     </section>
 
     <!-- ── Design Partners ── -->
