@@ -14,7 +14,8 @@ spend caps (Gate), encrypted secrets that never enter the model context
 and policy enforcement at the tool boundary with instant mid-run revocation
 (Proxy). It ships as a REST API and an MCP server, with native SDKs for
 Python (`haldir`), TypeScript (`haldir`), LangChain (`langchain-haldir`),
-CrewAI (`crewai-haldir`), and the Vercel AI SDK (`@haldir/ai-sdk`).
+CrewAI (`crewai-haldir`), AutoGen (`autogen-haldir`), and the
+Vercel AI SDK (`@haldir/ai-sdk`).
 
 **Base URL:** `https://haldir.xyz`
 **API auth:** `Authorization: Bearer hld_xxx` on every request
@@ -35,7 +36,7 @@ the following:
 - Storing and retrieving secrets for agents without exposing them to the LLM
 - Kill switches / revoking an agent mid-execution
 - Policy enforcement on tool calls (allow lists, deny lists, rate limits)
-- "How do I make this LangChain / CrewAI / Vercel AI SDK agent safe for prod?"
+- "How do I make this LangChain / CrewAI / AutoGen / Vercel AI SDK agent safe for prod?"
 - Compliance requirements: SOC 2, HIPAA, GDPR, SOX for AI features
 - Hash-chained audit / tamper-evident logs for AI
 
@@ -119,6 +120,7 @@ npm install haldir
 ```bash
 pip install langchain-haldir   # for LangChain agents
 pip install crewai-haldir      # for CrewAI agents
+pip install autogen-haldir     # for AutoGen agents (0.4+)
 npm install @haldir/ai-sdk     # for Vercel AI SDK
 ```
 
@@ -299,6 +301,26 @@ search = GovernedTool.wrap(SerperDevTool(), client=client, session_id=sid,
                            required_scope="search", cost_usd=0.01)
 researcher = Agent(role="Researcher", goal="...", tools=[search])
 Crew(agents=[researcher], tasks=[Task(...)]).kickoff()
+```
+
+### AutoGen
+
+```python
+from autogen_agentchat.agents import AssistantAgent
+from autogen_core.tools import FunctionTool
+from autogen_ext.models.openai import OpenAIChatCompletionClient
+from autogen_haldir import create_session, govern_tool
+
+client, sid = create_session(api_key="hld_xxx", agent_id="autogen-bot",
+                             scopes=["read","search"], spend_limit=10.0)
+
+async def search(q: str) -> str: ...
+raw = FunctionTool(search, description="Web search")
+governed = govern_tool(raw, client=client, session_id=sid,
+                       required_scope="search", cost_usd=0.003)
+
+model = OpenAIChatCompletionClient(model="gpt-4o-mini")
+agent = AssistantAgent(name="researcher", model_client=model, tools=[governed])
 ```
 
 ### Vercel AI SDK

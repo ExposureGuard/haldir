@@ -27,8 +27,8 @@
       "applicationSubCategory": "AI Agent Governance, Security, Compliance",
       "operatingSystem": "Cloud (REST API) + Self-hosted",
       "url": "https://haldir.xyz",
-      "description": "Governance layer for AI agents: scoped sessions with permissions and spend limits (Gate), AES-encrypted secrets (Vault), hash-chained tamper-evident audit trail (Watch), and policy enforcement proxy for tool calls (Proxy). Native SDKs for LangChain, CrewAI, and Vercel AI SDK.",
-      "keywords": "AI agents, MCP, Model Context Protocol, agent governance, agent security, LangChain, CrewAI, Vercel AI SDK, audit log, spend limit, secrets vault, policy enforcement, agent identity",
+      "description": "Governance layer for AI agents: scoped sessions with permissions and spend limits (Gate), AES-256-GCM encrypted secrets (Vault), hash-chained tamper-evident audit trail (Watch), and policy enforcement proxy for tool calls (Proxy). Native SDKs for LangChain, CrewAI, AutoGen, and Vercel AI SDK.",
+      "keywords": "AI agents, MCP, Model Context Protocol, agent governance, agent security, LangChain, CrewAI, AutoGen, Vercel AI SDK, audit log, spend limit, secrets vault, policy enforcement, agent identity",
       "offers": [
         {"@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "USD", "description": "1,000 API calls/month, single agent"},
         {"@type": "Offer", "name": "Pro", "price": "99", "priceCurrency": "USD", "description": "50,000 API calls/month, all 4 modules, 25 agents"},
@@ -45,6 +45,7 @@
       "hasPart": [
         {"@type": "SoftwareSourceCode", "name": "langchain-haldir", "codeRepository": "https://github.com/ExposureGuard/haldir/tree/main/integrations/langchain-haldir", "programmingLanguage": "Python"},
         {"@type": "SoftwareSourceCode", "name": "crewai-haldir", "codeRepository": "https://github.com/ExposureGuard/haldir/tree/main/integrations/crewai-haldir", "programmingLanguage": "Python"},
+        {"@type": "SoftwareSourceCode", "name": "autogen-haldir", "codeRepository": "https://github.com/ExposureGuard/haldir/tree/main/integrations/autogen-haldir", "programmingLanguage": "Python"},
         {"@type": "SoftwareSourceCode", "name": "@haldir/ai-sdk", "codeRepository": "https://github.com/ExposureGuard/haldir/tree/main/integrations/vercel-ai-haldir", "programmingLanguage": "TypeScript"}
       ],
       "sameAs": [
