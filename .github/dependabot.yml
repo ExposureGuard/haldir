@@ -39,6 +39,28 @@ updates:
       - "dependencies"
       - "crewai"
 
+  # AutoGen integration
+  - package-ecosystem: pip
+    directory: /integrations/autogen-haldir
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "autogen"
+
+  # LlamaIndex integration
+  - package-ecosystem: pip
+    directory: /integrations/llamaindex-haldir
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "llamaindex"
+
   # JavaScript SDK
   - package-ecosystem: npm
     directory: /sdk-js
