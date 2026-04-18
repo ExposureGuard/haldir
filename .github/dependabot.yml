@@ -1,0 +1,83 @@
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+version: 2
+updates:
+  # Python (API + SDKs)
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    groups:
+      python-runtime:
+        patterns: ["*"]
+    labels:
+      - "dependencies"
+      - "python"
+
+  # LangChain integration
+  - package-ecosystem: pip
+    directory: /integrations/langchain-haldir
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "langchain"
+
+  # CrewAI integration
+  - package-ecosystem: pip
+    directory: /integrations/crewai-haldir
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "crewai"
+
+  # JavaScript SDK
+  - package-ecosystem: npm
+    directory: /sdk-js
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "javascript"
+
+  # Vercel AI SDK integration
+  - package-ecosystem: npm
+    directory: /integrations/vercel-ai-haldir
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "vercel-ai"
+
+  # GitHub Actions (keep CI workflows pinned + current)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+
+  # Docker (Dockerfile base image)
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - "dependencies"
+      - "docker"

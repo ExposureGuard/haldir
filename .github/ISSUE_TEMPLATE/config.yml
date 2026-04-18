@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ExposureGuard/haldir/blob/main/SECURITY.md
+    about: Please do NOT open a public issue. Email security@haldir.xyz — see SECURITY.md.
+  - name: Question or help
+    url: https://github.com/ExposureGuard/haldir/discussions
+    about: For questions, ideas, and "how do I..." — use Discussions.
+  - name: Commercial support / design partner program
+    url: mailto:sterling@haldir.xyz
+    about: Email sterling@haldir.xyz for commercial support or the design partner program.

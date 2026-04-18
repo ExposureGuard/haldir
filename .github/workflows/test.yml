@@ -39,4 +39,4 @@ jobs:
         run: pip install pytest
 
       - name: Run tests
-        run: pytest tests/test_gate.py tests/test_vault.py tests/test_watch.py -v
+        run: pytest tests/test_gate.py tests/test_vault.py tests/test_watch.py tests/test_proxy.py -v

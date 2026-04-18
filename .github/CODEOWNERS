@@ -1,0 +1,17 @@
+# CODEOWNERS — https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Catch-all: Sterling reviews everything until we have specialized owners.
+
+* @SterlingIvey
+
+# Security-sensitive surfaces. PRs that touch these should get extra
+# scrutiny; flag reviewers in the PR description when opening.
+/haldir_vault/          @SterlingIvey
+/haldir_gate/           @SterlingIvey
+/haldir_watch/          @SterlingIvey
+/SECURITY.md            @SterlingIvey
+
+# Framework integrations — scoped so breakage is isolated to the ecosystem
+/integrations/langchain-haldir/      @SterlingIvey
+/integrations/crewai-haldir/         @SterlingIvey
+/integrations/vercel-ai-haldir/      @SterlingIvey
