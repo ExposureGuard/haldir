@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llamaindex-haldir"
+version = "0.1.0"
+description = "Haldir governance for LlamaIndex tools and query engines."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Sterling Ivey", email = "sterling@haldir.xyz"}]
+keywords = [
+    "llamaindex", "haldir",
+    "ai-agents", "agent-governance", "agent-security",
+    "audit", "compliance", "aes-256-gcm", "hash-chain",
+    "rag", "query-engine", "spend-control",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Security",
+]
+dependencies = [
+    "llama-index-core>=0.11.0",
+    "haldir>=0.2.0",
+    "pydantic>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://haldir.xyz"
+Repository = "https://github.com/ExposureGuard/haldir"
+Documentation = "https://haldir.xyz/docs"
+Issues = "https://github.com/ExposureGuard/haldir/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["llamaindex_haldir"]
