@@ -21,4 +21,28 @@ FUNDING_OPTIONS.md
 SOUL.md
 USER_CONVERSATIONS.md
 YC_*.md
+REALISTIC_OUTCOME.md
+OFFICE_PLAN.md
 drafts/
+# Funding + investor-facing strategy (keep private)
+A16Z_SPEEDRUN_APPLICATION.md
+COMPETITIVE_ANALYSIS.md
+INVESTOR_ONEPAGER.md
+SEED_FUNDING_PLAN.md
+GLAMA_SUBMISSION_CHECKLIST.md
+outreach_templates.md
+pilot_targets.md
+# Pitch deck build artifacts
+build_deck.py
+build_deck_pptx.py
+pitch_deck.html
+pitch_deck.pdf
+pitch_deck.pptx
+haldir-pitch-deck.pdf
+design_advice.png
+yc_demo.sh
+
+# Build artifacts
+node_modules/
+dist/
+*.tgz

@@ -1,0 +1,21 @@
+# Glama-specific Dockerfile for Haldir's MCP server.
+#
+# Glama's introspection pipeline expects the container to start an MCP
+# server that responds to JSON-RPC on stdin/stdout. Production Haldir
+# runs the REST API (see ./Dockerfile); this image runs the stdio MCP
+# server instead, which is what Smithery and Glama actually probe.
+#
+# Sterling: during the Glama "Add Server" flow, point the Dockerfile
+# upload at this file (or paste its contents verbatim).
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# HALDIR_API_KEY is supplied by Glama per the smithery.yaml config schema.
+CMD ["python", "-m", "mcp_server"]

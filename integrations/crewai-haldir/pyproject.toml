@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crewai-haldir"
+version = "0.1.0"
+description = "Haldir governance layer for CrewAI agents — audit, spend caps, and secrets."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Sterling", email = "sterling@haldir.xyz"}]
+keywords = ["crewai", "haldir", "ai-agents", "security", "governance", "audit", "compliance"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Security",
+]
+dependencies = [
+    "crewai>=0.30.0",
+    "haldir>=0.1.0",
+    "pydantic>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://haldir.xyz"
+Repository = "https://github.com/ExposureGuard/haldir"
+Documentation = "https://haldir.xyz/docs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["crewai_haldir"]

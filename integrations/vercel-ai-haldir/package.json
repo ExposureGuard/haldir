@@ -1,0 +1,58 @@
+{
+  "name": "@haldir/ai-sdk",
+  "version": "0.1.0",
+  "description": "Haldir governance layer for the Vercel AI SDK — audit, spend caps, and secrets for AI SDK tools.",
+  "keywords": [
+    "ai-sdk",
+    "vercel",
+    "haldir",
+    "ai-agents",
+    "security",
+    "governance",
+    "audit",
+    "compliance",
+    "tools"
+  ],
+  "author": "Sterling <sterling@haldir.xyz>",
+  "license": "MIT",
+  "homepage": "https://haldir.xyz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ExposureGuard/haldir.git",
+    "directory": "integrations/vercel-ai-haldir"
+  },
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "test": "vitest"
+  },
+  "peerDependencies": {
+    "ai": ">=3.0.0",
+    "haldir": ">=0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0",
+    "ai": "^3.0.0",
+    "haldir": "^0.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

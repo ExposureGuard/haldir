@@ -3,7 +3,9 @@
 
 [![Smithery](https://smithery.ai/badge/haldir)](https://smithery.ai/server/haldir/haldir)
 [![PyPI](https://img.shields.io/pypi/v/haldir)](https://pypi.org/project/haldir/)
+[![PyPI Downloads](https://img.shields.io/pypi/dm/haldir)](https://pypi.org/project/haldir/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/ExposureGuard/haldir?style=social)](https://github.com/ExposureGuard/haldir)
 [![SafeSkill 89/100](https://img.shields.io/badge/SafeSkill-89%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/exposureguard-haldir)
 
 **Identity, secrets, and audit for AI agents. MCP-native. Model-agnostic.**
@@ -11,6 +13,8 @@
 Haldir enforces governance on every AI agent tool call — scoped sessions, encrypted secrets, spend limits, immutable audit trail, human-in-the-loop approvals, and a proxy that intercepts every MCP call before it reaches your tools.
 
 > **Live now:** [haldir.xyz](https://haldir.xyz) · [API Docs](https://haldir.xyz/docs) · [OpenAPI Spec](https://haldir.xyz/openapi.json) · [Smithery](https://smithery.ai/server/haldir/haldir)
+>
+> 🧪 **Now accepting 5 design partners.** 30 days free, full access, direct line to the founder. If you're shipping AI agents to production, email [sterling@haldir.xyz](mailto:sterling@haldir.xyz?subject=Haldir%20Design%20Partner).
 
 ## Why Haldir
 

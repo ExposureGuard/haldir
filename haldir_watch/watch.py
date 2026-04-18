@@ -93,7 +93,7 @@ class Watch:
             tool=tool,
             details=details or {},
             cost_usd=round(cost_usd, 2),
-            timestamp=float(int(time.time())),  # integer seconds to match Postgres REAL precision
+            timestamp=time.time(),  # sub-second precision for deterministic chain ordering; hash uses int()
             tenant_id=tenant_id,
             prev_hash=prev_hash,
         )

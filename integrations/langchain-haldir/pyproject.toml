@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langchain-haldir"
+version = "0.1.0"
+description = "Governance layer for LangChain agents — audit trails, spend caps, secrets vault, revocation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Sterling Ivey", email = "sterling@haldir.xyz"}]
+keywords = ["langchain", "haldir", "ai", "agents", "governance", "audit", "security", "mcp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Security",
+]
+dependencies = [
+    "langchain-core>=0.3.0",
+    "haldir>=0.1.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0", "pytest-asyncio>=0.21.0"]
+
+[project.urls]
+Homepage = "https://haldir.xyz"
+Documentation = "https://haldir.xyz/docs"
+Source = "https://github.com/ExposureGuard/haldir/tree/main/integrations/langchain-haldir"
+Issues = "https://github.com/ExposureGuard/haldir/issues"
+
+[tool.setuptools.packages.find]
+include = ["langchain_haldir*"]

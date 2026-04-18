@@ -1817,7 +1817,12 @@ def quickstart_page():
 
 @app.route("/pricing")
 def pricing_page():
-    """Pricing page with tier comparison and checkout buttons."""
+    """Pricing page — temporarily hidden while iterating on tiers."""
+    return redirect("/", code=302)
+
+
+def _pricing_page_html():
+    """Archived pricing page HTML. Re-enable by returning this from pricing_page()."""
     return """<!DOCTYPE html>
 <html lang="en">
 <head>
