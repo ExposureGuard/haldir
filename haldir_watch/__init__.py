@@ -6,5 +6,18 @@ Watch is the compliance layer that enterprises require before deploying agents.
 """
 
 from .watch import Watch, AuditEntry
+from .webhooks import (
+    WebhookConfig,
+    WebhookManager,
+    WebhookVerificationError,
+    verify_signature,
+)
 
-__all__ = ["Watch", "AuditEntry"]
+__all__ = [
+    "Watch",
+    "AuditEntry",
+    "WebhookConfig",
+    "WebhookManager",
+    "WebhookVerificationError",
+    "verify_signature",
+]
