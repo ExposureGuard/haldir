@@ -70,6 +70,65 @@ if not ENCRYPTION_KEY:
     print("[!] WARNING: No HALDIR_ENCRYPTION_KEY set. A random key was generated.")
     print("[!] Secrets will be LOST on restart. Set HALDIR_ENCRYPTION_KEY env var.")
 
+
+# ── Idempotency helpers ────────────────────────────────────────────────
+#
+# Every mutating POST endpoint accepts an optional `Idempotency-Key`
+# header. When present, the two helpers below gate handler execution so
+# a second POST with the same (tenant, key, endpoint, body) returns the
+# original response rather than re-processing. See haldir_idempotency.py.
+#
+# Usage inside an endpoint:
+#
+#     @app.route("/v1/sessions", methods=["POST"])
+#     def create_session():
+#         data = request.json or {}
+#         tenant = getattr(request, "tenant_id", "")
+#         cached = _idempotency_lookup("/v1/sessions", data, tenant)
+#         if cached is not None:
+#             return cached
+#         ...do the work...
+#         _idempotency_store("/v1/sessions", data, tenant, response, status)
+#         return jsonify(response), status
+
+def _idempotency_lookup(endpoint: str, body: dict, tenant: str):
+    """Return (jsonify_response, status) to short-circuit the handler, or
+    None to proceed. Returns a 422 response if the caller reused a key
+    with a different body."""
+    idem_key = request.headers.get("Idempotency-Key")
+    if not idem_key:
+        return None
+    conn = get_db(DB_PATH)
+    try:
+        try:
+            hit = haldir_idempotency.lookup(
+                conn, tenant, idem_key, endpoint, body,
+            )
+            if hit is not None:
+                return jsonify(hit.body), hit.status
+        except haldir_idempotency.IdempotencyMismatch as e:
+            return jsonify({"error": str(e)}), 422
+    finally:
+        conn.close()
+    return None
+
+
+def _idempotency_store(endpoint: str, body: dict, tenant: str,
+                      response: dict, status: int) -> None:
+    """Cache a response for future retries with the same Idempotency-Key.
+    No-op when the header is absent."""
+    idem_key = request.headers.get("Idempotency-Key")
+    if not idem_key:
+        return
+    conn = get_db(DB_PATH)
+    try:
+        haldir_idempotency.store(
+            conn, tenant, idem_key, endpoint, body, response, status,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
 # ── Billing tier limits ──
 
 TIER_LIMITS = {
@@ -184,6 +243,13 @@ def create_api_key():
             return jsonify({"error": "Authentication required to create additional keys"}), 401
 
     data = request.json or {}
+    # Pre-auth endpoint (bootstrap) so there's no tenant yet — cache under
+    # the empty tenant string; Idempotency-Keys are UUIDv4 so collision
+    # risk across callers is negligible.
+    cached = _idempotency_lookup("/v1/keys", data, "")
+    if cached is not None:
+        return cached
+
     name = data.get("name", "default")
     tier = "free"  # Always free on creation — only Stripe webhooks can upgrade
 
@@ -199,13 +265,15 @@ def create_api_key():
     conn.commit()
     conn.close()
 
-    return jsonify({
+    response = {
         "key": full_key,
         "prefix": full_key[:12],
         "name": name,
         "tier": tier,
         "message": "Save this key — it won't be shown again.",
-    }), 201
+    }
+    _idempotency_store("/v1/keys", data, "", response, 201)
+    return jsonify(response), 201
 
 
 @app.route("/v1/demo/key", methods=["POST"])
@@ -245,8 +313,12 @@ def create_session():
     if not agent_id:
         return jsonify({"error": "agent_id is required"}), 400
 
-    # Enforce agent limit per billing tier
     tenant = getattr(request, "tenant_id", "")
+    cached = _idempotency_lookup("/v1/sessions", data, tenant)
+    if cached is not None:
+        return cached
+
+    # Enforce agent limit per billing tier
     tier = _get_tenant_tier(tenant)
     limits = TIER_LIMITS.get(tier, TIER_LIMITS["free"])
     current_agents = _get_tenant_agent_count(tenant)
@@ -284,18 +356,19 @@ def create_session():
         if spend_limit < 0:
             return jsonify({"error": "spend_limit must be non-negative"}), 400
 
-    tenant = getattr(request, "tenant_id", "")
     gate.register_agent(agent_id, default_scopes=scopes, tenant_id=tenant)
     session = gate.create_session(agent_id, scopes=scopes, ttl=ttl, spend_limit=spend_limit, tenant_id=tenant)
 
-    return jsonify({
+    response = {
         "session_id": session.session_id,
         "agent_id": session.agent_id,
         "scopes": session.scopes,
         "spend_limit": session.spend_limit,
         "expires_at": session.expires_at,
         "ttl": ttl,
-    }), 201
+    }
+    _idempotency_store("/v1/sessions", data, tenant, response, 201)
+    return jsonify(response), 201
 
 
 @app.route("/v1/sessions/<session_id>", methods=["GET"])
@@ -353,11 +426,17 @@ def store_secret():
     if not name or not value:
         return jsonify({"error": "name and value are required"}), 400
 
-    scope_required = data.get("scope_required", "read")
     tenant = getattr(request, "tenant_id", "")
+    cached = _idempotency_lookup("/v1/secrets", data, tenant)
+    if cached is not None:
+        return cached
+
+    scope_required = data.get("scope_required", "read")
     vault.store_secret(name, value, scope_required=scope_required, tenant_id=tenant)
 
-    return jsonify({"stored": True, "name": name}), 201
+    response = {"stored": True, "name": name}
+    _idempotency_store("/v1/secrets", data, tenant, response, 201)
+    return jsonify(response), 201
 
 
 @app.route("/v1/secrets/<name>", methods=["GET"])
@@ -424,23 +503,9 @@ def authorize_payment():
 
     tenant = getattr(request, "tenant_id", "")
 
-    # Retry-safe: if the caller sends `Idempotency-Key` and we've seen that
-    # (tenant, key, endpoint, body) combination before, return the cached
-    # response instead of charging twice.
-    idem_key = request.headers.get("Idempotency-Key")
-    if idem_key:
-        conn = get_db(DB_PATH)
-        try:
-            try:
-                hit = haldir_idempotency.lookup(
-                    conn, tenant, idem_key, "/v1/payments/authorize", data,
-                )
-                if hit is not None:
-                    return jsonify(hit.body), hit.status
-            except haldir_idempotency.IdempotencyMismatch as e:
-                return jsonify({"error": str(e)}), 422
-        finally:
-            conn.close()
+    cached = _idempotency_lookup("/v1/payments/authorize", data, tenant)
+    if cached is not None:
+        return cached
 
     session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
@@ -453,19 +518,7 @@ def authorize_payment():
     )
 
     status = 200 if result["authorized"] else 403
-
-    # Store for future retries
-    if idem_key:
-        conn = get_db(DB_PATH)
-        try:
-            haldir_idempotency.store(
-                conn, tenant, idem_key, "/v1/payments/authorize",
-                data, result, status,
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
+    _idempotency_store("/v1/payments/authorize", data, tenant, result, status)
     return jsonify(result), status
 
 
@@ -492,24 +545,9 @@ def log_action():
 
     tenant = getattr(request, "tenant_id", "")
 
-    # Retry-safe: if caller sent Idempotency-Key and we've processed this
-    # (tenant, key, endpoint, body) before, return the cached response
-    # rather than writing a duplicate audit entry (which would break the
-    # 1-to-1 correspondence between hash-chain entries and agent actions).
-    idem_key = request.headers.get("Idempotency-Key")
-    if idem_key:
-        conn = get_db(DB_PATH)
-        try:
-            try:
-                hit = haldir_idempotency.lookup(
-                    conn, tenant, idem_key, "/v1/audit", data,
-                )
-                if hit is not None:
-                    return jsonify(hit.body), hit.status
-            except haldir_idempotency.IdempotencyMismatch as e:
-                return jsonify({"error": str(e)}), 422
-        finally:
-            conn.close()
+    cached = _idempotency_lookup("/v1/audit", data, tenant)
+    if cached is not None:
+        return cached
 
     session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
@@ -528,18 +566,7 @@ def log_action():
         "flagged": entry.flagged,
         "flag_reason": entry.flag_reason,
     }
-
-    if idem_key:
-        conn = get_db(DB_PATH)
-        try:
-            haldir_idempotency.store(
-                conn, tenant, idem_key, "/v1/audit",
-                data, response, 201,
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
+    _idempotency_store("/v1/audit", data, tenant, response, 201)
     return jsonify(response), 201
 
 
@@ -654,12 +681,18 @@ def add_approval_rule():
     rule_type = data.get("type")
     if not rule_type:
         return jsonify({"error": "type is required (spend_over, tool_blocked, destructive, all)"}), 400
+    tenant = getattr(request, "tenant_id", "")
+    cached = _idempotency_lookup("/v1/approvals/rules", data, tenant)
+    if cached is not None:
+        return cached
     approval_engine.add_rule(
         rule_type=rule_type,
         threshold=float(data.get("threshold", 0)),
         tools=data.get("tools"),
     )
-    return jsonify({"added": True, "type": rule_type}), 201
+    response = {"added": True, "type": rule_type}
+    _idempotency_store("/v1/approvals/rules", data, tenant, response, 201)
+    return jsonify(response), 201
 
 
 @app.route("/v1/approvals/request", methods=["POST"])
@@ -670,6 +703,9 @@ def request_approval():
     if not session_id:
         return jsonify({"error": "session_id is required"}), 400
     tenant = getattr(request, "tenant_id", "")
+    cached = _idempotency_lookup("/v1/approvals/request", data, tenant)
+    if cached is not None:
+        return cached
     session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
         return jsonify({"error": "Invalid or expired session"}), 401
@@ -683,11 +719,13 @@ def request_approval():
         details=data.get("details"),
         ttl=int(data.get("ttl", 3600)),
     )
-    return jsonify({
+    response = {
         "request_id": req.request_id,
         "status": req.status.value,
         "expires_at": req.expires_at,
-    }), 201
+    }
+    _idempotency_store("/v1/approvals/request", data, tenant, response, 201)
+    return jsonify(response), 201
 
 
 @app.route("/v1/approvals/<request_id>", methods=["GET"])
@@ -770,12 +808,18 @@ def register_webhook():
     url = data.get("url")
     if not url:
         return jsonify({"error": "url is required"}), 400
+    tenant = getattr(request, "tenant_id", "")
+    cached = _idempotency_lookup("/v1/webhooks", data, tenant)
+    if cached is not None:
+        return cached
     wh = webhook_mgr.register(
         url=url,
         name=data.get("name", ""),
         events=data.get("events"),
     )
-    return jsonify({"registered": True, "url": wh.url, "events": wh.events}), 201
+    response = {"registered": True, "url": wh.url, "events": wh.events}
+    _idempotency_store("/v1/webhooks", data, tenant, response, 201)
+    return jsonify(response), 201
 
 
 @app.route("/v1/webhooks", methods=["GET"])
@@ -1720,6 +1764,10 @@ def register_upstream():
     url = data.get("url")
     if not name or not url:
         return jsonify({"error": "name and url are required"}), 400
+    tenant = getattr(request, "tenant_id", "")
+    cached = _idempotency_lookup("/v1/proxy/upstreams", data, tenant)
+    if cached is not None:
+        return cached
     server = proxy.register_upstream(name, url)
     resp = {
         "registered": True,
@@ -1735,6 +1783,7 @@ def register_upstream():
         resp["upstream_status"] = server._raw_status
     if hasattr(server, '_raw_body'):
         resp["upstream_body"] = server._raw_body[:300]
+    _idempotency_store("/v1/proxy/upstreams", data, tenant, resp, 201)
     return jsonify(resp), 201
 
 
@@ -1779,12 +1828,16 @@ def proxy_call():
         return jsonify({"error": "session_id is required"}), 400
 
     tenant = getattr(request, "tenant_id", "")
+    cached = _idempotency_lookup("/v1/proxy/call", data, tenant)
+    if cached is not None:
+        return cached
     session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
         return jsonify({"error": "Invalid or expired session"}), 401
 
     result = proxy.call_tool(tool_name, arguments, session=session)
     status = 403 if result.get("isError") else 200
+    _idempotency_store("/v1/proxy/call", data, tenant, result, status)
     return jsonify(result), status
 
 
@@ -1806,8 +1859,14 @@ def add_proxy_policy():
     ptype = data.get("type")
     if not ptype:
         return jsonify({"error": "type is required"}), 400
+    tenant = getattr(request, "tenant_id", "")
+    cached = _idempotency_lookup("/v1/proxy/policies", data, tenant)
+    if cached is not None:
+        return cached
     proxy.add_policy(**data)
-    return jsonify({"added": True, "type": ptype}), 201
+    response = {"added": True, "type": ptype}
+    _idempotency_store("/v1/proxy/policies", data, tenant, response, 201)
+    return jsonify(response), 201
 
 
 @app.route("/v1/proxy/policies", methods=["GET"])
@@ -2222,6 +2281,10 @@ def billing_checkout():
     if not price_id:
         return jsonify({"error": f"No Stripe price configured for tier '{tier}'"}), 400
 
+    cached = _idempotency_lookup("/v1/billing/checkout", data, tenant)
+    if cached is not None:
+        return cached
+
     # Reuse existing Stripe customer if one exists
     conn = get_db(DB_PATH)
     row = conn.execute("SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ?", (tenant,)).fetchone()
@@ -2241,7 +2304,9 @@ def billing_checkout():
         # Subscription mode auto-creates customer; no customer_creation param needed
 
         session = stripe.checkout.Session.create(**checkout_params)
-        return jsonify({"url": session.url, "session_id": session.id})
+        response = {"url": session.url, "session_id": session.id}
+        _idempotency_store("/v1/billing/checkout", data, tenant, response, 200)
+        return jsonify(response)
     except stripe.StripeError as e:
         return jsonify({"error": str(e)}), 400
 
