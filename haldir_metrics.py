@@ -90,11 +90,15 @@ class Counter:
     def render(self) -> Iterable[str]:
         yield f"# HELP {self.name} {self.help_text}"
         yield f"# TYPE {self.name} counter"
-        with self._lock:
-            snapshot = dict(self._values)
+        snapshot = self.snapshot()
         # Stable ordering for snapshot tests.
         for lbls, val in sorted(snapshot.items()):
             yield f"{self.name}{_fmt_labels(lbls)} {val}"
+
+    def snapshot(self) -> dict[tuple[tuple[str, str], ...], float]:
+        """Thread-safe copy of every (label-set → count) entry."""
+        with self._lock:
+            return dict(self._values)
 
 
 @dataclass
@@ -146,13 +150,7 @@ class Histogram:
     def render(self) -> Iterable[str]:
         yield f"# HELP {self.name} {self.help_text}"
         yield f"# TYPE {self.name} histogram"
-        with self._lock:
-            snapshot = {
-                k: _HistogramSeries(
-                    count=v.count, sum=v.sum, buckets=list(v.buckets),
-                )
-                for k, v in self._series.items()
-            }
+        snapshot = self.snapshot()
         for lbls, s in sorted(snapshot.items()):
             # observe() already stores cumulative counts (every bucket with
             # upper >= value is incremented), so we emit directly.
@@ -163,6 +161,16 @@ class Histogram:
             yield f"{self.name}_bucket{_fmt_labels(le_inf)} {s.count}"
             yield f"{self.name}_sum{_fmt_labels(lbls)} {s.sum}"
             yield f"{self.name}_count{_fmt_labels(lbls)} {s.count}"
+
+    def snapshot(self) -> dict[tuple[tuple[str, str], ...], _HistogramSeries]:
+        """Thread-safe deep copy of every (label-set → series) entry."""
+        with self._lock:
+            return {
+                k: _HistogramSeries(
+                    count=v.count, sum=v.sum, buckets=list(v.buckets),
+                )
+                for k, v in self._series.items()
+            }
 
 
 def _prom_float(x: float) -> str:

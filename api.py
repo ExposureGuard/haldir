@@ -44,6 +44,7 @@ from haldir_logging import configure_logging, get_logger
 from haldir_metrics import registry as prom_metrics
 from haldir_validation import validate_body
 from haldir_openapi import generate_openapi
+from haldir_status import build_status
 
 configure_logging()
 log = get_logger("haldir.api")
@@ -2834,6 +2835,177 @@ def swagger_ui():
         200,
         {"Content-Type": "text/html; charset=utf-8"},
     )
+
+
+# ── Public status page ──────────────────────────────────────────────────
+
+@app.route("/v1/status")
+def status_json():
+    """Machine-readable status snapshot. Cheap enough to be polled by
+    uptime monitors (Pingdom, UptimeRobot, etc.) — one SQLite ping plus
+    an in-memory read of the metrics registry."""
+    return jsonify(build_status(DB_PATH, prom_metrics))
+
+
+@app.route("/status")
+def status_page():
+    """Customer-facing status page — rendered server-side on every hit so
+    the data is never stale. Uses the same build_status() snapshot as the
+    JSON endpoint so the two can never disagree."""
+    snap = build_status(DB_PATH, prom_metrics)
+
+    banner_state = snap["status"]
+    banner_color = {
+        "ok":       "#0b8043",
+        "degraded": "#b58900",
+        "down":     "#b00020",
+    }.get(banner_state, "#555")
+    banner_text = {
+        "ok":       "All systems operational",
+        "degraded": "Partial degradation",
+        "down":     "Service disruption",
+    }.get(banner_state, banner_state)
+
+    rows = []
+    dot_color = {"ok": "#0b8043", "degraded": "#b58900", "down": "#b00020"}
+    for c in snap["components"]:
+        rows.append(
+            f"""<tr>
+  <td><span class="dot" style="background:{dot_color.get(c['state'], '#555')}"></span>{c['name']}</td>
+  <td class="state">{c['state']}</td>
+  <td class="msg">{c['message']}</td>
+</tr>"""
+        )
+    rows_html = "\n".join(rows)
+
+    sr = snap["metrics"]["success_rate"]
+    success_pct = f"{sr['ratio'] * 100:.3f}%"
+    success_sub = f"{sr['total'] - sr['errors']:,} / {sr['total']:,} requests"
+
+    def _fmt_latency(seconds: float | None) -> str:
+        if seconds is None:
+            return "—"
+        if seconds < 1:
+            return f"{seconds * 1000:.0f} ms"
+        return f"{seconds:.2f} s"
+
+    lat = snap["metrics"]["latency_seconds"]
+
+    import html as _html
+    safe = _html.escape  # escape any future user-supplied strings
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Haldir Status</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Live operational status for the Haldir API.">
+<style>
+  :root {{
+    --bg: #0a0a0a;
+    --fg: #e8e8e8;
+    --muted: #888;
+    --card: #141414;
+    --border: #222;
+  }}
+  * {{ box-sizing: border-box }}
+  body {{
+    margin: 0; padding: 2rem 1rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--fg);
+    line-height: 1.5;
+  }}
+  .wrap {{ max-width: 780px; margin: 0 auto }}
+  header {{ margin-bottom: 2rem }}
+  header a {{ color: var(--muted); text-decoration: none; font-size: 14px }}
+  h1 {{ margin: 0 0 0.25rem; font-size: 28px; letter-spacing: -0.02em }}
+  .checked {{ color: var(--muted); font-size: 13px }}
+  .banner {{
+    background: {banner_color}; color: #fff;
+    padding: 1.25rem 1.5rem; border-radius: 8px;
+    font-size: 20px; font-weight: 600;
+    margin: 1.5rem 0;
+  }}
+  section {{
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1.25rem 1.5rem; margin-bottom: 1.25rem;
+  }}
+  h2 {{ margin: 0 0 1rem; font-size: 15px; text-transform: uppercase;
+        letter-spacing: 0.08em; color: var(--muted); font-weight: 600 }}
+  table {{ width: 100%; border-collapse: collapse }}
+  td {{ padding: 0.6rem 0; border-bottom: 1px solid var(--border); font-size: 15px }}
+  tr:last-child td {{ border-bottom: none }}
+  td.state {{ text-transform: uppercase; font-size: 12px; letter-spacing: 0.05em;
+              color: var(--muted); width: 110px }}
+  td.msg {{ color: var(--muted); font-size: 14px; text-align: right }}
+  .dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+          margin-right: 0.6rem; vertical-align: middle }}
+  .grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem }}
+  .grid .cell {{ text-align: left }}
+  .cell .label {{ color: var(--muted); font-size: 12px; text-transform: uppercase;
+                  letter-spacing: 0.05em }}
+  .cell .value {{ font-size: 24px; font-weight: 600; margin-top: 0.25rem }}
+  .cell .sub {{ color: var(--muted); font-size: 12px; margin-top: 0.15rem }}
+  footer {{ color: var(--muted); font-size: 13px; margin-top: 2rem; text-align: center }}
+  footer a {{ color: var(--muted) }}
+  @media (max-width: 520px) {{
+    .grid {{ grid-template-columns: repeat(2, 1fr) }}
+    td.msg {{ display: none }}
+  }}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a href="/">&larr; haldir.xyz</a>
+    <h1>Haldir Status</h1>
+    <div class="checked">Checked just now</div>
+  </header>
+
+  <div class="banner">{safe(banner_text)}</div>
+
+  <section>
+    <h2>Components</h2>
+    <table>{rows_html}</table>
+  </section>
+
+  <section>
+    <h2>Last {sr['total']:,} Requests</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">Success rate</div>
+        <div class="value">{success_pct}</div>
+        <div class="sub">{success_sub}</div>
+      </div>
+      <div class="cell">
+        <div class="label">p50 latency</div>
+        <div class="value">{_fmt_latency(lat['p50'])}</div>
+        <div class="sub">median</div>
+      </div>
+      <div class="cell">
+        <div class="label">p95 latency</div>
+        <div class="value">{_fmt_latency(lat['p95'])}</div>
+        <div class="sub">95th pct</div>
+      </div>
+      <div class="cell">
+        <div class="label">p99 latency</div>
+        <div class="value">{_fmt_latency(lat['p99'])}</div>
+        <div class="sub">99th pct</div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <a href="/v1/status">JSON</a> &middot;
+    <a href="/swagger">API docs</a> &middot;
+    <a href="mailto:sterling@haldir.xyz">Report an issue</a>
+  </footer>
+</div>
+</body>
+</html>"""
+
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 @app.route("/v1")

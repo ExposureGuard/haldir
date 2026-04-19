@@ -228,7 +228,8 @@ def generate_openapi(app: Any, version: str = "0.2.3") -> dict[str, Any]:
     # routes — an OpenAPI doc should only describe the JSON surface.
     _SKIP_PREFIXES = ("/static", "/_debug")
     _SKIP_EXACT = {"/", "/docs", "/pricing", "/quickstart", "/sitemap.xml",
-                   "/robots.txt", "/ai.txt", "/llms.txt", "/llms-full.txt"}
+                   "/robots.txt", "/ai.txt", "/llms.txt", "/llms-full.txt",
+                   "/status"}
 
     paths: dict[str, dict[str, Any]] = spec["paths"]
 
