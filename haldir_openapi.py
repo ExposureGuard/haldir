@@ -294,7 +294,7 @@ def generate_openapi(app: Any, version: str = "0.3.0") -> dict[str, Any]:
     _SKIP_PREFIXES = ("/static", "/_debug")
     _SKIP_EXACT = {"/", "/docs", "/pricing", "/quickstart", "/sitemap.xml",
                    "/robots.txt", "/ai.txt", "/llms.txt", "/llms-full.txt",
-                   "/status", "/demo"}
+                   "/status", "/demo", "/admin", "/admin/overview"}
     # /livez, /readyz, /healthz are documented in the platform tag —
     # they're machine consumers' contract so they SHOULD appear.
 

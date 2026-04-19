@@ -1167,6 +1167,322 @@ def admin_overview():
     return jsonify(overview)
 
 
+# ── Web admin dashboard (HTML mirror of the CLI's `haldir overview`) ──
+
+@app.route("/admin", methods=["GET"])
+def admin_redirect():
+    return redirect("/admin/overview")
+
+
+@app.route("/admin/overview", methods=["GET"])
+def admin_overview_html():
+    """Server-rendered tenant dashboard. Same payload as the JSON
+    endpoint; HTML is just the presentation layer.
+
+    Auth precedence: ?key=<hld_...> querystring → Authorization header.
+    If no key is provided, render a minimal "paste a key" form. If the
+    visitor clicks the demo button (?demo=1), auto-mint a sandbox key
+    and redirect with it — same flow the CLI's `haldir login` walks
+    a developer through.
+    """
+    import haldir_admin
+    from haldir_status import build_status
+
+    # ── Demo flow: mint a fresh sandbox key + redirect ───────────────
+    if request.args.get("demo") == "1":
+        full_key = f"hld_{secrets.token_urlsafe(32)}"
+        key_hash = _hash_key(full_key)
+        tenant_id = f"demo_{key_hash[:12]}"
+        conn = get_db(DB_PATH)
+        conn.execute(
+            "INSERT INTO api_keys (key_hash, key_prefix, tenant_id, name, tier, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (key_hash, full_key[:12], tenant_id, "admin-demo", "free", time.time()),
+        )
+        conn.commit()
+        conn.close()
+        return redirect(f"/admin/overview?key={full_key}")
+
+    # ── Resolve key + tenant ────────────────────────────────────────
+    key = request.args.get("key", "")
+    if not key:
+        key = request.headers.get(
+            "Authorization", "").replace("Bearer ", "")
+    if not key:
+        return _render_admin_login(), 200, {
+            "Content-Type": "text/html; charset=utf-8",
+        }
+
+    key_hash = _hash_key(key)
+    conn = get_db(DB_PATH)
+    row = conn.execute(
+        "SELECT tenant_id FROM api_keys WHERE key_hash = ? AND revoked = 0",
+        (key_hash,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return _render_admin_login(error="Invalid or revoked key."), 401, {
+            "Content-Type": "text/html; charset=utf-8",
+        }
+    tenant_id = row["tenant_id"]
+
+    overview = haldir_admin.build_overview(
+        DB_PATH, tenant_id,
+        watch=watch, tier_limits=TIER_LIMITS,
+        health_snapshot=build_status(DB_PATH, prom_metrics),
+    )
+    return _render_admin_overview(overview, key), 200, {
+        "Content-Type": "text/html; charset=utf-8",
+    }
+
+
+def _render_admin_login(error: str = "") -> str:
+    """Tiny key-paste form when the visitor hits /admin/overview with
+    no auth. Includes a one-click demo button that mints a sandbox
+    key — same path /demo uses, so visitors can preview the dashboard
+    without signing up."""
+    err_block = (
+        f'<p class="err">{error}</p>' if error else ''
+    )
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Haldir Admin · sign in</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#050505;color:#e0ddd5;font-family:'Inter',sans-serif;
+       min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem}
+  .card{max-width:440px;width:100%;border:1px solid rgba(224,221,213,0.08);
+        border-radius:8px;padding:2.5rem 2rem;background:rgba(255,255,255,0.015)}
+  h1{font-weight:300;font-size:1.5rem;letter-spacing:-0.5px;margin-bottom:0.5rem}
+  .lede{font-size:0.85rem;color:rgba(224,221,213,0.5);margin-bottom:2rem;line-height:1.6}
+  label{display:block;font-family:'IBM Plex Mono',monospace;font-size:0.6rem;
+        letter-spacing:2px;text-transform:uppercase;color:rgba(224,221,213,0.5);margin-bottom:0.5rem}
+  input{width:100%;background:#0a0a0a;border:1px solid rgba(224,221,213,0.2);
+        border-radius:4px;padding:0.75rem 1rem;color:#e0ddd5;font-family:'IBM Plex Mono',monospace;
+        font-size:0.85rem}
+  input:focus{outline:none;border-color:#b8973a}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-top:1.5rem}
+  button,a.btn{display:block;width:100%;padding:0.85rem;border:none;border-radius:4px;
+        font-family:'IBM Plex Mono',monospace;font-size:0.65rem;letter-spacing:2px;
+        text-transform:uppercase;cursor:pointer;text-align:center;text-decoration:none}
+  .btn-w{background:#e0ddd5;color:#050505}
+  .btn-g{background:transparent;color:rgba(224,221,213,0.5);
+         border:1px solid rgba(224,221,213,0.2)}
+  .btn-w:hover{background:rgba(224,221,213,0.8)}
+  .btn-g:hover{color:#e0ddd5;border-color:rgba(224,221,213,0.5)}
+  .err{color:#d05a5a;font-size:0.8rem;margin-bottom:1rem}
+  .footer{text-align:center;font-size:0.7rem;color:rgba(224,221,213,0.3);
+          margin-top:1.5rem;font-family:'IBM Plex Mono',monospace}
+  .footer a{color:rgba(224,221,213,0.5);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Haldir admin</h1>
+  <p class="lede">Sign in with your API key to see your tenant's live dashboard,
+     or click below for a sandbox preview.</p>
+  """ + err_block + """
+  <form method="get" action="/admin/overview">
+    <label for="key">API key</label>
+    <input type="text" id="key" name="key" placeholder="hld_..." autofocus>
+    <div class="row">
+      <button type="submit" class="btn-w">Sign in</button>
+      <a class="btn btn-g" href="/admin/overview?demo=1">Live demo</a>
+    </div>
+  </form>
+  <p class="footer">
+    No key yet? <a href="/quickstart">Get one</a> · <a href="/">haldir.xyz</a>
+  </p>
+</div>
+</body>
+</html>"""
+
+
+def _render_admin_overview(o: dict, key: str) -> str:
+    """The dashboard. Same layout as the CLI's `haldir overview` —
+    pills, progress bar, seven-row summary — translated to HTML."""
+    import html as _h
+
+    state = o.get("health", {}).get("status", "ok")
+    state_color = {
+        "ok":       "#0b8043",
+        "degraded": "#b58900",
+        "down":     "#b00020",
+    }.get(state, "#5a5a5a")
+    state_label = {
+        "ok":       "All systems operational",
+        "degraded": "Partial degradation",
+        "down":     "Service disruption",
+    }.get(state, state)
+
+    u = o.get("usage", {})
+    pct = float(u.get("actions_pct_used", 0.0))
+    bar_pct = min(100.0, max(0.0, pct * 100))
+    bar_color = (
+        "#0b8043" if pct < 0.7 else
+        "#b58900" if pct < 0.9 else
+        "#b00020"
+    )
+
+    s = o.get("sessions", {})
+    v = o.get("vault", {})
+    a = o.get("audit", {})
+    w = o.get("webhooks", {})
+    ap = o.get("approvals", {})
+
+    chain_ok = a.get("chain_verified", True)
+    chain_mark = "✓" if chain_ok else "✗"
+    chain_color = "#0b8043" if chain_ok else "#b00020"
+
+    rate = float(w.get("delivery_success_rate_24h", 1.0))
+    rate_color = (
+        "#0b8043" if rate >= 0.99 else
+        "#b58900" if rate >= 0.95 else
+        "#b00020"
+    )
+
+    pending = ap.get("pending_count", 0)
+    pending_color = "#b58900" if pending else "#5a5a5a"
+
+    # Truncate the key shown in the corner so we don't leak it into
+    # OG cards if someone screenshots the page.
+    key_short = (_h.escape(key[:8]) + "..." + _h.escape(key[-4:])
+                 ) if key and len(key) > 12 else _h.escape(key or "")
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Haldir admin · {_h.escape(o.get('tenant_id', ''))}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta http-equiv="refresh" content="30">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+  *{{margin:0;padding:0;box-sizing:border-box}}
+  body{{background:#050505;color:#e0ddd5;font-family:'Inter',sans-serif;
+        min-height:100vh;padding:3rem 1.5rem}}
+  .wrap{{max-width:880px;margin:0 auto}}
+  header{{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2rem}}
+  h1{{font-weight:300;font-size:1.4rem;letter-spacing:-0.5px}}
+  .meta{{font-family:'IBM Plex Mono',monospace;font-size:0.7rem;
+         color:rgba(224,221,213,0.4);margin-top:0.25rem}}
+  .right{{text-align:right;font-family:'IBM Plex Mono',monospace;font-size:0.65rem}}
+  .right a{{color:rgba(224,221,213,0.5);text-decoration:none;margin-left:1rem}}
+  .right a:hover{{color:#e0ddd5}}
+
+  .banner{{background:{state_color};color:#fff;padding:1rem 1.5rem;
+          border-radius:6px;font-size:0.95rem;font-weight:500;margin-bottom:1.5rem}}
+
+  .grid{{display:grid;gap:1px;background:rgba(224,221,213,0.08);
+         border:1px solid rgba(224,221,213,0.08);border-radius:6px;overflow:hidden}}
+  .row{{background:#050505;display:grid;grid-template-columns:140px 1fr auto;
+        align-items:center;padding:1.1rem 1.5rem;gap:1.25rem}}
+  .label{{font-family:'IBM Plex Mono',monospace;font-size:0.6rem;
+          letter-spacing:2px;text-transform:uppercase;
+          color:rgba(224,221,213,0.4)}}
+  .value{{font-size:1.1rem;font-weight:500;color:#e0ddd5}}
+  .sub{{font-family:'IBM Plex Mono',monospace;font-size:0.7rem;
+        color:rgba(224,221,213,0.5);text-align:right}}
+
+  .pill{{display:inline-flex;align-items:center;gap:0.5rem;
+         font-family:'IBM Plex Mono',monospace;font-size:0.7rem;
+         text-transform:lowercase}}
+  .dot{{width:8px;height:8px;border-radius:50%}}
+
+  .bar{{display:inline-block;width:160px;height:8px;background:rgba(224,221,213,0.08);
+        border-radius:4px;overflow:hidden;vertical-align:middle;margin-left:0.5rem}}
+  .bar-fill{{display:block;height:100%;background:{bar_color};width:{bar_pct:.1f}%}}
+
+  footer{{font-family:'IBM Plex Mono',monospace;font-size:0.65rem;
+          color:rgba(224,221,213,0.3);text-align:center;margin-top:2rem}}
+  footer a{{color:rgba(224,221,213,0.5);text-decoration:none;margin:0 0.75rem}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Haldir admin</h1>
+      <div class="meta">
+        {_h.escape(o.get('tenant_id', ''))} · tier
+        <span style="color:#b8973a">{_h.escape(o.get('tier', ''))}</span> ·
+        {_h.escape(o.get('generated_at', ''))}
+      </div>
+    </div>
+    <div class="right">
+      <span style="color:rgba(224,221,213,0.3)">{key_short}</span>
+      <a href="/admin/overview?key={_h.escape(key)}">refresh</a>
+      <a href="/admin/overview">sign out</a>
+    </div>
+  </header>
+
+  <div class="banner">{state_label}</div>
+
+  <div class="grid">
+
+    <div class="row">
+      <div class="label">Actions</div>
+      <div class="value">{u.get('actions_this_month', 0):,}<span style="color:rgba(224,221,213,0.4);font-weight:300"> / {u.get('actions_limit', 0):,}</span><span class="bar"><span class="bar-fill"></span></span></div>
+      <div class="sub">{pct * 100:.1f}% of monthly quota</div>
+    </div>
+
+    <div class="row">
+      <div class="label">Spend</div>
+      <div class="value">${u.get('spend_usd_this_month', 0.0):.2f}</div>
+      <div class="sub">this month</div>
+    </div>
+
+    <div class="row">
+      <div class="label">Sessions</div>
+      <div class="value">{s.get('active_count', 0):,}</div>
+      <div class="sub">{s.get('agents_active', 0)} / {s.get('agents_limit', 0)} agents</div>
+    </div>
+
+    <div class="row">
+      <div class="label">Vault</div>
+      <div class="value">{v.get('secrets_count', 0):,} <span style="font-weight:300;color:rgba(224,221,213,0.5);font-size:0.85rem">secrets</span></div>
+      <div class="sub">{v.get('secret_access_count', 0)} accesses this month</div>
+    </div>
+
+    <div class="row">
+      <div class="label">Audit</div>
+      <div class="value">{a.get('total_entries', 0):,} <span style="font-weight:300;color:rgba(224,221,213,0.5);font-size:0.85rem">entries</span></div>
+      <div class="sub">{a.get('flagged_7d', 0)} flagged · chain <span style="color:{chain_color}">{chain_mark}</span></div>
+    </div>
+
+    <div class="row">
+      <div class="label">Webhooks</div>
+      <div class="value">{w.get('registered_count', 0):,} <span style="font-weight:300;color:rgba(224,221,213,0.5);font-size:0.85rem">registered · {w.get('deliveries_24h', 0):,} deliveries (24h)</span></div>
+      <div class="sub"><span style="color:{rate_color}">{rate * 100:.2f}%</span> success</div>
+    </div>
+
+    <div class="row">
+      <div class="label">Approvals</div>
+      <div class="value" style="color:{pending_color}">{pending:,} <span style="font-weight:300;color:rgba(224,221,213,0.5);font-size:0.85rem">pending</span></div>
+      <div class="sub"></div>
+    </div>
+
+  </div>
+
+  <footer>
+    <a href="/">haldir.xyz</a> ·
+    <a href="/swagger">API</a> ·
+    <a href="/status">status</a> ·
+    <a href="/v1/admin/overview?key={_h.escape(key)}">JSON</a> ·
+    <span style="color:rgba(224,221,213,0.3)">refreshes every 30s</span>
+  </footer>
+
+</div>
+</body>
+</html>"""
+
+
 @app.route("/v1/webhooks/deliveries", methods=["GET"])
 @require_api_key
 def list_webhook_deliveries():
