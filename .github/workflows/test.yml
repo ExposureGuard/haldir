@@ -67,6 +67,7 @@ jobs:
             tests/test_watch.py \
             tests/test_proxy.py \
             tests/test_webhooks.py \
+            tests/test_idempotency.py \
             tests/test_vault_properties.py \
             tests/test_watch_properties.py \
             --cov=haldir_gate \

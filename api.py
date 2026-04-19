@@ -38,6 +38,7 @@ from haldir_db import init_db, get_db
 from haldir_gate.gate import Gate
 from haldir_vault.vault import Vault
 from haldir_watch.watch import Watch
+import haldir_idempotency
 
 # ── App setup ──
 
@@ -49,6 +50,15 @@ CORS(app, resources={r"/v1/*": {"origins": "*"}, r"/mcp": {"origins": "*"}})
 
 # Init DB on startup
 init_db(DB_PATH)
+
+# Idempotency schema — retry-safe POST handling for /v1/audit and
+# /v1/payments/authorize. See haldir_idempotency.py.
+_idem_conn = get_db(DB_PATH)
+try:
+    haldir_idempotency.init_schema(_idem_conn)
+    _idem_conn.commit()
+finally:
+    _idem_conn.close()
 
 # Init components
 gate = Gate(db_path=DB_PATH)
@@ -413,6 +423,25 @@ def authorize_payment():
         return jsonify({"error": "amount exceeds maximum ($1,000,000)"}), 400
 
     tenant = getattr(request, "tenant_id", "")
+
+    # Retry-safe: if the caller sends `Idempotency-Key` and we've seen that
+    # (tenant, key, endpoint, body) combination before, return the cached
+    # response instead of charging twice.
+    idem_key = request.headers.get("Idempotency-Key")
+    if idem_key:
+        conn = get_db(DB_PATH)
+        try:
+            try:
+                hit = haldir_idempotency.lookup(
+                    conn, tenant, idem_key, "/v1/payments/authorize", data,
+                )
+                if hit is not None:
+                    return jsonify(hit.body), hit.status
+            except haldir_idempotency.IdempotencyMismatch as e:
+                return jsonify({"error": str(e)}), 422
+        finally:
+            conn.close()
+
     session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
         return jsonify({"error": "Invalid or expired session"}), 401
@@ -424,6 +453,19 @@ def authorize_payment():
     )
 
     status = 200 if result["authorized"] else 403
+
+    # Store for future retries
+    if idem_key:
+        conn = get_db(DB_PATH)
+        try:
+            haldir_idempotency.store(
+                conn, tenant, idem_key, "/v1/payments/authorize",
+                data, result, status,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     return jsonify(result), status
 
 
@@ -449,6 +491,26 @@ def log_action():
         return jsonify({"error": "cost_usd must be non-negative"}), 400
 
     tenant = getattr(request, "tenant_id", "")
+
+    # Retry-safe: if caller sent Idempotency-Key and we've processed this
+    # (tenant, key, endpoint, body) before, return the cached response
+    # rather than writing a duplicate audit entry (which would break the
+    # 1-to-1 correspondence between hash-chain entries and agent actions).
+    idem_key = request.headers.get("Idempotency-Key")
+    if idem_key:
+        conn = get_db(DB_PATH)
+        try:
+            try:
+                hit = haldir_idempotency.lookup(
+                    conn, tenant, idem_key, "/v1/audit", data,
+                )
+                if hit is not None:
+                    return jsonify(hit.body), hit.status
+            except haldir_idempotency.IdempotencyMismatch as e:
+                return jsonify({"error": str(e)}), 422
+        finally:
+            conn.close()
+
     session = gate.get_session(session_id, tenant_id=tenant)
     if not session:
         return jsonify({"error": "Invalid or expired session"}), 401
@@ -460,12 +522,25 @@ def log_action():
         tenant_id=tenant,
     )
 
-    return jsonify({
+    response = {
         "logged": True,
         "entry_id": entry.entry_id,
         "flagged": entry.flagged,
         "flag_reason": entry.flag_reason,
-    }), 201
+    }
+
+    if idem_key:
+        conn = get_db(DB_PATH)
+        try:
+            haldir_idempotency.store(
+                conn, tenant, idem_key, "/v1/audit",
+                data, response, 201,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    return jsonify(response), 201
 
 
 @app.route("/v1/audit", methods=["GET"])
