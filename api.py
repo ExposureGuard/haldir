@@ -1142,6 +1142,24 @@ def list_webhooks():
     return jsonify({"webhooks": webhook_mgr.list_webhooks()})
 
 
+@app.route("/v1/webhooks/deliveries", methods=["GET"])
+@require_api_key
+def list_webhook_deliveries():
+    """Return the most recent delivery attempts for the authed tenant.
+    Query params:
+        limit     max rows (default 50, cap 500)
+        event_id  narrow to a single event
+    """
+    tenant = getattr(request, "tenant_id", "")
+    limit = min(int(request.args.get("limit", 50)), 500)
+    event_id = request.args.get("event_id")
+    return jsonify({
+        "deliveries": webhook_mgr.list_deliveries(
+            tenant_id=tenant, limit=limit, event_id=event_id,
+        ),
+    })
+
+
 # ── Rate Limiting ──
 
 _rate_limits = {}  # key_hash -> {window_start, count}

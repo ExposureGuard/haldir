@@ -34,9 +34,31 @@ import json
 import secrets as _secrets
 import threading
 import time
+import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
+
+
+# Retry policy for transient delivery failures. Exponential backoff
+# bounded by `MAX_ATTEMPTS` — matches Stripe's approach (they retry for
+# up to three days; we're shorter since Haldir is single-node today).
+MAX_DELIVERY_ATTEMPTS = 3
+BACKOFF_BASE_SECONDS = 1.0   # attempt 2 waits ~1s, attempt 3 waits ~4s
+BACKOFF_FACTOR = 4.0
+
+# Receivers' response bodies can be large; cap what we log so a
+# misbehaving receiver can't balloon the audit table.
+RESPONSE_EXCERPT_LIMIT = 512
+
+
+def _is_retriable(status_code: int, error: Exception | None) -> bool:
+    """5xx + network errors are retried; 4xx is a receiver config
+    problem that won't resolve on retry."""
+    if error is not None:
+        return True
+    return 500 <= status_code < 600
 
 
 # ── Public verifier (importable by webhook receivers) ────────────────────
@@ -230,9 +252,17 @@ class WebhookManager:
 
         return wh
 
-    def fire(self, event_type: str, payload: dict[str, Any]) -> None:
-        """Fire an event to all matching webhooks (non-blocking)."""
+    def fire(self, event_type: str, payload: dict[str, Any],
+             tenant_id: str = "") -> str:
+        """Fire an event to all matching webhooks (non-blocking).
+
+        Returns the `event_id` (UUID) assigned to this fire. All
+        deliveries to all matching webhook endpoints share the same
+        event_id — receivers use it as an idempotency key so a retried
+        delivery looks like the same event, not a new one."""
+        event_id = uuid.uuid4().hex
         payload["event"] = event_type
+        payload["event_id"] = event_id
         payload["timestamp"] = time.time()
         payload["source"] = "haldir"
 
@@ -245,16 +275,69 @@ class WebhookManager:
                 continue
 
             threading.Thread(
-                target=self._send, args=(wh, data, event_type), daemon=True
+                target=self._send_with_retry,
+                args=(wh, data, event_type, event_id, tenant_id),
+                daemon=True,
             ).start()
+        return event_id
 
-    def _send(self, wh: WebhookConfig, data: bytes, event_type: str = "") -> None:
+    # ── Delivery with retries ────────────────────────────────────────
+
+    def _send_with_retry(
+        self,
+        wh: WebhookConfig,
+        data: bytes,
+        event_type: str,
+        event_id: str,
+        tenant_id: str = "",
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        """Try up to MAX_DELIVERY_ATTEMPTS times with exponential backoff.
+        Logs every attempt (success or failure) to webhook_deliveries.
+        `sleep` is injectable so tests can drive the retry loop without
+        waiting real seconds."""
+        for attempt in range(1, MAX_DELIVERY_ATTEMPTS + 1):
+            status_code, excerpt, err, duration_ms = self._one_attempt(
+                wh, data, event_type, event_id, attempt,
+            )
+            self._log_delivery(
+                event_id=event_id,
+                tenant_id=tenant_id,
+                webhook_url=wh.url,
+                event_type=event_type,
+                attempt=attempt,
+                status_code=status_code,
+                response_excerpt=excerpt,
+                error=err,
+                duration_ms=duration_ms,
+            )
+            if not _is_retriable(status_code,
+                                 Exception(err) if err else None):
+                self._mark_success(wh)
+                return
+            if attempt < MAX_DELIVERY_ATTEMPTS:
+                sleep(BACKOFF_BASE_SECONDS * (BACKOFF_FACTOR ** (attempt - 1)))
+        self._mark_failure(wh)
+
+    def _one_attempt(
+        self,
+        wh: WebhookConfig,
+        data: bytes,
+        event_type: str,
+        event_id: str,
+        attempt: int,
+    ) -> tuple[int, str, str, int]:
+        """Execute a single POST. Returns (status_code, response_excerpt,
+        error_message, duration_ms). status_code=0 means no HTTP response
+        (network error, timeout)."""
         ts = int(time.time())
         headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Haldir/0.2.2",
-            "X-Haldir-Event": event_type,
-            "X-Haldir-Timestamp": str(ts),
+            "Content-Type":              "application/json",
+            "User-Agent":                "Haldir/0.2.3",
+            "X-Haldir-Event":            event_type,
+            "X-Haldir-Timestamp":        str(ts),
+            "X-Haldir-Webhook-Id":       event_id,
+            "X-Haldir-Delivery-Attempt": str(attempt),
         }
         if wh.secret:
             mac = hmac.new(
@@ -264,29 +347,133 @@ class WebhookManager:
             ).hexdigest()
             headers["X-Haldir-Signature"] = f"sha256={mac}"
 
+        started = time.time()
         try:
             req = urllib.request.Request(wh.url, data=data, headers=headers)
-            urllib.request.urlopen(req, timeout=10)
-            wh.last_fired = time.time()
-            wh.fire_count += 1
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read(RESPONSE_EXCERPT_LIMIT + 1)
+            duration_ms = int((time.time() - started) * 1000)
+            excerpt = body[:RESPONSE_EXCERPT_LIMIT].decode("utf-8", "replace")
+            return (resp.status, excerpt, "", duration_ms)
+        except urllib.error.HTTPError as e:
+            duration_ms = int((time.time() - started) * 1000)
+            try:
+                body = e.read(RESPONSE_EXCERPT_LIMIT + 1)
+                excerpt = body[:RESPONSE_EXCERPT_LIMIT].decode("utf-8", "replace")
+            except Exception:
+                excerpt = ""
+            return (e.code, excerpt, "", duration_ms)
+        except Exception as e:
+            duration_ms = int((time.time() - started) * 1000)
+            return (0, "", f"{type(e).__name__}: {e}", duration_ms)
 
-            conn = self._get_db()
-            if conn:
-                conn.execute("UPDATE webhooks SET last_fired = ?, fire_count = ? WHERE url = ?",
-                             (wh.last_fired, wh.fire_count, wh.url))
-                conn.commit()
-                conn.close()
+    def _mark_success(self, wh: WebhookConfig) -> None:
+        wh.last_fired = time.time()
+        wh.fire_count += 1
+        conn = self._get_db()
+        if conn:
+            conn.execute(
+                "UPDATE webhooks SET last_fired = ?, fire_count = ? WHERE url = ?",
+                (wh.last_fired, wh.fire_count, wh.url),
+            )
+            conn.commit()
+            conn.close()
+
+    def _mark_failure(self, wh: WebhookConfig) -> None:
+        wh.fail_count += 1
+        conn = self._get_db()
+        if conn:
+            conn.execute(
+                "UPDATE webhooks SET fail_count = ? WHERE url = ?",
+                (wh.fail_count, wh.url),
+            )
+            conn.commit()
+            conn.close()
+
+    def _log_delivery(self, **fields: Any) -> None:
+        """Record one attempt into webhook_deliveries. Swallows any DB
+        error — we'd rather lose the delivery log than crash the fire
+        thread (which is a daemon)."""
+        conn = self._get_db()
+        if not conn:
+            return
+        try:
+            conn.execute(
+                "INSERT INTO webhook_deliveries ("
+                "delivery_id, event_id, tenant_id, webhook_url, event_type, "
+                "attempt, status_code, response_excerpt, error, "
+                "duration_ms, created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    uuid.uuid4().hex,
+                    fields["event_id"],
+                    fields["tenant_id"],
+                    fields["webhook_url"],
+                    fields["event_type"],
+                    fields["attempt"],
+                    fields["status_code"],
+                    fields["response_excerpt"],
+                    fields["error"],
+                    fields["duration_ms"],
+                    time.time(),
+                ),
+            )
+            conn.commit()
         except Exception:
-            wh.fail_count += 1
-            conn = self._get_db()
-            if conn:
-                conn.execute("UPDATE webhooks SET fail_count = ? WHERE url = ?",
-                             (wh.fail_count, wh.url))
-                conn.commit()
-                conn.close()
+            # webhook_deliveries may not exist if migration 002 hasn't
+            # been applied yet; don't fail the delivery thread on it.
+            pass
+        finally:
+            conn.close()
+
+    # ── Read side: delivery log ──────────────────────────────────────
+
+    def list_deliveries(
+        self,
+        tenant_id: str,
+        limit: int = 50,
+        event_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the most recent delivery attempts for a tenant,
+        newest first. Optionally filter to a single event_id so
+        receivers can answer 'did THIS event reach us?'"""
+        conn = self._get_db()
+        if not conn:
+            return []
+        try:
+            sql = (
+                "SELECT * FROM webhook_deliveries WHERE tenant_id = ?"
+            )
+            params: list[Any] = [tenant_id]
+            if event_id:
+                sql += " AND event_id = ?"
+                params.append(event_id)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+        except Exception:
+            return []
+        finally:
+            conn.close()
+        return [
+            {
+                "delivery_id":      r["delivery_id"],
+                "event_id":         r["event_id"],
+                "webhook_url":      r["webhook_url"],
+                "event_type":       r["event_type"],
+                "attempt":          r["attempt"],
+                "status_code":      r["status_code"],
+                "response_excerpt": r["response_excerpt"],
+                "error":            r["error"],
+                "duration_ms":      r["duration_ms"],
+                "created_at":       r["created_at"],
+            }
+            for r in rows
+        ]
 
     def fire_anomaly(self, agent_id: str, tool: str, action: str,
-                     reason: str, cost_usd: float = 0.0) -> None:
+                     reason: str, cost_usd: float = 0.0,
+                     tenant_id: str = "") -> None:
         """Convenience: fire an anomaly event."""
         self.fire("anomaly", {
             "agent_id": agent_id,
@@ -294,20 +481,22 @@ class WebhookManager:
             "action": action,
             "reason": reason,
             "cost_usd": cost_usd,
-        })
+        }, tenant_id=tenant_id)
 
     def fire_budget_exhausted(self, session_id: str, agent_id: str,
-                              spent: float, limit: float) -> None:
+                              spent: float, limit: float,
+                              tenant_id: str = "") -> None:
         """Convenience: fire when a session's budget is used up."""
         self.fire("budget_exhausted", {
             "session_id": session_id,
             "agent_id": agent_id,
             "spent": spent,
             "limit": limit,
-        })
+        }, tenant_id=tenant_id)
 
     def fire_approval_requested(self, request_id: str, agent_id: str,
-                                tool: str, action: str, amount: float, reason: str) -> None:
+                                tool: str, action: str, amount: float,
+                                reason: str, tenant_id: str = "") -> None:
         """Convenience: fire when human approval is needed."""
         self.fire("approval_requested", {
             "request_id": request_id,
@@ -316,7 +505,7 @@ class WebhookManager:
             "action": action,
             "amount": amount,
             "reason": reason,
-        })
+        }, tenant_id=tenant_id)
 
     def list_webhooks(self) -> list[dict[str, Any]]:
         # Note: secret is NOT returned. Once shown at registration time,
