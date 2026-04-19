@@ -137,6 +137,29 @@ export HALDIR_API_KEY=hld_...
 python bench/bench_primitives.py
 ```
 
+## Compliance
+
+One endpoint produces an auditor-ready proof-of-control pack covering eight sections, each anchored to a SOC2 trust services criterion:
+
+```bash
+haldir compliance evidence --since 2026-01-01 --out evidence-q1-2026.md
+```
+
+| # | Section | SOC2 |
+| --- | --- | --- |
+| 1 | Identity (tenant, subscription, period) | — |
+| 2 | Access control (API keys + per-key scopes) | CC6.1 |
+| 3 | Encryption (AES-256-GCM, AAD binding) | CC6.7 |
+| 4 | Audit trail (entry count, hash chain integrity) | CC7.2 |
+| 5 | Spend governance (per-session caps, payment records) | CC5.2 |
+| 6 | Human approvals (request/decision lifecycle) | CC8.1 |
+| 7 | Outbound alerting (webhook delivery success rate) | CC7.3 |
+| 8 | Document signature (SHA-256 self-hash) | — |
+
+The pack signs itself: a SHA-256 over the canonical JSON of sections 1-7. An auditor receiving an archived pack can re-call `/v1/compliance/evidence/manifest` and confirm the digest matches — proof the document was not modified after issuance.
+
+JSON for evidence-locker upload, Markdown for the "show this to the auditor" moment, both from the same `/v1/compliance/evidence` endpoint.
+
 ## Why Haldir
 
 AI agents are calling APIs, spending money, and accessing credentials with zero oversight. Haldir is the missing layer:

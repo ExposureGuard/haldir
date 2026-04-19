@@ -85,6 +85,7 @@ jobs:
             tests/test_cli_commands.py \
             tests/test_admin_html.py \
             tests/test_scopes.py \
+            tests/test_compliance.py \
             tests/test_vault_properties.py \
             tests/test_watch_properties.py \
             --cov=haldir_gate \

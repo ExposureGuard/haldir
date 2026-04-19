@@ -897,6 +897,47 @@ def cmd_webhooks_deliveries(args: argparse.Namespace) -> None:
     print()
 
 
+# ── Compliance evidence pack ────────────────────────────────────────
+
+def cmd_compliance_evidence(args: argparse.Namespace) -> None:
+    """Pull an auditor-ready proof-of-control pack."""
+    client = APIClient()
+    fmt = (args.format or "markdown").lower()
+    params: dict[str, str] = {"format": fmt}
+    if args.since:
+        params["since"] = args.since
+    if args.until:
+        params["until"] = args.until
+
+    url = f"{client.base_url}/v1/compliance/evidence"
+    try:
+        resp = httpx.get(url, params=params,
+                         headers=client._headers(), timeout=60.0)
+    except Exception as e:
+        error(f"Could not reach /v1/compliance/evidence: {e}")
+        sys.exit(2)
+    if resp.status_code != 200:
+        try:
+            err = resp.json().get("error", resp.text)
+        except Exception:
+            err = resp.text
+        error(f"evidence pack failed: HTTP {resp.status_code} — {err}")
+        sys.exit(1)
+
+    body = resp.text
+    if args.out:
+        with open(args.out, "w") as f:
+            f.write(body)
+        success(f"wrote {args.out}")
+        digest = resp.headers.get("X-Haldir-Evidence-Digest", "")
+        if digest:
+            label("Digest", digest)
+    else:
+        sys.stdout.write(body)
+        if not body.endswith("\n"):
+            sys.stdout.write("\n")
+
+
 # ── Migrations (local; wraps haldir_migrate) ────────────────────────
 
 def cmd_migrate(args: argparse.Namespace) -> None:
@@ -1253,6 +1294,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_wh_dlv.add_argument("--limit", type=int, default=20, help="Max rows (default: 20)")
     p_wh_dlv.add_argument("--json", action="store_true")
     p_wh_dlv.set_defaults(func=cmd_webhooks_deliveries)
+
+    # ── compliance ──
+    p_comp = sub.add_parser("compliance", help="Compliance evidence pack (SOC2/ISO/AI Act)")
+    comp_sub = p_comp.add_subparsers(dest="compliance_command")
+
+    p_comp_evi = comp_sub.add_parser("evidence", help="Generate a proof-of-control pack")
+    p_comp_evi.add_argument("--format", default="markdown",
+                             choices=("markdown", "md", "json"),
+                             help="Output format (default: markdown)")
+    p_comp_evi.add_argument("--out", help="Write to file (default: stdout)")
+    p_comp_evi.add_argument("--since", help="Period start (ISO 8601 or unix seconds)")
+    p_comp_evi.add_argument("--until", help="Period end (ISO 8601 or unix seconds)")
+    p_comp_evi.set_defaults(func=cmd_compliance_evidence)
 
     # ── migrate (local; wraps haldir_migrate) ──
     p_mig = sub.add_parser("migrate", help="Apply / inspect schema migrations on the local DB")

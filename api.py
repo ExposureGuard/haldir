@@ -1215,6 +1215,80 @@ def admin_overview():
     return jsonify(overview)
 
 
+# ── Compliance evidence pack (auditor-ready document) ──────────────────
+
+def _parse_iso_or_unix(v: str | None) -> float | None:
+    if not v:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        try:
+            from datetime import datetime
+            return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+
+
+@app.route("/v1/compliance/evidence", methods=["GET"])
+@require_api_key
+@require_scope("admin:read")
+def compliance_evidence():
+    """Auditor-ready proof-of-control pack: identity, access control,
+    encryption, audit trail, spend governance, approvals, webhooks,
+    plus a SHA-256 self-signature.
+
+    Query:
+      since   ISO 8601 or unix seconds (default: 90 days ago)
+      until   ISO 8601 or unix seconds (default: now)
+      format  json | markdown | md (default: json)
+    """
+    import haldir_compliance
+    tenant = getattr(request, "tenant_id", "")
+    since = _parse_iso_or_unix(request.args.get("since"))
+    until = _parse_iso_or_unix(request.args.get("until"))
+    fmt = (request.args.get("format") or "json").lower()
+    if fmt not in ("json", "markdown", "md"):
+        return _json_error(
+            "invalid_format",
+            "format must be 'json' or 'markdown'",
+            400, got=fmt,
+        )
+    pack = haldir_compliance.build_evidence_pack(
+        DB_PATH, tenant, since=since, until=until,
+    )
+    if fmt in ("markdown", "md"):
+        body = haldir_compliance.render_markdown(pack)
+        return body, 200, {
+            "Content-Type":        "text/markdown; charset=utf-8",
+            "Content-Disposition":
+                f'attachment; filename="haldir-evidence-{tenant or "pack"}.md"',
+            "X-Haldir-Evidence-Digest": pack["signatures"]["digest"],
+        }
+    return jsonify(pack)
+
+
+@app.route("/v1/compliance/evidence/manifest", methods=["GET"])
+@require_api_key
+@require_scope("admin:read")
+def compliance_evidence_manifest():
+    """Just the signature block — used by an auditor verifying an
+    archived pack without re-downloading the whole document."""
+    import haldir_compliance
+    tenant = getattr(request, "tenant_id", "")
+    since = _parse_iso_or_unix(request.args.get("since"))
+    until = _parse_iso_or_unix(request.args.get("until"))
+    pack = haldir_compliance.build_evidence_pack(
+        DB_PATH, tenant, since=since, until=until,
+    )
+    return jsonify({
+        "signatures":   pack["signatures"],
+        "period_start": pack["period_start"],
+        "period_end":   pack["period_end"],
+        "tenant_id":    pack["tenant_id"],
+    })
+
+
 # ── Web admin dashboard (HTML mirror of the CLI's `haldir overview`) ──
 
 @app.route("/admin", methods=["GET"])
