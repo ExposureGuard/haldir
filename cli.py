@@ -918,6 +918,103 @@ def cmd_audit_verify(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+# ── Audit tree (RFC 6962 Merkle tamper-evidence) ────────────────────
+
+def cmd_audit_tree_head(args: argparse.Namespace) -> None:
+    """Fetch the current Signed Tree Head for the caller's audit log."""
+    client = APIClient()
+    sth = client.get("/v1/audit/tree-head")
+    if getattr(args, "json", False):
+        print(json.dumps(sth, indent=2))
+        return
+    success(f"STH tree_size={sth['tree_size']} algorithm={sth['algorithm']}")
+    print()
+    label("Root hash",     sth["root_hash"] or "(empty tree)")
+    label("Signed at",     sth.get("signed_at", ""))
+    label("Signature",     sth.get("signature", "")[:48] + ("…" if sth.get("signature") else ""))
+    label("Key source",    sth.get("signing_key_source", ""))
+
+
+def cmd_audit_prove(args: argparse.Namespace) -> None:
+    """Request an RFC 6962 inclusion proof for a specific audit entry.
+
+    Writes the full proof (with embedded STH) to stdout or --out as JSON
+    so it can be archived alongside a single audit row and verified
+    offline later."""
+    client = APIClient()
+    proof = client.get(f"/v1/audit/inclusion-proof/{args.entry_id}")
+    if args.out:
+        from pathlib import Path
+        Path(args.out).write_text(json.dumps(proof, indent=2))
+        success(f"inclusion proof for {args.entry_id} → {args.out}")
+        return
+    if getattr(args, "json", False):
+        print(json.dumps(proof, indent=2))
+        return
+    success(
+        f"entry {args.entry_id} is leaf #{proof['leaf_index']} "
+        f"of a {proof['tree_size']}-leaf tree"
+    )
+    print()
+    label("Leaf hash",  proof["leaf_hash"])
+    label("Root hash",  proof["root_hash"])
+    label("Path hops",  len(proof["audit_path"]))
+
+
+def cmd_audit_verify_proof(args: argparse.Namespace) -> None:
+    """Verify an archived inclusion proof locally — no network calls.
+
+    Reads a proof JSON (as written by `haldir audit prove --out`) and
+    re-hashes up to the root. Exits 0 on success, 1 on mismatch. If
+    HALDIR_TREE_SIGNING_KEY (or HALDIR_ENCRYPTION_KEY) is set locally
+    AND matches the server's key, the STH signature is verified too."""
+    from pathlib import Path
+    import haldir_merkle as merkle
+    proof = json.loads(Path(args.proof).read_text())
+
+    ok_inc = merkle.verify_inclusion_hex(proof)
+    if not ok_inc:
+        error("inclusion proof does NOT verify against the embedded root")
+        sys.exit(1)
+    success("inclusion proof verifies — leaf hashes up to the signed root")
+
+    sth = proof.get("sth") or {}
+    key, source = merkle.load_signing_key_from_env()
+    sig_ok = merkle.verify_sth(sth, key) if sth.get("signature") else False
+    if sig_ok:
+        success(f"STH signature verifies (local key source: {source})")
+    else:
+        warn("STH signature NOT verified locally — either no key set "
+             "or key differs from server (proof body still valid).")
+
+
+def cmd_audit_consistency(args: argparse.Namespace) -> None:
+    """Fetch a consistency proof between two audit-tree sizes and verify
+    it locally (no trust in the server beyond the key you already hold)."""
+    import haldir_merkle as merkle
+    client = APIClient()
+    proof = client.get(
+        f"/v1/audit/consistency-proof?first={args.first}&second={args.second}"
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(proof, indent=2))
+        return
+
+    ok = merkle.verify_consistency_hex(proof)
+    if ok:
+        success(
+            f"tree of size {args.second} is an append-only extension "
+            f"of tree of size {args.first} (verified locally)"
+        )
+    else:
+        error("consistency proof does NOT verify — tree may have been forked")
+        sys.exit(1)
+    print()
+    label("first_root",  proof["first_root"])
+    label("second_root", proof["second_root"])
+    label("Path hops",   len(proof["consistency_path"]))
+
+
 # ── Webhooks: deliveries log ────────────────────────────────────────
 
 def cmd_webhooks_rotate(args: argparse.Namespace) -> None:
@@ -1430,6 +1527,39 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit_verify = audit_sub.add_parser("verify", help="Verify the hash chain integrity")
     p_audit_verify.add_argument("--json", action="store_true")
     p_audit_verify.set_defaults(func=cmd_audit_verify)
+
+    # ── audit tree (RFC 6962 Merkle tamper-evidence) ──
+    p_audit_th = audit_sub.add_parser(
+        "tree-head",
+        help="Fetch the current Signed Tree Head (RFC 6962)",
+    )
+    p_audit_th.add_argument("--json", action="store_true")
+    p_audit_th.set_defaults(func=cmd_audit_tree_head)
+
+    p_audit_prove = audit_sub.add_parser(
+        "prove",
+        help="Request an inclusion proof for a specific audit entry",
+    )
+    p_audit_prove.add_argument("entry_id", help="Audit entry UUID")
+    p_audit_prove.add_argument("--out", help="Write proof JSON to this file")
+    p_audit_prove.add_argument("--json", action="store_true")
+    p_audit_prove.set_defaults(func=cmd_audit_prove)
+
+    p_audit_vp = audit_sub.add_parser(
+        "verify-proof",
+        help="Locally verify an archived inclusion proof (offline)",
+    )
+    p_audit_vp.add_argument("proof", help="Path to a proof JSON file")
+    p_audit_vp.set_defaults(func=cmd_audit_verify_proof)
+
+    p_audit_cn = audit_sub.add_parser(
+        "consistency",
+        help="Prove an earlier tree head is a prefix of a later one",
+    )
+    p_audit_cn.add_argument("first", type=int, help="Earlier tree size (>= 1)")
+    p_audit_cn.add_argument("second", type=int, help="Later tree size (>= first)")
+    p_audit_cn.add_argument("--json", action="store_true")
+    p_audit_cn.set_defaults(func=cmd_audit_consistency)
 
     # ── webhooks deliveries ──
     p_wh = sub.add_parser("webhooks", help="Webhook delivery inspection")

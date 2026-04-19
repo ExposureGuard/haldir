@@ -190,6 +190,7 @@ def build_evidence_pack(
         "access_control":  _section_access_control(db_path, tenant_id),
         "encryption":      _section_encryption(),
         "audit_trail":     _section_audit_trail(db_path, tenant_id, since, until),
+        "tamper_evidence": _section_tamper_evidence(db_path, tenant_id),
         "spend_governance": _section_spend(db_path, tenant_id, since, until),
         "approvals":       _section_approvals(db_path, tenant_id, since, until),
         "webhooks":        _section_webhooks(db_path, tenant_id, since, until),
@@ -326,6 +327,39 @@ def _section_audit_trail(db_path: str, tenant_id: str,
         "chain_algorithm":         "SHA-256 over canonical entry payload + prev_hash",
         "chain_verified":          chain_verified,
     }
+
+
+def _section_tamper_evidence(db_path: str, tenant_id: str) -> dict[str, Any]:
+    """Current RFC 6962 Signed Tree Head for the tenant's audit log.
+
+    Pairs with the hash-chain in `audit_trail`: the chain proves
+    no-entry-was-mutated, the Merkle STH gives an auditor a signed
+    commitment they can later demand an inclusion proof against for
+    any single entry, without replaying the whole log. Same primitive
+    Certificate Transparency uses for the global WebPKI log."""
+    try:
+        import haldir_audit_tree
+        sth = haldir_audit_tree.get_tree_head(db_path, tenant_id)
+        return {
+            # Tree hashing algorithm — what the root_hash is computed with.
+            "algorithm":           "RFC6962-SHA256",
+            # Signature algorithm — how the STH was signed.
+            "signature_algorithm": sth.get("algorithm", "HMAC-SHA256"),
+            "tree_size":           sth.get("tree_size", 0),
+            "root_hash":           sth.get("root_hash", ""),
+            "signed_at":           sth.get("signed_at", ""),
+            "signature":           sth.get("signature", ""),
+            "signing_key_source":  sth.get("signing_key_source", ""),
+            "inclusion_proof_endpoint":   "/v1/audit/inclusion-proof/<entry_id>",
+            "consistency_proof_endpoint": "/v1/audit/consistency-proof?first=N&second=M",
+        }
+    except Exception:
+        return {
+            "algorithm":  "RFC6962-SHA256",
+            "tree_size":  0,
+            "root_hash":  "",
+            "note":       "tree-head unavailable",
+        }
 
 
 def _verify_chain_safe(db_path: str, tenant_id: str) -> bool:
@@ -551,6 +585,28 @@ def render_markdown(pack: dict[str, Any]) -> str:
     lines.append(f"- Current chain head: `{a['current_chain_hash'] or '(none)'}`")
     chain_word = "verified" if a["chain_verified"] else "**FAILED VERIFICATION**"
     lines.append(f"- Chain integrity at issuance: **{chain_word}**")
+    # RFC 6962 Signed Tree Head — tamper-evidence surface an auditor
+    # can demand inclusion/consistency proofs against.
+    te = p.get("tamper_evidence", {})
+    if te:
+        lines.append("")
+        lines.append("**Signed Tree Head (RFC 6962 Merkle):**")
+        lines.append("")
+        lines.append(f"- Algorithm: `{te.get('algorithm', 'RFC6962-SHA256')}`")
+        lines.append(f"- Tree size: **{te.get('tree_size', 0):,}** leaves")
+        lines.append(f"- Root hash: `{te.get('root_hash', '') or '(empty tree)'}`")
+        if te.get("signed_at"):
+            lines.append(f"- Signed at: {te['signed_at']}")
+        if te.get("signature"):
+            lines.append(f"- Signature (HMAC-SHA256, truncated): `{te['signature'][:32]}…`")
+        lines.append(
+            "- Verify inclusion of any entry via "
+            "`/v1/audit/inclusion-proof/<entry_id>`."
+        )
+        lines.append(
+            "- Prove append-only extension between two tree sizes via "
+            "`/v1/audit/consistency-proof?first=N&second=M`."
+        )
     lines.append("")
 
     # Spend
@@ -628,6 +684,7 @@ def render_html(pack: dict[str, Any], key: str = "",
     ac = p["access_control"]
     enc = p["encryption"]
     a = p["audit_trail"]
+    te = p.get("tamper_evidence", {})
     s = p["spend_governance"]
     ap = p["approvals"]
     w = p["webhooks"]
@@ -979,6 +1036,11 @@ def render_html(pack: dict[str, Any], key: str = "",
       <li>Chain algorithm <span class="v">{_h.escape(a['chain_algorithm'])}</span></li>
       <li>Current chain head <span class="v"><code>{_h.escape(a['current_chain_hash'] or '—')[:24]}{'...' if len(a['current_chain_hash']) > 24 else ''}</code></span></li>
       <li>Chain integrity at issuance <span class="v" style="color:{chain_color}">{chain_word}</span></li>
+      <li>Merkle tree algorithm <span class="v">{_h.escape(te.get('algorithm', 'RFC6962-SHA256'))}</span></li>
+      <li>Signed tree size <span class="v">{int(te.get('tree_size', 0)):,} leaves</span></li>
+      <li>Root hash <span class="v"><code>{_h.escape(te.get('root_hash', '') or '—')[:24]}{'...' if len(te.get('root_hash', '')) > 24 else ''}</code></span></li>
+      <li>Inclusion proof endpoint <span class="v"><code>{_h.escape(te.get('inclusion_proof_endpoint', '/v1/audit/inclusion-proof/<entry_id>'))}</code></span></li>
+      <li>Consistency proof endpoint <span class="v"><code>{_h.escape(te.get('consistency_proof_endpoint', '/v1/audit/consistency-proof?first=N&second=M'))}</code></span></li>
     </ul>
   </section>
 

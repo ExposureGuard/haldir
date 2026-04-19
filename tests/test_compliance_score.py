@@ -43,6 +43,7 @@ def test_criteria_list_is_stable() -> None:
     keys = [c[0] for c in score.CRITERIA]
     assert keys == [
         "access_control", "encryption", "audit_trail",
+        "tamper_evidence",
         "alerting", "spend_governance", "approvals",
     ]
 
@@ -51,9 +52,9 @@ def test_empty_tenant_returns_well_formed_score() -> None:
     import api
     out = score.compute_score(api.DB_PATH, "no-such-tenant-xyz")
     assert 0 <= out["score"] <= 100
-    assert out["total"] == 6
-    assert len(out["criteria"]) == 6
-    assert out["passing"] + out["warning"] + out["failing"] == 6
+    assert out["total"] == 7
+    assert len(out["criteria"]) == 7
+    assert out["passing"] + out["warning"] + out["failing"] == 7
     # Every criterion carries the contract fields.
     for c in out["criteria"]:
         assert "key" in c and "control" in c and "state" in c
@@ -173,8 +174,8 @@ def test_score_endpoint_returns_well_formed_json(haldir_client, bootstrap_key) -
     for k in ("score", "criteria", "passing", "warning", "failing",
               "total", "computed_at"):
         assert k in body
-    assert body["total"] == 6
-    assert len(body["criteria"]) == 6
+    assert body["total"] == 7
+    assert len(body["criteria"]) == 7
 
 
 def test_score_endpoint_requires_admin_read(haldir_client, bootstrap_key) -> None:

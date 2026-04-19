@@ -62,6 +62,7 @@ CRITERIA: tuple[tuple[str, str, str], ...] = (
     ("access_control",    "CC6.1",  "At least one API key uses restricted scopes"),
     ("encryption",        "CC6.7",  "Persistent encryption key configured"),
     ("audit_trail",       "CC7.2",  "Audit chain verifies with recent entries"),
+    ("tamper_evidence",   "CC7.2",  "RFC 6962 Signed Tree Head over the audit log"),
     ("alerting",          "CC7.3",  "Webhook alerting operational (>=95% 24h)"),
     ("spend_governance",  "CC5.2",  "At least one session runs with a spend cap"),
     ("approvals",         "CC8.1",  "Human-in-the-loop approvals configured"),
@@ -216,6 +217,55 @@ def _evaluate_audit_trail(db_path: str, tenant_id: str) -> CriterionResult:
         "Audit chain verifies with recent entries",
         STATE_PASS,
         f"Chain verified across {total:,} entries; {recent:,} in the last 24 h.",
+        "",
+    )
+
+
+def _evaluate_tamper_evidence(db_path: str, tenant_id: str) -> CriterionResult:
+    """PASS if the tenant has enough audit entries that a signed
+    Merkle root is meaningful (>=1 leaf). WARN on empty log; FAIL only
+    if STH signing is explicitly misconfigured.
+
+    Relevant to CC7.2: a signed tree head converts the hash chain from
+    "you must trust the server's full log" into "an auditor holding a
+    single entry can independently verify inclusion against a signed
+    commitment" — the same primitive Certificate Transparency uses."""
+    try:
+        import haldir_audit_tree
+        sth = haldir_audit_tree.get_tree_head(db_path, tenant_id)
+    except Exception as e:
+        return CriterionResult(
+            "tamper_evidence", "CC7.2",
+            "RFC 6962 Signed Tree Head over the audit log",
+            STATE_FAIL,
+            f"STH computation raised: {type(e).__name__}: {e}",
+            "Check server logs; ensure HALDIR_TREE_SIGNING_KEY or "
+            "HALDIR_ENCRYPTION_KEY is configured.",
+        )
+    size = int(sth.get("tree_size", 0))
+    source = sth.get("signing_key_source", "")
+    if size == 0:
+        return CriterionResult(
+            "tamper_evidence", "CC7.2",
+            "RFC 6962 Signed Tree Head over the audit log",
+            STATE_WARN,
+            "Audit log is empty — tree-head signs the empty tree.",
+            "Log any action; the Merkle tree populates automatically.",
+        )
+    if source == "ephemeral":
+        return CriterionResult(
+            "tamper_evidence", "CC7.2",
+            "RFC 6962 Signed Tree Head over the audit log",
+            STATE_WARN,
+            f"{size:,}-leaf tree signed with an ephemeral key (rotates on restart).",
+            "Set HALDIR_TREE_SIGNING_KEY (or reuse HALDIR_ENCRYPTION_KEY) for a "
+            "stable STH signing key customers can pin.",
+        )
+    return CriterionResult(
+        "tamper_evidence", "CC7.2",
+        "RFC 6962 Signed Tree Head over the audit log",
+        STATE_PASS,
+        f"{size:,}-leaf tree signed (key source: {source}).",
         "",
     )
 
@@ -402,6 +452,7 @@ def compute_score(db_path: str, tenant_id: str) -> dict[str, Any]:
         _evaluate_access_control(db_path, tenant_id),
         _evaluate_encryption(),
         _evaluate_audit_trail(db_path, tenant_id),
+        _evaluate_tamper_evidence(db_path, tenant_id),
         _evaluate_alerting(db_path, tenant_id),
         _evaluate_spend_governance(db_path, tenant_id),
         _evaluate_approvals(db_path, tenant_id),

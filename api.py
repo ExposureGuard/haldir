@@ -1063,6 +1063,96 @@ def export_audit_manifest():
     return jsonify(manifest)
 
 
+# ── Tamper-evident audit tree (RFC 6962 Merkle) ─────────────────────────
+#
+# Haldir's audit log is SHA-256 hash-chained end-to-end, which proves
+# that no entry has been mutated in isolation. The Merkle surface below
+# adds the second half of the tamper-evidence story: an auditor (or any
+# third party holding an entry) can verify *inclusion* in a specific
+# Signed Tree Head without replaying the whole log, and can verify that
+# a later STH is a strict append-only extension of an earlier one
+# (consistency proof — the same primitive Certificate Transparency uses
+# to detect tree forks).
+#
+# All three endpoints are pure reads scoped by tenant_id; no DB writes.
+
+@app.route("/v1/audit/tree-head", methods=["GET"])
+@require_api_key
+@require_scope("audit:read")
+def get_audit_tree_head():
+    """Current Signed Tree Head (STH) for the caller's audit log.
+
+    The STH is an HMAC-SHA256 signature over (tree_size, root_hash,
+    signed_at). Any later tree-head for the same tenant can be proved
+    to extend this one via /v1/audit/consistency-proof."""
+    import haldir_audit_tree
+    tenant = getattr(request, "tenant_id", "")
+    return jsonify(haldir_audit_tree.get_tree_head(DB_PATH, tenant))
+
+
+@app.route("/v1/audit/inclusion-proof/<entry_id>", methods=["GET"])
+@require_api_key
+@require_scope("audit:read")
+def get_audit_inclusion_proof(entry_id: str):
+    """RFC 6962 inclusion proof for a single audit entry.
+
+    Returns the leaf_hash, leaf_index, tree_size, root_hash, and the
+    audit_path needed to re-hash up to the root. Bundled with the
+    current STH so the proof can be verified offline against a signed
+    commitment, not a raw root."""
+    import haldir_audit_tree
+    tenant = getattr(request, "tenant_id", "")
+    proof = haldir_audit_tree.get_inclusion_proof(DB_PATH, tenant, entry_id)
+    if proof is None:
+        return _json_error(
+            "not_found",
+            "audit entry not found in this tenant's log",
+            404,
+            entry_id=entry_id,
+        )
+    return jsonify(proof)
+
+
+@app.route("/v1/audit/consistency-proof", methods=["GET"])
+@require_api_key
+@require_scope("audit:read")
+def get_audit_consistency_proof():
+    """RFC 6962 consistency proof between two tree sizes.
+
+    Query params:
+      first  — size of the earlier tree (required, >= 1)
+      second — size of the later tree   (required, >= first)
+
+    Both sizes must be <= the current log size. Returns the path of
+    internal-node hashes an auditor can combine to reconstruct both
+    the first_root and the second_root; if they match what that
+    auditor already holds, the later tree is proved to be an
+    append-only extension of the earlier one."""
+    import haldir_audit_tree
+    tenant = getattr(request, "tenant_id", "")
+    try:
+        first_size = int(request.args.get("first", ""))
+        second_size = int(request.args.get("second", ""))
+    except ValueError:
+        return _json_error(
+            "invalid_argument",
+            "first and second must be integers",
+            400,
+        )
+    proof = haldir_audit_tree.get_consistency_proof(
+        DB_PATH, tenant, first_size, second_size,
+    )
+    if proof is None:
+        return _json_error(
+            "invalid_range",
+            "invalid first/second sizes for this tenant's tree",
+            400,
+            first=first_size,
+            second=second_size,
+        )
+    return jsonify(proof)
+
+
 # ── Usage tracking (for billing) ──
 
 @app.after_request
@@ -3110,6 +3200,38 @@ def demo_assets(filename):
     sanitized by Flask's send_from_directory."""
     demo_dir = os.path.join(os.path.dirname(__file__), "demo")
     return send_from_directory(demo_dir, filename, max_age=3600)
+
+
+# ── /demo/tamper — adversarial tamper-evidence demo ──────────────────
+#
+# Public, no-auth page. A visitor sees a live audit log for a seeded
+# demo tenant, the current Signed Tree Head, and an inclusion proof
+# for one entry; clicking "Tamper" mutates a row in the DB and the
+# page re-renders showing the cryptographic fork-detection. Built on
+# exactly the same haldir_merkle / haldir_audit_tree primitives the
+# production /v1/audit/* endpoints use — nothing is mocked.
+
+@app.route("/demo/tamper", methods=["GET"])
+def demo_tamper_page():
+    import haldir_demo_tamper
+    return haldir_demo_tamper.render(), 200, {
+        "Content-Type":   "text/html; charset=utf-8",
+        "Cache-Control":  "no-store",
+    }
+
+
+@app.route("/demo/tamper/mutate", methods=["POST"])
+def demo_tamper_mutate():
+    import haldir_demo_tamper
+    haldir_demo_tamper.tamper_target()
+    return redirect("/demo/tamper", code=303)
+
+
+@app.route("/demo/tamper/reset", methods=["POST"])
+def demo_tamper_reset():
+    import haldir_demo_tamper
+    haldir_demo_tamper.reset()
+    return redirect("/demo/tamper", code=303)
 
 
 # ── Billing (Stripe) ──
