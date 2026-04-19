@@ -72,7 +72,7 @@ _tracer: Any = None
 if _ENABLED:
     try:
         from opentelemetry import trace as _ot_trace  # type: ignore[import-not-found]
-        _tracer = _ot_trace.get_tracer("haldir", "0.2.2")
+        _tracer = _ot_trace.get_tracer("haldir", "0.3.0")
     except ImportError:
         # OTel requested but not installed — silently fall back to no-op
         _tracer = None

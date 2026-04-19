@@ -37,7 +37,7 @@ import os
 #
 FRAMES: list[tuple[float, str, str]] = [
     (0.0,  "prompt",  "pip install haldir"),
-    (0.6,  "output",  "Successfully installed haldir-0.2.3"),
+    (0.6,  "output",  "Successfully installed haldir-0.3.0"),
     (1.4,  "blank",   ""),
     (1.8,  "prompt",  "export HALDIR_API_KEY=hld_live_..."),
     (2.6,  "blank",   ""),

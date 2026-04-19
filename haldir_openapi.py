@@ -256,7 +256,7 @@ def _components() -> dict[str, Any]:
     }
 
 
-def generate_openapi(app: Any, version: str = "0.2.3") -> dict[str, Any]:
+def generate_openapi(app: Any, version: str = "0.3.0") -> dict[str, Any]:
     """Build the OpenAPI 3.1 document for a Flask app."""
     spec: dict[str, Any] = {
         "openapi": "3.1.0",

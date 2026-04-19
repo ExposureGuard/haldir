@@ -8,7 +8,7 @@
 <circle class="dot-g" cx="58" cy="18" r="6"/>
 <text class="title" x="390" y="23" text-anchor="middle">haldir-quickstart</text>
 <text class="line line-0 k-prompt code" x="22" y="76" fill="#e8e8e8"><tspan class="sigil-prompt">$ </tspan>pip install haldir</text>
-<text class="line line-1 k-output code" x="22" y="96" fill="#aab7bd">Successfully installed haldir-0.2.3</text>
+<text class="line line-1 k-output code" x="22" y="96" fill="#aab7bd">Successfully installed haldir-0.3.0</text>
 <text class="line line-2 k-blank code" x="22" y="116" fill="#ffffff"></text>
 <text class="line line-3 k-prompt code" x="22" y="136" fill="#e8e8e8"><tspan class="sigil-prompt">$ </tspan>export HALDIR_API_KEY=hld_live_...</text>
 <text class="line line-4 k-blank code" x="22" y="156" fill="#ffffff"></text>

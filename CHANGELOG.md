@@ -3,6 +3,175 @@
 All notable changes to Haldir are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] — 2026-04-19
+
+The "production-grade platform" release. Eighteen feature commits fill in
+every box a serious infra-tool review checks: middleware hygiene,
+observability, declarative validation, machine-readable docs, performance
+numbers, deployment hardening, schema migrations, retry-safe webhook
+delivery, compliance export, Kubernetes probes, and a rebuilt CLI that
+puts a face on all of it. Test suite grew from 79 → 310 cases.
+
+### Added — Platform middleware
+
+- **Idempotency-Key on every mutating POST** — Stripe-style retry safety
+  for `/v1/sessions`, `/v1/audit`, `/v1/payments/authorize`,
+  `/v1/approvals/*`, `/v1/webhooks`, `/v1/proxy/*`, `/v1/billing/checkout`.
+  Tenant-scoped cache, SHA-256 body hash, 422 on key reuse with a
+  different body.
+- **Request-ID propagation** — inbound `X-Request-ID` echoed (length-capped
+  at 64 chars) or generated; surfaces in every structured log line and
+  every error envelope for end-to-end correlation.
+- **Security headers** — HSTS, `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy` set on
+  every response.
+- **MAX_CONTENT_LENGTH=1 MiB** with a JSON 413 error envelope.
+- **Unified error envelope** `{error, code, request_id, ...}` across
+  400/401/403/404/405/413/422/429/500.
+- **Precise rate-limit headers** — `X-RateLimit-Limit/Remaining/Used/Reset/
+  Reset-After/Resource` on every authed response, plus a parallel
+  `X-RateLimit-Monthly-*` namespace for the subscription quota dimension.
+  `Retry-After` (RFC 7231) on every 429.
+
+### Added — Observability
+
+- **Structured JSON logging** (`haldir_logging.py`) on stdlib `logging` with
+  Flask request-context enrichment (request_id, tenant_id). Idempotent
+  configure, env-driven level/format/silence.
+- **In-process Prometheus metrics** (`haldir_metrics.py`) — Counter +
+  Histogram + Registry, no external dep. Five default metrics:
+  `haldir_http_requests_total`, `haldir_http_request_duration_seconds`,
+  `haldir_rate_limit_exceeded_total`, `haldir_idempotency_hits_total`,
+  `haldir_idempotency_mismatches_total`. `/metrics` endpoint gated by
+  `HALDIR_METRICS_TOKEN` with constant-time compare.
+- **Public status page** at `/status` (HTML) + `/v1/status` (JSON). Per-
+  component health (api/database/billing/proxy), success rate from the
+  metrics, p50/p95/p99 latency from the histogram.
+- **`/livez` + `/readyz`** Kubernetes-grade probe split. Liveness is
+  zero-I/O; readiness checks DB reachability, migration consistency, and
+  encryption-key configuration. Returns 503 (not 200) when not ready so
+  load balancers pull the pod without restarting it.
+
+### Added — Declarative validation + auto-generated docs
+
+- **`@validate_body`** decorator (`haldir_validation.py`) — declarative
+  schema with type/required/default/min/max/maxlen/choices. `bool`
+  deliberately rejected as `int`. Unknown fields silently dropped for
+  forward compatibility. Schema stashed on the wrapper for introspection.
+- **OpenAPI 3.1 generator** (`haldir_openapi.py`) walks the live Flask
+  url_map and reads `@validate_body` schemas off view wrappers. Spec is
+  the API by construction — never out of sync. Served at `/openapi.json`,
+  rendered at `/swagger`.
+
+### Added — Audit + compliance
+
+- **Streaming audit export** (`/v1/audit/export?format=csv|jsonl`) with a
+  signed integrity manifest. Batched LIMIT/OFFSET pagination so a million-
+  row export doesn't OOM. JSONL embeds the manifest as the final record;
+  a companion `/v1/audit/export/manifest` endpoint returns it standalone
+  for CSV consumers.
+
+### Added — Webhook delivery
+
+- **Production-grade delivery** — every fire assigns a UUID `event_id`
+  (sent as `X-Haldir-Webhook-Id` so receivers dedupe), stamps
+  `X-Haldir-Delivery-Attempt`, and retries on 5xx + network errors with
+  exponential backoff (1 s → 4 s, 3 attempts max).
+- **`webhook_deliveries` table + `/v1/webhooks/deliveries` endpoint** —
+  every attempt logged with status_code, response_excerpt (first 512 B),
+  duration, and error. First load-bearing use of the migration runner.
+- **`from haldir import verify_webhook_signature`** — SDK re-export so
+  receiver code has one canonical import path for the security helper.
+
+### Added — Tenant admin dashboard
+
+- **`/v1/admin/overview`** — single-call dashboard returning tier, usage,
+  sessions, vault, audit (with chain verification), webhooks (24h success
+  rate), approvals, and embedded health. Pure SQL aggregates, no N+1.
+
+### Added — Schema migrations
+
+- **`haldir_migrate`** — forward-only, checksum-verified, dialect-aware
+  migration runner. Discovers `migrations/NNN_*.sql`, applies what hasn't
+  been recorded in `schema_migrations`, translates Postgres syntax for
+  SQLite. Legacy bootstrap path adopts existing schemas as v1 without
+  re-running migration bodies. CLI: `python -m haldir_migrate {up,status,
+  verify}`.
+- **`migrations/001_initial_schema.sql`** — baseline, every table Haldir
+  ships with.
+- **`migrations/002_webhook_deliveries.sql`** — the deliveries log table.
+- **`HALDIR_AUTO_MIGRATE=1`** — opt-in boot hook; default-on in the new
+  Dockerfile entrypoint.
+
+### Added — DB layer
+
+- **SQLite pragma tuning** — WAL + `synchronous=NORMAL` + 256 MiB mmap +
+  in-memory temp store + 5 s busy timeout. Cuts the `GET /v1/sessions/:id`
+  p99 from 349 ms to 172 ms under 32-way concurrent load.
+- **Configurable Postgres pool** — `HALDIR_PG_POOL_MIN/MAX` env knobs
+  (defaults 2 / 20).
+- **Counter / Histogram `.snapshot()` accessors** so the status module can
+  read metrics without reaching into private attributes.
+
+### Added — Deployment + supply chain
+
+- **Multi-stage Dockerfile** — builder compiles wheels, runtime is
+  `python:3.12-slim` + libpq5 + curl + tini. Non-root uid 1000.
+  `HEALTHCHECK` targets `/livez`. `/data` volume for SQLite.
+- **`.dockerignore`** trims VCS, secrets, caches, tests, marketing
+  artifacts.
+- **`scripts/gen_sbom.py`** — CycloneDX 1.5 SBOM generator (stdlib-only,
+  deterministic timestamp). Runs at Docker build time so
+  `docker cp <container>:/app/sbom.json .` hands auditors the full dep
+  list.
+
+### Added — CLI
+
+- **Seven new commands**: `haldir overview` (with `--watch` top-style
+  redraw), `haldir status`, `haldir ready` (exits 0/1 for CI),
+  `haldir audit export`, `haldir audit verify`,
+  `haldir webhooks deliveries`, `haldir migrate up/status/verify`.
+- **`--json` flag** on every new command so they compose into scripts.
+
+### Added — Web
+
+- **`/demo` page** — in-browser playground that hits the live API with a
+  per-visitor sandbox tenant. Animated SVG quickstart at the top, four-
+  button walk-through (mint key → create session → check permission → log
+  audit) with live JSON responses.
+- **Animated SVG quickstart** (`demo/quickstart.svg`) embedded in the
+  README above the architecture diagram. 9 KB, regeneratable from
+  `demo/gen_quickstart.py`.
+
+### Added — Performance
+
+- **Concurrent HTTP throughput benchmark** (`bench/bench_http.py`) —
+  launches gunicorn locally, hits representative endpoints with N
+  concurrent threads. Real numbers in the README: 1,247 RPS on
+  `POST /v1/audit` at 25 ms p50, 41 ms p99 with the full middleware
+  stack (auth, validation, idempotency, metrics, structured logging) in
+  the path.
+
+### Added — OpenTelemetry
+
+- **Opt-in tracing** (`haldir_tracing.py`) — Gate/Vault/Watch operations
+  emit spans when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. No-op otherwise.
+
+### Changed
+
+- **`User-Agent`** on outbound webhooks bumped to `Haldir/0.3.0`.
+- **`/healthz`** now an alias for `/livez` (back-compat preserved).
+- **OpenAPI default version** in the generator bumped to `0.3.0`.
+- **`mypy` strict scope** expanded to 18 source files (was 9 in 0.2.2).
+- **`README.md`** — performance table, demo SVG, CLI showcase, every new
+  command documented.
+
+### Verified
+
+- 310 tests passing (was 79 in 0.2.2).
+- mypy clean across 18 source files.
+- Zero new runtime dependencies in the default `pip install haldir`.
+
 ## [0.2.2] — 2026-04-18
 
 ### Added
@@ -92,6 +261,7 @@ All notable changes to Haldir are documented here. Format loosely follows
 - **PyPI package** — `pip install haldir`
 - **Smithery listing** — discoverable at `smithery.ai/server/haldir/haldir`
 
+[0.3.0]: https://github.com/ExposureGuard/haldir/releases/tag/v0.3.0
 [0.2.2]: https://github.com/ExposureGuard/haldir/releases/tag/v0.2.2
 [0.2.1]: https://github.com/ExposureGuard/haldir/releases/tag/v0.2.1
 [0.2.0]: https://github.com/ExposureGuard/haldir/releases/tag/v0.2.0
