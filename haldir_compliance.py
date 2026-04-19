@@ -555,12 +555,18 @@ def render_markdown(pack: dict[str, Any]) -> str:
 
 # ── HTML rendering (the "CISO bookmarks this URL" view) ─────────────
 
-def render_html(pack: dict[str, Any], key: str = "") -> str:
+def render_html(pack: dict[str, Any], key: str = "",
+                 score: dict[str, Any] | None = None) -> str:
     """Browser-rendered evidence pack for the URL a CISO would
     bookmark. Same eight sections as the Markdown form, dressed in the
     same dark + gold IBM Plex Mono / Inter look as /status, /demo,
     /admin. Marked noindex — we don't want signed compliance documents
-    in Google's index."""
+    in Google's index.
+
+    If `score` is provided (from haldir_compliance_score.compute_score),
+    the page renders a big percentage banner at the top with per-
+    control status pills — the Vanta-shape "X% SOC2 ready" number
+    that drives repeat visits to the dashboard."""
     import html as _h
 
     p = pack
@@ -646,6 +652,66 @@ def render_html(pack: dict[str, Any], key: str = "") -> str:
         for label, ts in quick_links
     )
 
+    # ── Readiness score banner ───────────────────────────────────
+    if score:
+        pct = int(score.get("score", 0))
+        score_color = (
+            "#0b8043" if pct >= 80 else
+            "#b58900" if pct >= 50 else
+            "#b00020"
+        )
+        verdict = (
+            "SOC2-ready" if pct >= 90 else
+            "audit-prep territory" if pct >= 70 else
+            "gaps to close" if pct >= 40 else
+            "pre-prep"
+        )
+        criteria_rows: list[str] = []
+        for c in score.get("criteria", []):
+            state = c.get("state", "fail")
+            dot = {"pass": "#0b8043", "warn": "#b58900", "fail": "#b00020"}.get(state, "#555")
+            badge = state.upper()
+            remediation = (
+                f'<div class="rem">{_h.escape(c.get("remediation", ""))}</div>'
+                if c.get("remediation") else ""
+            )
+            criteria_rows.append(
+                f'<div class="crit">'
+                f'<div class="crit-head">'
+                f'<span class="dot" style="background:{dot}"></span>'
+                f'<span class="crit-cc">{_h.escape(c.get("control", ""))}</span>'
+                f'<span class="crit-desc">{_h.escape(c.get("description", ""))}</span>'
+                f'<span class="crit-state" style="color:{dot}">{badge}</span>'
+                f'</div>'
+                f'<div class="crit-reason">{_h.escape(c.get("reason", ""))}</div>'
+                f'{remediation}'
+                f'</div>'
+            )
+        criteria_html = "".join(criteria_rows)
+        score_block = f"""
+  <section class="score-section">
+    <div class="score-flex">
+      <div class="score-badge">
+        <div class="score-num" style="color:{score_color}">{pct}<span>%</span></div>
+        <div class="score-sub">SOC2 readiness</div>
+      </div>
+      <div class="score-summary">
+        <div class="score-verdict" style="color:{score_color}">{verdict}</div>
+        <div class="score-tally">
+          <span style="color:#0b8043">✓ {score.get('passing', 0)}</span> passing
+          &nbsp;·&nbsp;
+          <span style="color:#b58900">! {score.get('warning', 0)}</span> warnings
+          &nbsp;·&nbsp;
+          <span style="color:#b00020">✗ {score.get('failing', 0)}</span> failing
+        </div>
+      </div>
+    </div>
+    <div class="criteria">{criteria_html}</div>
+  </section>
+"""
+    else:
+        score_block = ""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -698,6 +764,40 @@ def render_html(pack: dict[str, Any], key: str = "") -> str:
         font-family:'IBM Plex Mono',monospace;font-size:0.62rem;
         letter-spacing:1px;border:1px solid rgba(184,151,58,0.18)}}
   .chip:hover{{background:rgba(184,151,58,0.14)}}
+
+  .score-section{{border:1px solid rgba(224,221,213,0.08);border-radius:8px;
+                 padding:2rem;margin-bottom:1.5rem;
+                 background:rgba(255,255,255,0.012)}}
+  .score-flex{{display:flex;align-items:center;gap:2rem;flex-wrap:wrap;
+              margin-bottom:1.5rem}}
+  .score-badge{{text-align:center;min-width:140px}}
+  .score-num{{font-size:4.5rem;font-weight:200;line-height:1;
+             letter-spacing:-2px}}
+  .score-num span{{font-size:2rem;opacity:0.6;margin-left:0.25rem}}
+  .score-sub{{font-family:'IBM Plex Mono',monospace;font-size:0.65rem;
+             letter-spacing:2px;text-transform:uppercase;
+             color:rgba(224,221,213,0.4);margin-top:0.5rem}}
+  .score-summary{{flex:1;min-width:240px}}
+  .score-verdict{{font-size:1.5rem;font-weight:300;letter-spacing:-0.5px;
+                 margin-bottom:0.5rem}}
+  .score-tally{{font-family:'IBM Plex Mono',monospace;font-size:0.75rem;
+               color:rgba(224,221,213,0.7)}}
+  .criteria{{display:grid;gap:0.75rem}}
+  .crit{{border:1px solid rgba(224,221,213,0.06);border-radius:6px;
+        padding:0.9rem 1.1rem;background:#050505}}
+  .crit-head{{display:flex;align-items:center;gap:0.65rem;
+             font-size:0.9rem;margin-bottom:0.25rem;flex-wrap:wrap}}
+  .crit-head .dot{{width:9px;height:9px;border-radius:50%;flex-shrink:0}}
+  .crit-cc{{font-family:'IBM Plex Mono',monospace;font-size:0.7rem;
+          color:#b8973a;letter-spacing:0.5px;min-width:52px}}
+  .crit-desc{{color:#e0ddd5;font-weight:500;flex:1}}
+  .crit-state{{font-family:'IBM Plex Mono',monospace;font-size:0.6rem;
+             letter-spacing:2px;font-weight:600}}
+  .crit-reason{{font-size:0.8rem;color:rgba(224,221,213,0.5);
+               padding-left:1.65rem}}
+  .rem{{font-size:0.75rem;color:rgba(224,221,213,0.8);
+       background:rgba(184,151,58,0.06);border-left:2px solid #b8973a;
+       padding:0.5rem 0.75rem;margin:0.5rem 0 0 1.65rem;border-radius:3px}}
 
   section{{border:1px solid rgba(224,221,213,0.08);border-radius:6px;
           padding:1.75rem 2rem;margin-bottom:1.25rem;
@@ -757,7 +857,7 @@ def render_html(pack: dict[str, Any], key: str = "") -> str:
       <a href="/admin/overview?key={_h.escape(key)}">Admin overview</a>
     </div>
   </header>
-
+  {score_block}
   <div class="picker">
     <form method="get" action="/compliance">
       <input type="hidden" name="key" value="{safe_key}">

@@ -1455,6 +1455,22 @@ def delete_compliance_schedule(schedule_id: str):
     return ("", 204)
 
 
+@app.route("/v1/compliance/score", methods=["GET"])
+@require_api_key
+@require_scope("admin:read")
+def compliance_score():
+    """Live 0-100 readiness score + per-control pass/warn/fail detail.
+
+    Each SOC2 criterion Haldir covers is evaluated against the tenant's
+    current state; the top-line number is `passing / total * 100` with
+    warnings counted as half a pass. Returns both the score AND the
+    per-criterion `remediation` hint so downstream UIs can render
+    "here's what to fix to close the gap"."""
+    import haldir_compliance_score
+    tenant = getattr(request, "tenant_id", "")
+    return jsonify(haldir_compliance_score.compute_score(DB_PATH, tenant))
+
+
 @app.route("/v1/compliance/evidence/manifest", methods=["GET"])
 @require_api_key
 @require_scope("admin:read")
@@ -1537,7 +1553,9 @@ def compliance_html():
     pack = haldir_compliance.build_evidence_pack(
         DB_PATH, tenant_id, since=since, until=until,
     )
-    return haldir_compliance.render_html(pack, key=key), 200, {
+    import haldir_compliance_score
+    score = haldir_compliance_score.compute_score(DB_PATH, tenant_id)
+    return haldir_compliance.render_html(pack, key=key, score=score), 200, {
         "Content-Type": "text/html; charset=utf-8",
     }
 
