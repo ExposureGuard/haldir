@@ -70,9 +70,12 @@ def test_pack_signs_itself() -> None:
     sig = pack["signatures"]
     assert sig["algorithm"] == "SHA-256"
     assert len(sig["digest"]) == 64
-    # Reproducible: re-hash the input the signature claims.
+    # Reproducible: re-hash the input the signature claims (excludes
+    # both `signatures` and `generated_at` — see _section_signatures
+    # for why generated_at is excluded).
+    excluded = {"signatures", "generated_at"}
     canonical = json.dumps(
-        {k: v for k, v in pack.items() if k != "signatures"},
+        {k: v for k, v in pack.items() if k not in excluded},
         sort_keys=True, separators=(",", ":"),
     )
     expected = hashlib.sha256(canonical.encode()).hexdigest()

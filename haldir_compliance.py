@@ -397,17 +397,27 @@ def _section_webhooks(db_path: str, tenant_id: str,
 
 
 def _section_signatures(pack: dict[str, Any]) -> dict[str, Any]:
-    """SHA-256 over the canonical JSON of the rest of the pack. The
-    `signatures` block excludes itself from the hashed input — chicken
-    and egg — so an auditor reproduces the digest by removing it before
-    re-hashing."""
+    """SHA-256 over the canonical JSON of the rest of the pack.
+
+    Excluded from the hashed input:
+      - `signatures` itself (chicken-and-egg).
+      - `generated_at` — metadata about THIS call, not the underlying
+        truth. Two calls at the same period bounds against the same
+        DB state must produce the same digest, otherwise an auditor
+        re-verifying an archived pack hours later gets a divergent
+        result and false-flags tampering.
+
+    Period bounds (`period_start`, `period_end`) ARE in the input —
+    they lock what the digest attests to. An auditor reproduces the
+    digest by passing the same since/until query."""
+    excluded = {"signatures", "generated_at"}
     canonical = json.dumps(
-        {k: v for k, v in pack.items() if k != "signatures"},
+        {k: v for k, v in pack.items() if k not in excluded},
         sort_keys=True, separators=(",", ":"),
     )
     return {
         "algorithm":  "SHA-256",
-        "input":      "canonical JSON of evidence pack with signatures field removed",
+        "input":      "canonical JSON of evidence pack with signatures + generated_at fields removed",
         "digest":     hashlib.sha256(canonical.encode()).hexdigest(),
         "signed_at":  _iso(time.time()),
     }

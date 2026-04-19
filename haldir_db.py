@@ -420,6 +420,29 @@ def _init_sqlite(db_path: str):
         )
     except Exception:
         pass  # column already exists; fine
+    # Compliance scheduler table (migration 004). Belt-and-suspenders
+    # for environments that don't run HALDIR_AUTO_MIGRATE.
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS compliance_schedules (
+                schedule_id TEXT PRIMARY KEY,
+                tenant_id   TEXT NOT NULL,
+                name        TEXT NOT NULL DEFAULT '',
+                cadence     TEXT NOT NULL,
+                delivery    TEXT NOT NULL,
+                active      INTEGER NOT NULL DEFAULT 1,
+                created_at  REAL NOT NULL,
+                last_run_at REAL NOT NULL DEFAULT 0,
+                last_status TEXT NOT NULL DEFAULT '',
+                last_error  TEXT NOT NULL DEFAULT '',
+                run_count   INTEGER NOT NULL DEFAULT 0,
+                fail_count  INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_schedules_tenant ON compliance_schedules(tenant_id);
+            CREATE INDEX IF NOT EXISTS idx_schedules_due    ON compliance_schedules(active, last_run_at);
+        """)
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 
@@ -480,5 +503,32 @@ def _init_pg():
     except Exception as e:
         conn.rollback()
         print(f"[!] webhook_deliveries init warning: {e}")
+
+    # Migration 004 (compliance_schedules) — same belt-and-suspenders
+    # pattern. Lets the scheduler thread persist its state on Postgres
+    # deployments that skip the migration runner.
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS compliance_schedules (
+                schedule_id TEXT PRIMARY KEY,
+                tenant_id   TEXT NOT NULL,
+                name        TEXT NOT NULL DEFAULT '',
+                cadence     TEXT NOT NULL,
+                delivery    TEXT NOT NULL,
+                active      INTEGER NOT NULL DEFAULT 1,
+                created_at  DOUBLE PRECISION NOT NULL,
+                last_run_at DOUBLE PRECISION NOT NULL DEFAULT 0,
+                last_status TEXT NOT NULL DEFAULT '',
+                last_error  TEXT NOT NULL DEFAULT '',
+                run_count   INTEGER NOT NULL DEFAULT 0,
+                fail_count  INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_schedules_tenant ON compliance_schedules(tenant_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_schedules_due    ON compliance_schedules(active, last_run_at)")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[!] compliance_schedules init warning: {e}")
 
     conn.close()

@@ -1160,6 +1160,21 @@ def pending_approvals():
 from haldir_watch.webhooks import WebhookManager
 webhook_mgr = WebhookManager(db_path=DB_PATH)
 
+# ── Compliance scheduler ──────────────────────────────────────────────
+#
+# Daemon thread that wakes every hour, scans compliance_schedules for
+# due rows, generates an evidence pack covering the prior cadence
+# period, and fires it through webhook_mgr (signed + retried like any
+# other event).
+#
+# Off by default to keep test runs deterministic — ops sets
+# HALDIR_COMPLIANCE_SCHEDULER=1 in production.
+
+if os.environ.get("HALDIR_COMPLIANCE_SCHEDULER") == "1":
+    import haldir_compliance_scheduler as _comp_sched
+    _comp_sched.start_background(DB_PATH, webhook_mgr=webhook_mgr)
+    log.info("compliance scheduler started")
+
 @app.route("/v1/webhooks", methods=["POST"])
 @require_api_key
 @require_scope("webhooks:write")
@@ -1266,6 +1281,55 @@ def compliance_evidence():
             "X-Haldir-Evidence-Digest": pack["signatures"]["digest"],
         }
     return jsonify(pack)
+
+
+@app.route("/v1/compliance/schedules", methods=["POST"])
+@require_api_key
+@require_scope("admin:write")
+@validate_body({
+    "name":     {"type": str, "required": True, "maxlen": 128},
+    "cadence":  {"type": str, "required": True,
+                 "choices": ["daily", "weekly", "monthly", "quarterly"]},
+    "delivery": {"type": str, "required": True, "maxlen": 256},
+})
+def create_compliance_schedule():
+    """Register a recurring evidence-pack delivery. Cadence + delivery
+    target are validated; duplicate names are allowed (auditors may
+    want both 'monthly-internal' and 'monthly-external' targets)."""
+    import haldir_compliance_scheduler as sched
+    data = request.validated
+    tenant = getattr(request, "tenant_id", "")
+    try:
+        out = sched.create_schedule(
+            DB_PATH, tenant,
+            name=data["name"], cadence=data["cadence"],
+            delivery=data["delivery"],
+        )
+    except sched.ScheduleValidationError as e:
+        return _json_error("invalid_schedule", str(e), 400)
+    return jsonify(out), 201
+
+
+@app.route("/v1/compliance/schedules", methods=["GET"])
+@require_api_key
+@require_scope("admin:read")
+def list_compliance_schedules():
+    """Return every schedule registered for the authed tenant —
+    name, cadence, delivery, last-run state, next-due timestamp."""
+    import haldir_compliance_scheduler as sched
+    tenant = getattr(request, "tenant_id", "")
+    return jsonify({"schedules": sched.list_schedules(DB_PATH, tenant)})
+
+
+@app.route("/v1/compliance/schedules/<schedule_id>", methods=["DELETE"])
+@require_api_key
+@require_scope("admin:write")
+def delete_compliance_schedule(schedule_id: str):
+    import haldir_compliance_scheduler as sched
+    tenant = getattr(request, "tenant_id", "")
+    if not sched.delete_schedule(DB_PATH, tenant, schedule_id):
+        return _json_error("not_found", "schedule not found", 404)
+    return ("", 204)
 
 
 @app.route("/v1/compliance/evidence/manifest", methods=["GET"])
