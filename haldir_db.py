@@ -438,4 +438,47 @@ def _init_pg():
             conn.rollback()
             if "already exists" not in str(e):
                 print(f"[!] DB init warning: {e}")
+
+    # Idempotent column-add for legacy api_keys tables that pre-date
+    # the scopes feature. Postgres supports ADD COLUMN IF NOT EXISTS
+    # since 9.6 — covers every Postgres version Haldir's SDK clients
+    # would realistically point a tenant DB at.
+    try:
+        cursor.execute(
+            "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scopes "
+            "TEXT NOT NULL DEFAULT '[\"*\"]'"
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[!] api_keys.scopes ALTER skipped: {e}")
+
+    # Migration 002 (webhook_deliveries table) is normally applied by
+    # haldir_migrate at boot. Belt-and-suspenders: emit it here too so
+    # an existing Postgres deployment that skips HALDIR_AUTO_MIGRATE
+    # still ends up with the deliveries table.
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS webhook_deliveries (
+                delivery_id      TEXT    PRIMARY KEY,
+                event_id         TEXT    NOT NULL,
+                tenant_id        TEXT    NOT NULL DEFAULT '',
+                webhook_url      TEXT    NOT NULL,
+                event_type       TEXT    NOT NULL,
+                attempt          INTEGER NOT NULL DEFAULT 1,
+                status_code      INTEGER NOT NULL DEFAULT 0,
+                response_excerpt TEXT    NOT NULL DEFAULT '',
+                error            TEXT    NOT NULL DEFAULT '',
+                duration_ms      INTEGER NOT NULL DEFAULT 0,
+                created_at       DOUBLE PRECISION NOT NULL
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_deliveries_tenant   ON webhook_deliveries(tenant_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_deliveries_event    ON webhook_deliveries(event_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_deliveries_created  ON webhook_deliveries(created_at)")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[!] webhook_deliveries init warning: {e}")
+
     conn.close()
