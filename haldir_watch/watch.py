@@ -13,6 +13,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from haldir_tracing import traced_span
+
 
 @dataclass
 class AuditEntry:
@@ -71,6 +73,7 @@ class Watch:
         from haldir_db import get_db
         return get_db(self._db_path)
 
+    @traced_span("haldir.watch.log_action")
     def log_action(self, session: Any, tool: str, action: str,
                    details: Optional[dict[str, Any]] = None, cost_usd: float = 0.0,
                    tenant_id: str = "") -> AuditEntry:

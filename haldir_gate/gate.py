@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 
+from haldir_tracing import traced_span
+
 
 class Permission(Enum):
     READ = "read"
@@ -99,6 +101,7 @@ class Gate:
             conn.commit()
             conn.close()
 
+    @traced_span("haldir.gate.create_session")
     def create_session(self, agent_id: str, scopes: list[str] | None = None,
                        ttl: int = 3600, spend_limit: float | None = None,
                        tenant_id: str = "") -> Session:
@@ -172,6 +175,7 @@ class Gate:
             return session
         return None
 
+    @traced_span("haldir.gate.check_permission")
     def check_permission(self, session_id: str, scope: str, tenant_id: str = "") -> bool:
         session = self.get_session(session_id, tenant_id=tenant_id)
         if not session:
@@ -198,6 +202,7 @@ class Gate:
             conn.close()
         return True
 
+    @traced_span("haldir.gate.revoke_session")
     def revoke_session(self, session_id: str, tenant_id: str = "") -> bool:
         session = self._sessions.get(session_id)
         if session and session.tenant_id == tenant_id:

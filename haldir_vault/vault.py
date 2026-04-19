@@ -21,6 +21,8 @@ from typing import Any, Optional
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from haldir_tracing import traced_span
+
 
 NONCE_LEN = 12  # 96 bits, NIST-recommended for AES-GCM
 KEY_LEN = 32    # 256 bits
@@ -105,6 +107,7 @@ class Vault:
         from haldir_db import get_db
         return get_db(self._db_path)
 
+    @traced_span("haldir.vault.store_secret")
     def store_secret(self, name: str, value: str, scope_required: str = "read",
                      metadata: dict | None = None, tenant_id: str = "") -> SecretEntry:
         # Bind ciphertext to the (tenant, name) pair via AAD: swapping
@@ -131,6 +134,7 @@ class Vault:
             conn.close()
         return entry
 
+    @traced_span("haldir.vault.get_secret")
     def get_secret(self, name: str, session: Optional[Any] = None,
                    tenant_id: str = "") -> Optional[str]:
         cache_key = f"{tenant_id}:{name}"
