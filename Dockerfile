@@ -72,11 +72,12 @@ USER haldir:haldir
 
 EXPOSE 8080
 
-# HEALTHCHECK uses curl because nothing else is in the runtime image.
-# 30 s interval, 10 s timeout, 3 retries before the orchestrator
-# restarts the container. start-period gives the app time to boot.
+# HEALTHCHECK targets /livez (process is alive) — the right semantic
+# for Docker's container-level probe. /readyz exists for Kubernetes
+# load balancers that need to pull a pod from rotation without
+# restarting the container.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -fsS http://localhost:8080/healthz || exit 1
+    CMD curl -fsS http://localhost:8080/livez || exit 1
 
 # tini handles signal forwarding; gunicorn runs 1 worker + 4 threads
 # by default (override with GUNICORN_WORKERS / _THREADS at runtime).

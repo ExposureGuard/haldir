@@ -3022,7 +3022,37 @@ def icon_svg():
 
 @app.route("/healthz")
 def healthz():
-    return jsonify({"status": "ok", "service": "haldir", "version": "0.1.0"})
+    """Back-compat alias for /livez. New consumers should target the
+    explicit liveness/readiness endpoints below — they map directly
+    onto Kubernetes probe semantics and answer different questions."""
+    import haldir_health
+    return jsonify({**haldir_health.liveness(), "status": "ok",
+                    "version": "0.1.0"})
+
+
+@app.route("/livez")
+def livez():
+    """Liveness probe — process is responsive. Always 200 if Flask
+    is serving requests. Does no I/O so a wedged DB never causes a
+    container restart."""
+    import haldir_health
+    return jsonify(haldir_health.liveness())
+
+
+@app.route("/readyz")
+def readyz():
+    """Readiness probe — should this pod receive traffic right now?
+    Checks DB reachability, migration consistency, and encryption-key
+    configuration. Returns 503 if any required check fails so the
+    load balancer pulls this pod from rotation without restarting it.
+
+    Pod restart on transient DB blip is the wrong behavior; the right
+    behavior is 'wait for the dep to recover, then accept traffic
+    again' — exactly the gap between liveness and readiness probes."""
+    import haldir_health
+    payload = haldir_health.readiness(DB_PATH)
+    status = 200 if payload["ready"] else 503
+    return jsonify(payload), status
 
 
 @app.route("/metrics")
