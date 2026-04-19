@@ -6,6 +6,31 @@ Every table has a tenant_id column for data isolation between API keys.
 
 Set DATABASE_URL for Postgres: postgresql://user:pass@host/haldir
 Otherwise falls back to SQLite at HALDIR_DB_PATH.
+
+Tuning surface (env vars):
+
+  HALDIR_PG_POOL_MIN     Floor for the Postgres connection pool.
+                         Defaults to 2 so the second request never
+                         pays cold-connect latency.
+  HALDIR_PG_POOL_MAX     Ceiling. Defaults to 20. Every gunicorn
+                         worker shares this pool, so size it to
+                         workers × typical concurrency per worker
+                         (leave headroom for Postgres' max_connections).
+
+SQLite pragma choices (applied on every connection open):
+
+  journal_mode=WAL       Readers don't block writers. Required.
+  synchronous=NORMAL     Safe with WAL. ~5-10x faster write commit
+                         than FULL; at most loses the last few
+                         committed txns on OS crash.
+  temp_store=MEMORY      Sorts and temp tables stay in RAM. Meaningful
+                         for the audit chain's ORDER BY hash lookups.
+  mmap_size=256 MiB      Memory-map the DB file so page reads come
+                         out of the OS page cache without a syscall.
+                         The single biggest knob for concurrent-read
+                         p99 latency under load.
+  foreign_keys=ON        Enforce FK constraints (off by default).
+  busy_timeout=5000      Wait 5 s for the writer lock before raising.
 """
 
 import os
@@ -15,7 +40,23 @@ import sqlite3
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 DEFAULT_DB_PATH = os.environ.get("HALDIR_DB_PATH", "/data/haldir.db" if os.path.isdir("/data") else "haldir.db")
 
+# Pool bounds. Callers that need to override per-process (tests) can
+# also set _pg_pool_min / _pg_pool_max directly — they're read at
+# pool-construction time.
+_pg_pool_min = int(os.environ.get("HALDIR_PG_POOL_MIN", "2"))
+_pg_pool_max = int(os.environ.get("HALDIR_PG_POOL_MAX", "20"))
 _pg_pool = None
+
+# SQLite pragmas applied on every connection open. Pulled out as a
+# constant so tests can assert against the exact set.
+_SQLITE_PRAGMAS: tuple[tuple[str, str], ...] = (
+    ("journal_mode",  "WAL"),
+    ("synchronous",   "NORMAL"),
+    ("temp_store",    "MEMORY"),
+    ("mmap_size",     "268435456"),  # 256 MiB
+    ("foreign_keys",  "ON"),
+    ("busy_timeout",  "5000"),
+)
 
 
 def _is_postgres() -> bool:
@@ -28,33 +69,41 @@ def get_db(db_path: str = DEFAULT_DB_PATH):
         return _get_pg()
     conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
+    for name, value in _SQLITE_PRAGMAS:
+        conn.execute(f"PRAGMA {name}={value}")
     return conn
 
 
 def _get_pg():
-    """Get a PostgreSQL connection from the pool."""
+    """Get a PostgreSQL connection from the pool.
+
+    Pool size is configurable via HALDIR_PG_POOL_MIN / MAX. On
+    exhaustion we drain + rebuild, which drops in-flight connections
+    but gets us back to a healthy state deterministically — preferable
+    to blocking indefinitely while callers stack up."""
     global _pg_pool
     import psycopg2
     import psycopg2.extras
     import psycopg2.pool
 
     if _pg_pool is None:
-        _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
+        _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+            _pg_pool_min, _pg_pool_max, DATABASE_URL,
+        )
 
     try:
         conn = _pg_pool.getconn()
         conn.autocommit = False
         return PgConnectionWrapper(conn, _pg_pool)
     except psycopg2.pool.PoolError:
-        # Pool exhausted — reset it
+        # Pool exhausted — reset it.
         try:
             _pg_pool.closeall()
         except Exception:
             pass
-        _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
+        _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+            _pg_pool_min, _pg_pool_max, DATABASE_URL,
+        )
         conn = _pg_pool.getconn()
         conn.autocommit = False
         return PgConnectionWrapper(conn, _pg_pool)

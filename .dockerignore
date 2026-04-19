@@ -1,0 +1,89 @@
+# Trim the Docker build context — smaller context = faster builds,
+# smaller images, and (most importantly) nothing sensitive sneaking
+# into a layer. Keep this conservative: prefer to re-add things on
+# demand rather than ship a secret.
+#
+# NOTE on asset directories (blog/, demo/, landing/, .well-known/,
+# docs/): those are read at request time by api.py route handlers
+# (blog posts, the /demo SVG, landing pages, etc.), so they MUST
+# ship with the image. Don't add them here.
+
+# ── VCS ──────────────────────────────────────────────────────────────
+.git
+.gitignore
+.github
+
+# ── Local credentials / env ─────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+secrets/
+.aws/
+.ssh/
+
+# ── Python build / cache ────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ── Virtualenvs ─────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Editor / OS noise ───────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ── Non-runtime test / bench artifacts ──────────────────────────────
+tests/
+bench/
+
+# ── Databases / stateful files ──────────────────────────────────────
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+
+# ── Marketing / investor artifacts (not served) ─────────────────────
+# The app doesn't read these at runtime; the repo keeps them for
+# Sterling's workflow. No reason to ship them in a production image.
+pitch_deck.*
+haldir-pitch-deck.pdf
+yc_demo.sh
+design_advice.png
+A16Z_SPEEDRUN_APPLICATION.md
+COMPETITIVE_ANALYSIS.md
+GLAMA_SUBMISSION_CHECKLIST.md
+HOW_IT_WORKS.md
+INTEGRATION_PLAYBOOK.md
+INVESTOR_ONEPAGER.md
+SEED_FUNDING_PLAN.md
+SHOW_HN_POST.md
+AGENT_DISCOVERY_LAUNCH_CHECKLIST.md
+DAILY_REALITY_CHECK.md
+outreach_templates.md
+pilot_targets.md

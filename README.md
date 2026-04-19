@@ -65,17 +65,17 @@ That's it — point at `https://haldir.xyz`, no signup, live API.
 
 Haldir is fast enough to sit in the hot path of every agent tool call without becoming the bottleneck.
 
-**Single-box HTTP throughput** (gunicorn 4 workers, 32 concurrent clients, SQLite backend, every request goes through the full middleware stack — auth, validation, idempotency, metrics, structured logging):
+**Single-box HTTP throughput** (gunicorn 4 workers, 32 concurrent clients, tuned SQLite backend, every request goes through the full middleware stack — auth, validation, idempotency, metrics, structured logging):
 
 | Endpoint | RPS | p50 | p95 | p99 |
 | --- | --- | --- | --- | --- |
-| `GET /healthz` | 1,822 | 17.4 ms | 28.6 ms | 36.4 ms |
-| `GET /v1/status` | 1,554 | 20.1 ms | 26.5 ms | 31.6 ms |
-| `GET /v1/sessions/:id` | 806 | 26.0 ms | 60.6 ms | 349.4 ms |
-| `POST /v1/sessions` (create) | 1,266 | 25.0 ms | 31.7 ms | 34.5 ms |
-| `POST /v1/audit` (hash-chain write) | 1,247 | 25.1 ms | 33.1 ms | 41.5 ms |
+| `GET /healthz` | 1,638 | 19.1 ms | 32.5 ms | 41.6 ms |
+| `GET /v1/status` | 1,382 | 22.2 ms | 30.8 ms | 45.4 ms |
+| `GET /v1/sessions/:id` | 903 | 29.2 ms | 95.5 ms | 172.1 ms |
+| `POST /v1/sessions` (create) | 1,142 | 27.7 ms | 35.2 ms | 39.9 ms |
+| `POST /v1/audit` (hash-chain write) | 1,092 | 28.7 ms | 37.6 ms | 52.6 ms |
 
-Hardware: 12th-gen Intel Core i3-1215U (8 cores, 8 GB RAM). Postgres deployments see lower tail latency than the p99 column above — the SQLite numbers reflect the default single-file dev path.
+Hardware: 12th-gen Intel Core i3-1215U (8 cores, 8 GB RAM). SQLite is configured with WAL + synchronous=NORMAL + 256 MiB mmap + in-memory temp store — the session-lookup p99 dropped by 52 % versus the untuned path. Postgres deployments (configurable pool via `HALDIR_PG_POOL_MIN/MAX`) flatten the p99 further still; enable via `DATABASE_URL=postgresql://...`.
 
 **Primitive cost** (pure-Python, no I/O):
 
