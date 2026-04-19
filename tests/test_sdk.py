@@ -79,12 +79,34 @@ class AsyncFlaskTransport(httpx.AsyncBaseTransport):
 
 # ── Fixtures ──
 
+@pytest.fixture(autouse=True)
+def _lift_agent_cap(monkeypatch):
+    """The SDK suite creates ~20 agents across tests. Free tier caps
+    agents at 1; lift it so every test gets a fresh session without
+    hitting the tier limiter. Same pattern used by test_admin.py /
+    test_compliance_score.py / test_audit_tree.py."""
+    import copy
+    import api
+    patched = copy.deepcopy(api.TIER_LIMITS)
+    patched["free"]["agents"] = 999
+    monkeypatch.setattr(api, "TIER_LIMITS", patched)
+
+
 @pytest.fixture(scope="module")
-def api_key():
-    """Bootstrap a test API key via the Flask test client."""
+def api_key(bootstrap_key):
+    """Mint a fresh API key for this module using conftest's session-
+    scoped bootstrap_key as the admin credential.
+
+    Piggybacking on conftest avoids wiping api_keys — a wipe would
+    invalidate conftest.bootstrap_key and break every other test module
+    that depends on it."""
     client = flask_app.test_client()
-    r = client.post("/v1/keys", json={"name": "sdk-test", "tier": "pro"})
-    assert r.status_code == 201
+    r = client.post(
+        "/v1/keys",
+        json={"name": "sdk-test", "tier": "pro"},
+        headers={"Authorization": f"Bearer {bootstrap_key}"},
+    )
+    assert r.status_code == 201, f"key mint failed: {r.status_code} {r.data!r}"
     return r.json["key"]
 
 

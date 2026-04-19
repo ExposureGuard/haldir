@@ -186,17 +186,24 @@ class Vault:
         return self._decrypt(entry.encrypted_value, aad=aad).decode()
 
     def delete_secret(self, name: str, tenant_id: str = "") -> bool:
+        """Return True iff a secret was actually deleted. Callers rely
+        on this to produce a 404 when the target didn't exist (SDK
+        contract + test_sdk.test_delete_missing_secret_404)."""
         cache_key = f"{tenant_id}:{name}"
-        deleted = cache_key in self._secrets
+        cache_hit = cache_key in self._secrets
         self._secrets.pop(cache_key, None)
 
         conn = self._get_db()
         if conn:
-            conn.execute("DELETE FROM secrets WHERE name = ? AND tenant_id = ?", (name, tenant_id))
+            cur = conn.execute(
+                "DELETE FROM secrets WHERE name = ? AND tenant_id = ?",
+                (name, tenant_id),
+            )
             conn.commit()
+            rowcount = cur.rowcount
             conn.close()
-            return True
-        return deleted
+            return rowcount > 0 or cache_hit
+        return cache_hit
 
     def list_secrets(self, tenant_id: str = "") -> list[str]:
         names = set()
