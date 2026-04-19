@@ -230,13 +230,40 @@ def _platform_after(response):  # type: ignore[no-untyped-def]
     for k, v in SECURITY_HEADERS.items():
         response.headers.setdefault(k, v)
 
-    # Rate-limit headers (Stripe-compatible). Populated by the rate_limit
-    # before_request hook below when the request was authenticated.
+    # Rate-limit headers. Two bucket dimensions, each with its own full
+    # surface so a client hitting the 429 can tell which limit fired and
+    # when to retry:
+    #
+    #   X-RateLimit-*                  — the short (hourly) window
+    #   X-RateLimit-Monthly-*          — the subscription-tier quota
+    #   X-RateLimit-Resource           — which bucket this response
+    #                                    pertains to ("hourly" | "monthly")
+    #   Retry-After                    — RFC 7231 seconds-until-retry,
+    #                                    set only on 429 responses
+    #
+    # Populated by the rate_limit before_request hook below when the
+    # request was authenticated. Missing on unauthenticated requests
+    # (health checks, bootstrap) — clients don't need them there.
     rl = getattr(g, "rate_limit", None)
     if rl:
-        response.headers["X-RateLimit-Limit"] = str(rl["limit"])
-        response.headers["X-RateLimit-Remaining"] = str(max(0, rl["remaining"]))
-        response.headers["X-RateLimit-Reset"] = str(rl["reset"])
+        response.headers["X-RateLimit-Limit"]       = str(rl["limit"])
+        response.headers["X-RateLimit-Remaining"]   = str(max(0, rl["remaining"]))
+        response.headers["X-RateLimit-Used"]        = str(rl["used"])
+        response.headers["X-RateLimit-Reset"]       = str(rl["reset"])
+        response.headers["X-RateLimit-Reset-After"] = str(max(0, rl["reset_after"]))
+        response.headers["X-RateLimit-Resource"]    = rl.get("resource", "hourly")
+
+    rlm = getattr(g, "rate_limit_monthly", None)
+    if rlm:
+        response.headers["X-RateLimit-Monthly-Limit"]       = str(rlm["limit"])
+        response.headers["X-RateLimit-Monthly-Remaining"]   = str(max(0, rlm["remaining"]))
+        response.headers["X-RateLimit-Monthly-Used"]        = str(rlm["used"])
+        response.headers["X-RateLimit-Monthly-Reset"]       = str(rlm["reset"])
+        response.headers["X-RateLimit-Monthly-Reset-After"] = str(max(0, rlm["reset_after"]))
+
+    retry_after = getattr(g, "retry_after", None)
+    if retry_after is not None and response.status_code == 429:
+        response.headers["Retry-After"] = str(max(1, int(retry_after)))
 
     # Metrics + structured access log.
     start = getattr(g, "request_start", None)
@@ -1003,6 +1030,29 @@ def list_webhooks():
 _rate_limits = {}  # key_hash -> {window_start, count}
 RATE_LIMITS = {"free": 100, "pro": 5000, "enterprise": 50000}
 
+# Per-process, in-memory counters. Good enough for single-node Haldir
+# deployments (which is where most installs live today). When we fan
+# out across multiple gunicorn hosts the counter shifts to a shared
+# store (Redis / Postgres advisory locks) so limits are globally
+# accurate — tracked as follow-up, not a correctness hazard yet
+# because production runs a single container.
+
+def _seconds_until_end_of_month(now_ts: float) -> int:
+    """Unix-epoch seconds between now and the first second of the
+    next calendar month. Used for the monthly-quota Retry-After so
+    clients know when the subscription window rolls over, not just
+    'some unknown quantity of seconds in the future'."""
+    from datetime import datetime, timezone
+    now = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    if now.month == 12:
+        nxt = now.replace(year=now.year + 1, month=1, day=1,
+                          hour=0, minute=0, second=0, microsecond=0)
+    else:
+        nxt = now.replace(month=now.month + 1, day=1,
+                          hour=0, minute=0, second=0, microsecond=0)
+    return max(1, int(nxt.timestamp() - now_ts))
+
+
 @app.before_request
 def rate_limit():
     if request.path.startswith("/v1/") and request.path not in ("/v1/keys", "/v1/demo/key"):
@@ -1034,34 +1084,57 @@ def rate_limit():
 
         limit = RATE_LIMITS.get(effective_tier, 100)
         reset = int(entry["start"] + window)
-        # Stash for _platform_after to emit Stripe-style headers on success.
+        reset_after = max(0, reset - int(now))
+        remaining = limit - entry["count"]
+        # Stash for _platform_after to emit Stripe/GitHub-style headers.
         g.rate_limit = {
-            "limit": limit,
-            "remaining": limit - entry["count"],
-            "reset": reset,
+            "limit":       limit,
+            "used":        entry["count"],
+            "remaining":   remaining,
+            "reset":       reset,
+            "reset_after": reset_after,
+            "resource":    "hourly",
         }
         if entry["count"] > limit:
             _M_RL_HITS.inc(tier=effective_tier)
+            g.retry_after = reset_after
             return _json_error(
                 "rate_limit_exceeded",
                 "Rate limit exceeded",
                 429,
                 limit=limit,
                 tier=effective_tier,
-                retry_after=int(entry["start"] + window - now),
+                retry_after=reset_after,
+                resource="hourly",
             )
 
         if tenant:
             tier_limits = TIER_LIMITS.get(effective_tier, TIER_LIMITS["free"])
+            monthly_limit = tier_limits["actions_per_month"]
             monthly_actions = _get_tenant_monthly_actions(tenant)
-            if monthly_actions >= tier_limits["actions_per_month"]:
+            monthly_reset_after = _seconds_until_end_of_month(now)
+            g.rate_limit_monthly = {
+                "limit":       monthly_limit,
+                "used":        monthly_actions,
+                "remaining":   max(0, monthly_limit - monthly_actions),
+                "reset":       int(now + monthly_reset_after),
+                "reset_after": monthly_reset_after,
+            }
+            if monthly_actions >= monthly_limit:
+                # Mark the overall resource dimension as monthly so the
+                # X-RateLimit-Resource header tells callers which bucket
+                # they hit (hourly vs monthly quota).
+                g.rate_limit["resource"] = "monthly"
+                g.retry_after = monthly_reset_after
                 return _json_error(
                     "monthly_quota_exceeded",
                     "Monthly action quota exceeded",
                     429,
                     tier=billing_tier,
-                    limit=tier_limits["actions_per_month"],
+                    limit=monthly_limit,
                     used=monthly_actions,
+                    retry_after=monthly_reset_after,
+                    resource="monthly",
                     upgrade="https://haldir.xyz/pricing",
                 )
 

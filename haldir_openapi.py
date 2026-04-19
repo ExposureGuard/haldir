@@ -148,11 +148,71 @@ def _components() -> dict[str, Any]:
         },
     }
 
-    def make(desc: str) -> dict[str, Any]:
-        r = {
+    # Rate-limit header surface. Every authed response — success or
+    # 429 — carries these so clients can budget without parsing the
+    # error body. Declared once here and attached to any response
+    # that goes through the API-key path.
+    _rl_headers: dict[str, Any] = {
+        "X-RateLimit-Limit": {
+            "description": "Hourly request ceiling for the caller's tier.",
+            "schema": {"type": "integer"},
+        },
+        "X-RateLimit-Remaining": {
+            "description": "Requests left in the current hourly window.",
+            "schema": {"type": "integer"},
+        },
+        "X-RateLimit-Used": {
+            "description": "Requests consumed in the current hourly window.",
+            "schema": {"type": "integer"},
+        },
+        "X-RateLimit-Reset": {
+            "description": "Unix epoch (seconds) when the hourly window resets.",
+            "schema": {"type": "integer"},
+        },
+        "X-RateLimit-Reset-After": {
+            "description": "Seconds until the hourly window resets.",
+            "schema": {"type": "integer"},
+        },
+        "X-RateLimit-Resource": {
+            "description": "Which bucket pertains to this response: 'hourly' or 'monthly'.",
+            "schema": {"type": "string", "enum": ["hourly", "monthly"]},
+        },
+        "X-RateLimit-Monthly-Limit": {
+            "description": "Monthly action quota for the tenant's subscription tier.",
+            "schema": {"type": "integer"},
+        },
+        "X-RateLimit-Monthly-Remaining": {
+            "description": "Actions left in the current calendar month.",
+            "schema": {"type": "integer"},
+        },
+        "X-RateLimit-Monthly-Used": {
+            "description": "Actions consumed so far in the current calendar month.",
+            "schema": {"type": "integer"},
+        },
+        "X-RateLimit-Monthly-Reset": {
+            "description": "Unix epoch (seconds) at the start of next month.",
+            "schema": {"type": "integer"},
+        },
+        "X-RateLimit-Monthly-Reset-After": {
+            "description": "Seconds until the monthly quota resets.",
+            "schema": {"type": "integer"},
+        },
+    }
+    _rl_plus_retry: dict[str, Any] = {
+        **_rl_headers,
+        "Retry-After": {
+            "description": "RFC 7231 seconds-until-retry. Present only on 429 responses.",
+            "schema": {"type": "integer"},
+        },
+    }
+
+    def make(desc: str, headers: dict[str, Any] | None = None) -> dict[str, Any]:
+        r: dict[str, Any] = {
             "description": desc,
             "content": ref_to_envelope["content"],
         }
+        if headers:
+            r["headers"] = headers
         return r
 
     return {
@@ -185,7 +245,12 @@ def _components() -> dict[str, Any]:
             "NotFound":             make("Endpoint or resource not found"),
             "PayloadTooLarge":      make("Request body exceeded 1 MiB limit"),
             "IdempotencyMismatch":  make("Idempotency-Key reused with a different body"),
-            "RateLimited":          make("Rate-limit exceeded (tier-dependent)"),
+            "RateLimited":          make(
+                "Rate-limit exceeded (tier-dependent). Carries full "
+                "X-RateLimit-* surface plus a Retry-After header so "
+                "clients can back off deterministically.",
+                headers=_rl_plus_retry,
+            ),
             "InternalError":        make("Unhandled server error"),
         },
     }
