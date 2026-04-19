@@ -242,11 +242,15 @@ def cmd_login(args: argparse.Namespace) -> None:
 
 
 def cmd_keys_create(args: argparse.Namespace) -> None:
-    """Create a new API key."""
+    """Create a new API key with optional per-key scopes."""
     client = APIClient()
     payload: dict[str, Any] = {"name": args.name}
     if args.tier:
         payload["tier"] = args.tier
+    if args.scopes:
+        # Comma-separated for ergonomics; the API accepts both list
+        # and string form (haldir_scopes.parse() normalizes either).
+        payload["scopes"] = [s.strip() for s in args.scopes.split(",") if s.strip()]
 
     result = client.post("/v1/keys", json=payload)
 
@@ -256,6 +260,8 @@ def cmd_keys_create(args: argparse.Namespace) -> None:
     label("Prefix", result.get("prefix", ""))
     label("Name", result.get("name", ""))
     label("Tier", result.get("tier", ""))
+    if result.get("scopes"):
+        label("Scopes", ", ".join(result["scopes"]))
     print()
     warn("Save this key now — it will not be shown again.")
 
@@ -1084,6 +1090,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_keys_create = keys_sub.add_parser("create", help="Create a new API key")
     p_keys_create.add_argument("--name", required=True, help="Name for the key")
     p_keys_create.add_argument("--tier", help="Key tier (free, pro, enterprise)")
+    p_keys_create.add_argument(
+        "--scopes",
+        help="Comma-separated scopes (e.g. 'audit:read,sessions:read'). "
+             "Default '*' (full access). Resources: sessions, vault, audit, "
+             "payments, webhooks, proxy, approvals, admin.",
+    )
     p_keys_create.set_defaults(func=cmd_keys_create)
 
     # ── session ──

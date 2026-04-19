@@ -240,6 +240,7 @@ _SCHEMA = """
         tenant_id TEXT NOT NULL DEFAULT '',
         name TEXT NOT NULL DEFAULT '',
         tier TEXT NOT NULL DEFAULT 'free',
+        scopes TEXT NOT NULL DEFAULT '["*"]',
         created_at REAL NOT NULL,
         last_used REAL NOT NULL DEFAULT 0,
         revoked INTEGER NOT NULL DEFAULT 0
@@ -410,6 +411,15 @@ def _init_sqlite(db_path: str):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_SCHEMA_SQLITE)
+    # Idempotent column-add for legacy api_keys tables that pre-date
+    # the scopes feature. Mirrors the same pattern haldir_watch/
+    # webhooks.py uses for its `secret` column.
+    try:
+        conn.execute(
+            "ALTER TABLE api_keys ADD COLUMN scopes TEXT NOT NULL DEFAULT '[\"*\"]'"
+        )
+    except Exception:
+        pass  # column already exists; fine
     conn.commit()
     conn.close()
 

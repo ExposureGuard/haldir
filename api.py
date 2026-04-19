@@ -45,6 +45,7 @@ from haldir_metrics import registry as prom_metrics
 from haldir_validation import validate_body
 from haldir_openapi import generate_openapi
 from haldir_status import build_status
+from haldir_scopes import require_scope
 
 configure_logging()
 log = get_logger("haldir.api")
@@ -410,6 +411,16 @@ def require_api_key(f):
             request.tenant_id = row["tenant_id"] or key_hash[:16]
         except (IndexError, KeyError):
             request.tenant_id = key_hash[:16]
+
+        # Scopes — defaults to wildcard for legacy rows that pre-date
+        # migration 003. The decorator @require_scope reads this list
+        # off `request.api_key_scopes` when gating individual endpoints.
+        import haldir_scopes
+        try:
+            request.api_key_scopes = haldir_scopes.parse(row["scopes"])
+        except (IndexError, KeyError):
+            request.api_key_scopes = [haldir_scopes.WILDCARD]
+
         return f(*args, **kwargs)
     return decorated
 
@@ -487,14 +498,27 @@ def create_api_key():
     name = data.get("name", "default")
     tier = "free"  # Always free on creation — only Stripe webhooks can upgrade
 
+    # Per-key scopes. Default to wildcard for back-compat with every
+    # existing client that doesn't pass `scopes`. Validate aggressively
+    # so a typo like "aduit:read" fails fast with a 400 rather than
+    # silently locking the holder out.
+    import haldir_scopes
+    try:
+        requested_scopes = haldir_scopes.parse(data.get("scopes"))
+        validated_scopes = haldir_scopes.validate(requested_scopes)
+    except haldir_scopes.ScopeValidationError as e:
+        return jsonify({"error": str(e), "code": "invalid_scope"}), 400
+
     full_key = f"hld_{secrets.token_urlsafe(32)}"
     key_hash = _hash_key(full_key)
     tenant_id = key_hash[:16]
 
     conn = get_db(DB_PATH)
     conn.execute(
-        "INSERT INTO api_keys (key_hash, key_prefix, tenant_id, name, tier, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (key_hash, full_key[:12], tenant_id, name, tier, time.time())
+        "INSERT INTO api_keys (key_hash, key_prefix, tenant_id, name, tier, "
+        "scopes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (key_hash, full_key[:12], tenant_id, name, tier,
+         haldir_scopes.serialize(validated_scopes), time.time()),
     )
     conn.commit()
     conn.close()
@@ -504,6 +528,7 @@ def create_api_key():
         "prefix": full_key[:12],
         "name": name,
         "tier": tier,
+        "scopes": validated_scopes,
         "message": "Save this key — it won't be shown again.",
     }
     _idempotency_store("/v1/keys", data, "", response, 201)
@@ -597,6 +622,7 @@ def create_session():
 
 @app.route("/v1/sessions/<session_id>", methods=["GET"])
 @require_api_key
+@require_scope("sessions:read")
 def get_session(session_id):
     tenant = getattr(request, "tenant_id", "")
     session = gate.get_session(session_id, tenant_id=tenant)
@@ -618,6 +644,7 @@ def get_session(session_id):
 
 @app.route("/v1/sessions/<session_id>", methods=["DELETE"])
 @require_api_key
+@require_scope("sessions:write")
 def revoke_session(session_id):
     tenant = getattr(request, "tenant_id", "")
     revoked = gate.revoke_session(session_id, tenant_id=tenant)
@@ -628,6 +655,7 @@ def revoke_session(session_id):
 
 @app.route("/v1/sessions/<session_id>/check", methods=["POST"])
 @require_api_key
+@require_scope("sessions:read")
 def check_permission(session_id):
     data = request.json or {}
     scope = data.get("scope")
@@ -643,6 +671,7 @@ def check_permission(session_id):
 
 @app.route("/v1/secrets", methods=["POST"])
 @require_api_key
+@require_scope("vault:write")
 def store_secret():
     data = request.json or {}
     name = data.get("name")
@@ -665,6 +694,7 @@ def store_secret():
 
 @app.route("/v1/secrets/<name>", methods=["GET"])
 @require_api_key
+@require_scope("vault:read")
 def get_secret(name):
     tenant = getattr(request, "tenant_id", "")
     session_id = request.headers.get("X-Session-ID") or request.args.get("session_id")
@@ -688,6 +718,7 @@ def get_secret(name):
 
 @app.route("/v1/secrets/<name>", methods=["DELETE"])
 @require_api_key
+@require_scope("vault:write")
 def delete_secret(name):
     tenant = getattr(request, "tenant_id", "")
     deleted = vault.delete_secret(name, tenant_id=tenant)
@@ -698,6 +729,7 @@ def delete_secret(name):
 
 @app.route("/v1/secrets", methods=["GET"])
 @require_api_key
+@require_scope("vault:read")
 def list_secrets():
     tenant = getattr(request, "tenant_id", "")
     names = vault.list_secrets(tenant_id=tenant)
@@ -746,6 +778,7 @@ def authorize_payment():
 
 @app.route("/v1/audit", methods=["POST"])
 @require_api_key
+@require_scope("audit:write")
 def log_action():
     data = request.json or {}
     session_id = data.get("session_id")
@@ -792,6 +825,7 @@ def log_action():
 
 @app.route("/v1/audit", methods=["GET"])
 @require_api_key
+@require_scope("audit:read")
 def get_audit_trail():
     tenant = getattr(request, "tenant_id", "")
     entries = watch.get_audit_trail(
@@ -827,6 +861,7 @@ def get_audit_trail():
 
 @app.route("/v1/audit/spend", methods=["GET"])
 @require_api_key
+@require_scope("audit:read")
 def get_spend():
     tenant = getattr(request, "tenant_id", "")
     return jsonify(watch.get_spend(
@@ -838,6 +873,7 @@ def get_spend():
 
 @app.route("/v1/audit/verify", methods=["GET"])
 @require_api_key
+@require_scope("audit:read")
 def verify_audit_chain():
     """Verify the cryptographic integrity of the audit log hash chain."""
     tenant = getattr(request, "tenant_id", "")
@@ -881,6 +917,7 @@ def _parse_export_filters() -> "haldir_export.ExportFilters":
 
 @app.route("/v1/audit/export", methods=["GET"])
 @require_api_key
+@require_scope("audit:read")
 def export_audit_trail():
     """Stream the caller's audit trail for ingest into a SIEM, data
     warehouse, or compliance archive. Supports CSV and JSONL; every
@@ -927,6 +964,7 @@ def export_audit_trail():
 
 @app.route("/v1/audit/export/manifest", methods=["GET"])
 @require_api_key
+@require_scope("audit:read")
 def export_audit_manifest():
     """Return the chain-verification manifest for the same filter set
     an export would use, without shipping the body. Lets auditors
@@ -963,6 +1001,7 @@ def track_usage(response):
 
 @app.route("/v1/usage", methods=["GET"])
 @require_api_key
+@require_scope("admin:read")
 def get_usage():
     """Get usage stats for billing."""
     tenant = getattr(request, "tenant_id", "")
@@ -990,6 +1029,7 @@ approval_engine = ApprovalEngine(db_path=DB_PATH)
 
 @app.route("/v1/approvals/rules", methods=["POST"])
 @require_api_key
+@require_scope("approvals:write")
 def add_approval_rule():
     data = request.json or {}
     rule_type = data.get("type")
@@ -1011,6 +1051,7 @@ def add_approval_rule():
 
 @app.route("/v1/approvals/request", methods=["POST"])
 @require_api_key
+@require_scope("approvals:write")
 def request_approval():
     data = request.json or {}
     session_id = data.get("session_id")
@@ -1044,6 +1085,7 @@ def request_approval():
 
 @app.route("/v1/approvals/<request_id>", methods=["GET"])
 @require_api_key
+@require_scope("approvals:read")
 def check_approval(request_id):
     req = approval_engine.check(request_id)
     if not req:
@@ -1063,6 +1105,7 @@ def check_approval(request_id):
 
 @app.route("/v1/approvals/<request_id>/approve", methods=["POST"])
 @require_api_key
+@require_scope("approvals:write")
 def approve_request(request_id):
     data = request.json or {}
     ok = approval_engine.approve(
@@ -1077,6 +1120,7 @@ def approve_request(request_id):
 
 @app.route("/v1/approvals/<request_id>/deny", methods=["POST"])
 @require_api_key
+@require_scope("approvals:write")
 def deny_request(request_id):
     data = request.json or {}
     ok = approval_engine.deny(
@@ -1091,6 +1135,7 @@ def deny_request(request_id):
 
 @app.route("/v1/approvals/pending", methods=["GET"])
 @require_api_key
+@require_scope("approvals:read")
 def pending_approvals():
     pending = approval_engine.get_pending(agent_id=request.args.get("agent_id"))
     return jsonify({
@@ -1117,6 +1162,7 @@ webhook_mgr = WebhookManager(db_path=DB_PATH)
 
 @app.route("/v1/webhooks", methods=["POST"])
 @require_api_key
+@require_scope("webhooks:write")
 def register_webhook():
     data = request.json or {}
     url = data.get("url")
@@ -1138,6 +1184,7 @@ def register_webhook():
 
 @app.route("/v1/webhooks", methods=["GET"])
 @require_api_key
+@require_scope("webhooks:read")
 def list_webhooks():
     return jsonify({"webhooks": webhook_mgr.list_webhooks()})
 
@@ -1146,6 +1193,7 @@ def list_webhooks():
 
 @app.route("/v1/admin/overview", methods=["GET"])
 @require_api_key
+@require_scope("admin:read")
 def admin_overview():
     """Single-call dashboard: tier + usage + sessions + vault + audit
     + webhooks + approvals + health for the authed tenant. Drives any
@@ -1485,6 +1533,7 @@ def _render_admin_overview(o: dict, key: str) -> str:
 
 @app.route("/v1/webhooks/deliveries", methods=["GET"])
 @require_api_key
+@require_scope("webhooks:read")
 def list_webhook_deliveries():
     """Return the most recent delivery attempts for the authed tenant.
     Query params:
@@ -2488,6 +2537,7 @@ proxy = HaldirProxy(
 
 @app.route("/v1/proxy/upstreams", methods=["POST"])
 @require_api_key
+@require_scope("proxy:write")
 def register_upstream():
     """Register an upstream MCP server to proxy through Haldir."""
     data = request.json or {}
@@ -2520,6 +2570,7 @@ def register_upstream():
 
 @app.route("/v1/proxy/upstreams", methods=["GET"])
 @require_api_key
+@require_scope("proxy:read")
 def list_upstreams():
     """List all registered upstream servers and their status."""
     return jsonify(proxy.get_stats())
@@ -2527,6 +2578,7 @@ def list_upstreams():
 
 @app.route("/v1/proxy/tools", methods=["GET"])
 @require_api_key
+@require_scope("proxy:read")
 def proxy_tools():
     """List all tools available through the proxy (from all upstreams)."""
     tools = proxy.get_tools()
@@ -2540,6 +2592,7 @@ def proxy_tools():
 
 @app.route("/v1/proxy/call", methods=["POST"])
 @require_api_key
+@require_scope("proxy:write")
 def proxy_call():
     """
     Call a tool through the Haldir proxy.
@@ -2574,6 +2627,7 @@ def proxy_call():
 
 @app.route("/v1/proxy/policies", methods=["POST"])
 @require_api_key
+@require_scope("proxy:write")
 def add_proxy_policy():
     """
     Add a governance policy to the proxy.
@@ -2602,6 +2656,7 @@ def add_proxy_policy():
 
 @app.route("/v1/proxy/policies", methods=["GET"])
 @require_api_key
+@require_scope("proxy:read")
 def list_proxy_policies():
     return jsonify({"policies": proxy._policies, "count": len(proxy._policies)})
 
