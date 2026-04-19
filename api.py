@@ -470,9 +470,13 @@ def create_api_key():
     key_count = conn.execute("SELECT COUNT(*) FROM api_keys WHERE revoked = 0").fetchone()[0]
     conn.close()
 
-    # First key is free; subsequent keys need auth
+    # First key is free; subsequent keys need auth. When authed,
+    # the new key inherits the caller's tenant_id so a tenant admin
+    # can mint sub-keys (read-only SIEM key, CI deploy key, etc.)
+    # under their existing tenant — that's the multi-key, single-
+    # tenant pattern every Stripe-shaped API ships.
+    inherited_tenant: str | None = None
     if key_count > 0:
-        # Need existing key to create new keys
         key = request.headers.get("Authorization", "").replace("Bearer ", "") or request.headers.get("X-API-Key", "")
         bootstrap = os.environ.get("HALDIR_BOOTSTRAP_TOKEN", "")
         if key:
@@ -482,6 +486,7 @@ def create_api_key():
             conn.close()
             if not row:
                 return jsonify({"error": "Invalid API key"}), 401
+            inherited_tenant = row["tenant_id"] or None
         elif bootstrap and request.json and request.json.get("bootstrap_token") == bootstrap:
             pass
         else:
@@ -511,7 +516,9 @@ def create_api_key():
 
     full_key = f"hld_{secrets.token_urlsafe(32)}"
     key_hash = _hash_key(full_key)
-    tenant_id = key_hash[:16]
+    # Inherit caller's tenant so sub-keys live under the same tenant;
+    # only the very first / bootstrap key starts a fresh one.
+    tenant_id = inherited_tenant or key_hash[:16]
 
     conn = get_db(DB_PATH)
     conn.execute(
@@ -533,6 +540,85 @@ def create_api_key():
     }
     _idempotency_store("/v1/keys", data, "", response, 201)
     return jsonify(response), 201
+
+
+# ── Key admin lifecycle (list + revoke) ─────────────────────────────
+
+@app.route("/v1/keys", methods=["GET"])
+@require_api_key
+@require_scope("admin:read")
+def list_api_keys():
+    """List every API key registered against the authed tenant.
+
+    Returns prefix (the first 12 chars — safe to display, can't be
+    used to authenticate), name, tier, scopes, created_at, last_used,
+    revoked. The full key is never returned — once minted, it lives
+    only on the holder's machine.
+
+    This is the operational surface every security review asks for:
+    'who can hit our API right now?' answered without a DB shell."""
+    tenant = getattr(request, "tenant_id", "")
+    conn = get_db(DB_PATH)
+    rows = conn.execute(
+        "SELECT key_prefix, name, tier, scopes, created_at, "
+        "last_used, revoked FROM api_keys WHERE tenant_id = ? "
+        "ORDER BY created_at DESC",
+        (tenant,),
+    ).fetchall()
+    conn.close()
+    keys = []
+    for r in rows:
+        try:
+            scopes = json.loads(r["scopes"]) if "scopes" in r.keys() else ["*"]
+        except (TypeError, json.JSONDecodeError):
+            scopes = ["*"]
+        keys.append({
+            "prefix":     r["key_prefix"],
+            "name":       r["name"],
+            "tier":       r["tier"],
+            "scopes":     scopes,
+            "created_at": r["created_at"],
+            "last_used":  r["last_used"],
+            "revoked":    bool(r["revoked"]),
+        })
+    return jsonify({"keys": keys, "count": len(keys)})
+
+
+@app.route("/v1/keys/<prefix>", methods=["DELETE"])
+@require_api_key
+@require_scope("admin:write")
+def revoke_api_key(prefix: str):
+    """Revoke a key by its 12-char prefix.
+
+    Tenant-scoped: a tenant can only revoke their own keys. Returns
+    404 if the prefix doesn't exist within the authed tenant.
+
+    The currently-authed key can revoke itself — useful for the "I
+    just found this in a public commit, kill it now" flow without
+    needing to mint another key first.
+    """
+    if not prefix or len(prefix) > 64:
+        return _json_error("invalid_prefix",
+                           "prefix must be 1-64 chars", 400)
+    tenant = getattr(request, "tenant_id", "")
+    conn = get_db(DB_PATH)
+    row = conn.execute(
+        "SELECT key_hash FROM api_keys WHERE key_prefix = ? "
+        "AND tenant_id = ? AND revoked = 0",
+        (prefix, tenant),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return _json_error("not_found",
+                           "no active key with that prefix in this tenant",
+                           404)
+    conn.execute(
+        "UPDATE api_keys SET revoked = 1 WHERE key_hash = ?",
+        (row["key_hash"],),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"revoked": True, "prefix": prefix}), 200
 
 
 @app.route("/v1/demo/key", methods=["POST"])
@@ -1191,8 +1277,16 @@ def register_webhook():
         url=url,
         name=data.get("name", ""),
         events=data.get("events"),
+        tenant_id=tenant,
     )
-    response = {"registered": True, "url": wh.url, "events": wh.events}
+    response = {
+        "registered": True,
+        "webhook_id": wh.webhook_id,
+        "url": wh.url,
+        "events": wh.events,
+        "secret": wh.secret,  # one-time display, like POST /v1/keys
+        "message": "Save the secret — it won't be shown again.",
+    }
     _idempotency_store("/v1/webhooks", data, tenant, response, 201)
     return jsonify(response), 201
 
@@ -1202,6 +1296,35 @@ def register_webhook():
 @require_scope("webhooks:read")
 def list_webhooks():
     return jsonify({"webhooks": webhook_mgr.list_webhooks()})
+
+
+@app.route("/v1/webhooks/<int:webhook_id>/rotate-secret", methods=["POST"])
+@require_api_key
+@require_scope("webhooks:write")
+def rotate_webhook_secret(webhook_id: int):
+    """Mint a new HMAC secret for the webhook + demote the current
+    secret to `secret_prev` with a 24-hour grace window. Stripe-style
+    zero-downtime rotation: configure both secrets at the receiver,
+    rotate at Haldir, expire the old one at the receiver after the
+    overlap window passes.
+
+    Returns both secrets so the receiver can wire them up before the
+    next event fires. The previous secret is included one final time
+    here (it was already on file) so callers don't have to look it
+    up out-of-band."""
+    tenant = getattr(request, "tenant_id", "")
+    grace = int(request.args.get("grace_seconds", 24 * 3600))
+    grace = max(60, min(grace, 7 * 24 * 3600))  # 1 min - 7 days
+    out = webhook_mgr.rotate_secret(
+        webhook_id, tenant_id=tenant, grace_seconds=grace,
+    )
+    if out is None:
+        return _json_error(
+            "not_found",
+            "no webhook with that id in this tenant",
+            404,
+        )
+    return jsonify(out), 200
 
 
 # ── Tenant admin overview (one-call dashboard) ──────────────────────────

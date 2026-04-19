@@ -71,7 +71,7 @@ def verify_signature(
     payload: bytes | str,
     signature_header: str,
     timestamp_header: str,
-    secret: str,
+    secret: str | list[str] | tuple[str, ...],
     *,
     tolerance_seconds: int = 300,
     now: float | None = None,
@@ -86,17 +86,21 @@ def verify_signature(
         signature_header: The full value of `X-Haldir-Signature`,
                           e.g. `"sha256=abc123..."`.
         timestamp_header: The value of `X-Haldir-Timestamp` (unix seconds).
-        secret: The shared secret you configured when registering the
-                webhook with Haldir.
+        secret: One or more shared HMAC secrets. Pass a string for the
+                normal single-secret case; pass a list / tuple during a
+                key rotation overlap so EITHER secret authenticates the
+                payload — Stripe's `endpoint_secret` rotation pattern.
+                The verifier tries each in constant time and returns
+                without raising as soon as one matches.
         tolerance_seconds: Reject signatures whose timestamp differs from
                            `now` by more than this many seconds (default
                            300s = 5 minutes). Defends against replay.
         now: Override "now" for testing. Default: `time.time()`.
 
     Raises:
-        WebhookVerificationError: if the signature is invalid, the
-            timestamp is outside the tolerance window, or any header is
-            malformed.
+        WebhookVerificationError: if no provided secret produces a
+            matching signature, the timestamp is outside the tolerance
+            window, or any header is malformed.
     """
     if not signature_header.startswith("sha256="):
         raise WebhookVerificationError(
@@ -118,10 +122,23 @@ def verify_signature(
 
     body_bytes = payload if isinstance(payload, bytes) else payload.encode()
     signing_input = f"{int(ts)}.".encode() + body_bytes
-    computed = hmac.new(secret.encode(), signing_input, hashlib.sha256).hexdigest()
 
-    if not hmac.compare_digest(computed, expected_sig):
-        raise WebhookVerificationError("Signature does not match")
+    # Accept str or list/tuple. Filter empty strings — they'd produce
+    # a valid HMAC over the empty key, which is a real footgun.
+    secrets_list: list[str]
+    if isinstance(secret, str):
+        secrets_list = [secret] if secret else []
+    else:
+        secrets_list = [s for s in secret if s]
+    if not secrets_list:
+        raise WebhookVerificationError("No secret provided")
+
+    for s in secrets_list:
+        computed = hmac.new(s.encode(), signing_input, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(computed, expected_sig):
+            return  # one matched — accept
+
+    raise WebhookVerificationError("Signature does not match")
 
 
 # ── Internal: WebhookConfig + Manager ────────────────────────────────────
@@ -133,6 +150,7 @@ class WebhookConfig:
     events: list[str] = field(default_factory=lambda: ["all"])  # "all", "anomaly", "approval", "budget_exhausted", "flagged"
     active: bool = True
     secret: str = ""               # HMAC-SHA256 shared secret; "" = unsigned
+    webhook_id: int = 0            # DB row id; 0 until persisted
     created_at: float = field(default_factory=time.time)
     last_fired: float = 0.0
     fire_count: int = 0
@@ -163,23 +181,31 @@ class WebhookManager:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS webhooks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL DEFAULT '',
                 url TEXT NOT NULL,
                 name TEXT NOT NULL DEFAULT '',
                 events TEXT NOT NULL DEFAULT '["all"]',
                 active INTEGER NOT NULL DEFAULT 1,
                 secret TEXT NOT NULL DEFAULT '',
+                secret_prev TEXT NOT NULL DEFAULT '',
+                secret_prev_expires_at REAL NOT NULL DEFAULT 0,
                 created_at REAL NOT NULL,
                 last_fired REAL NOT NULL DEFAULT 0,
                 fire_count INTEGER NOT NULL DEFAULT 0,
                 fail_count INTEGER NOT NULL DEFAULT 0
             )
         """)
-        # Idempotent migration for existing tables that pre-date the secret column
-        try:
-            conn.execute("ALTER TABLE webhooks ADD COLUMN secret TEXT NOT NULL DEFAULT ''")
-        except Exception:
-            # Column already exists — fine
-            pass
+        # Idempotent migrations for tables pre-dating each column.
+        for stmt in (
+            "ALTER TABLE webhooks ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE webhooks ADD COLUMN secret TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE webhooks ADD COLUMN secret_prev TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE webhooks ADD COLUMN secret_prev_expires_at REAL NOT NULL DEFAULT 0",
+        ):
+            try:
+                conn.execute(stmt)
+            except Exception:
+                pass  # column already exists
         conn.commit()
         conn.close()
 
@@ -207,7 +233,8 @@ class WebhookManager:
     def register(self, url: str, name: str = "",
                  events: list[str] | None = None,
                  secret: str | None = None,
-                 generate_secret: bool = True) -> WebhookConfig:
+                 generate_secret: bool = True,
+                 tenant_id: str = "") -> WebhookConfig:
         """Register a new webhook endpoint.
 
         Args:
@@ -221,11 +248,16 @@ class WebhookManager:
                     (NOT recommended for production endpoints).
             generate_secret: If True (default) and no `secret` is supplied,
                              generate a random one with `secrets.token_urlsafe(32)`.
+            tenant_id: Owning tenant — needed for tenant-scoped admin
+                       (rotate-secret, delete) so a key from one tenant
+                       can't manipulate another tenant's webhook.
 
         Returns:
             The created WebhookConfig. **Save the `secret` field** — the
             receiver needs it to verify signatures, and Haldir will not
-            re-display it after registration.
+            re-display it after registration. The DB row's id is set
+            on the returned object so callers can address it later
+            (rotate / delete).
         """
         if secret is None and generate_secret:
             secret = _secrets.token_urlsafe(32)
@@ -242,11 +274,13 @@ class WebhookManager:
 
         conn = self._get_db()
         if conn:
-            conn.execute(
-                "INSERT INTO webhooks (url, name, events, active, secret, created_at) "
-                "VALUES (?, ?, ?, 1, ?, ?)",
-                (url, name, json.dumps(wh.events), secret, time.time())
+            cur = conn.execute(
+                "INSERT INTO webhooks (tenant_id, url, name, events, active, "
+                "secret, created_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
+                (tenant_id, url, name, json.dumps(wh.events),
+                 secret, time.time()),
             )
+            wh.webhook_id = getattr(cur, "lastrowid", 0) or 0
             conn.commit()
             conn.close()
 
@@ -522,3 +556,58 @@ class WebhookManager:
             }
             for wh in self._webhooks
         ]
+
+    # ── Rotation ────────────────────────────────────────────────────
+
+    def rotate_secret(
+        self,
+        webhook_id: int,
+        tenant_id: str = "",
+        grace_seconds: int = 24 * 3600,
+    ) -> dict[str, Any] | None:
+        """Mint a new secret + demote the current one to `secret_prev`
+        with a grace expiry. Returns the new + previous secrets so the
+        caller can configure both at the receiver during the overlap
+        window — Stripe's rotation pattern.
+
+        Returns None if the webhook isn't found / belongs to a
+        different tenant. Tenant-scoped to prevent cross-tenant
+        rotation."""
+        conn = self._get_db()
+        if not conn:
+            return None
+        try:
+            row = conn.execute(
+                "SELECT id, secret FROM webhooks WHERE id = ? AND tenant_id = ?",
+                (webhook_id, tenant_id),
+            ).fetchone()
+            if not row:
+                return None
+            old_secret = row["secret"] or ""
+            new_secret = _secrets.token_urlsafe(32)
+            expires_at = time.time() + grace_seconds
+            conn.execute(
+                "UPDATE webhooks SET secret = ?, secret_prev = ?, "
+                "secret_prev_expires_at = ? WHERE id = ?",
+                (new_secret, old_secret, expires_at, webhook_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Refresh in-memory list so subsequent fires sign with the new
+        # secret immediately.
+        self._load_webhooks()
+
+        return {
+            "webhook_id":               webhook_id,
+            "secret":                   new_secret,
+            "secret_prev":              old_secret,
+            "secret_prev_expires_at":   expires_at,
+            "grace_seconds":            grace_seconds,
+            "message": (
+                "Configure both secrets at your receiver. The previous "
+                "secret expires after grace_seconds — after which only "
+                "the new secret will produce a valid signature."
+            ),
+        }

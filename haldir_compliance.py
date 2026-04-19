@@ -620,6 +620,32 @@ def render_html(pack: dict[str, Any], key: str = "") -> str:
     if key:
         json_link += "?key=" + _h.escape(key)
 
+    # Period picker: pre-fill from the pack so the inputs reflect
+    # whatever window is currently rendered. ISO 8601 → date-only
+    # form-friendly (yyyy-mm-dd) by slicing the prefix.
+    since_value = (p["period_start"] or "")[:10]
+    until_value = (p["period_end"] or "")[:10]
+    safe_key = _h.escape(key)
+
+    # Quick-select chips emit relative deltas in seconds via the
+    # querystring's `since` numeric form; the endpoint accepts both
+    # ISO and unix.
+    import time as _t
+    now_ts = int(_t.time())
+    quick_links = [
+        ("7d",  now_ts - 7 * 86400),
+        ("30d", now_ts - 30 * 86400),
+        ("90d", now_ts - 90 * 86400),
+        ("YTD", int(datetime.now(timezone.utc).replace(
+            month=1, day=1, hour=0, minute=0, second=0, microsecond=0,
+        ).timestamp())),
+        ("365d", now_ts - 365 * 86400),
+    ]
+    chips_html = " ".join(
+        f'<a href="/compliance?key={safe_key}&since={ts}" class="chip">{label}</a>'
+        for label, ts in quick_links
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -646,6 +672,32 @@ def render_html(pack: dict[str, Any], key: str = "") -> str:
   .actions a:hover{{color:#e0ddd5;border-color:rgba(224,221,213,0.5)}}
   .actions a.primary{{background:#e0ddd5;color:#050505;border-color:#e0ddd5}}
   .actions a.primary:hover{{background:rgba(224,221,213,0.85)}}
+
+  .picker{{border:1px solid rgba(224,221,213,0.08);border-radius:6px;
+          padding:1rem 1.25rem;margin-bottom:1.25rem;
+          background:rgba(255,255,255,0.012);
+          display:flex;flex-wrap:wrap;align-items:center;gap:0.75rem}}
+  .picker form{{display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;
+               font-family:'IBM Plex Mono',monospace;font-size:0.7rem;
+               color:rgba(224,221,213,0.5);letter-spacing:0.5px}}
+  .picker input[type=date]{{background:#0a0a0a;border:1px solid rgba(224,221,213,0.2);
+          border-radius:4px;padding:0.45rem 0.65rem;color:#e0ddd5;
+          font-family:'IBM Plex Mono',monospace;font-size:0.78rem;
+          color-scheme:dark}}
+  .picker input[type=date]:focus{{outline:none;border-color:#b8973a}}
+  .picker button{{font-family:'IBM Plex Mono',monospace;font-size:0.62rem;
+          letter-spacing:1.5px;text-transform:uppercase;
+          background:#e0ddd5;color:#050505;border:none;border-radius:4px;
+          padding:0.5rem 1rem;cursor:pointer}}
+  .picker button:hover{{background:rgba(224,221,213,0.85)}}
+  .picker .quick{{display:flex;align-items:center;gap:0.4rem;
+                 margin-left:auto;font-family:'IBM Plex Mono',monospace;
+                 font-size:0.6rem;color:rgba(224,221,213,0.4);letter-spacing:1px}}
+  .chip{{display:inline-block;padding:0.4rem 0.7rem;border-radius:14px;
+        background:rgba(184,151,58,0.08);color:#b8973a;text-decoration:none;
+        font-family:'IBM Plex Mono',monospace;font-size:0.62rem;
+        letter-spacing:1px;border:1px solid rgba(184,151,58,0.18)}}
+  .chip:hover{{background:rgba(184,151,58,0.14)}}
 
   section{{border:1px solid rgba(224,221,213,0.08);border-radius:6px;
           padding:1.75rem 2rem;margin-bottom:1.25rem;
@@ -705,6 +757,18 @@ def render_html(pack: dict[str, Any], key: str = "") -> str:
       <a href="/admin/overview?key={_h.escape(key)}">Admin overview</a>
     </div>
   </header>
+
+  <div class="picker">
+    <form method="get" action="/compliance">
+      <input type="hidden" name="key" value="{safe_key}">
+      <span>Period:</span>
+      <input type="date" name="since" value="{since_value}">
+      <span>→</span>
+      <input type="date" name="until" value="{until_value}">
+      <button type="submit">Apply</button>
+    </form>
+    <div class="quick">{chips_html}</div>
+  </div>
 
   <section>
     <h2>1 · Identity</h2>

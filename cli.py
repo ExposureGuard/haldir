@@ -241,6 +241,61 @@ def cmd_login(args: argparse.Namespace) -> None:
     success(f"Config saved to {mono(str(CONFIG_FILE))}")
 
 
+def cmd_keys_list(args: argparse.Namespace) -> None:
+    """List API keys registered against the authed tenant."""
+    client = APIClient()
+    r = client.get("/v1/keys")
+    keys = r.get("keys", [])
+    if getattr(args, "json", False):
+        print(json.dumps(keys, indent=2))
+        return
+    if not keys:
+        info("no keys registered")
+        return
+    print()
+    print(f"  {Color.DIM}{'prefix':<14}  {'name':<22}  {'tier':<7}  {'scopes':<28}  {'last used':<19}  state{Color.RESET}")
+    for k in keys:
+        last = (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(float(k["last_used"])))
+            if k.get("last_used") else "never"
+        )
+        state = (
+            f"{Color.RED}revoked{Color.RESET}" if k["revoked"]
+            else f"{Color.GREEN}active{Color.RESET}"
+        )
+        scopes = ",".join(k.get("scopes", ["*"]))[:28]
+        print(f"  {Color.WHITE}{k['prefix']:<14}{Color.RESET}  "
+              f"{k['name']:<22}  {k['tier']:<7}  "
+              f"{Color.DIM}{scopes:<28}{Color.RESET}  "
+              f"{last:<19}  {state}")
+    print()
+
+
+def cmd_keys_revoke(args: argparse.Namespace) -> None:
+    """Revoke a key by its 12-char prefix."""
+    client = APIClient()
+    url = f"{client.base_url}/v1/keys/{args.prefix}"
+    if not args.yes:
+        # Confirm interactively unless --yes — leaked-key panic still
+        # benefits from a 2-second pause.
+        sys.stderr.write(
+            f"About to revoke key prefix {args.prefix!r}. Continue? [y/N] "
+        )
+        sys.stderr.flush()
+        if input().strip().lower() not in ("y", "yes"):
+            warn("aborted")
+            sys.exit(1)
+    r = httpx.delete(url, headers=client._headers(), timeout=10.0)
+    if r.status_code == 200:
+        success(f"revoked {args.prefix}")
+    elif r.status_code == 404:
+        error("no active key with that prefix in this tenant")
+        sys.exit(1)
+    else:
+        error(f"revoke failed: HTTP {r.status_code} — {r.text}")
+        sys.exit(1)
+
+
 def cmd_keys_create(args: argparse.Namespace) -> None:
     """Create a new API key with optional per-key scopes."""
     client = APIClient()
@@ -865,6 +920,27 @@ def cmd_audit_verify(args: argparse.Namespace) -> None:
 
 # ── Webhooks: deliveries log ────────────────────────────────────────
 
+def cmd_webhooks_rotate(args: argparse.Namespace) -> None:
+    """Rotate the HMAC secret for a webhook. Returns both secrets so
+    the receiver can configure them in tandem before the grace window
+    on the previous secret expires."""
+    client = APIClient()
+    url = f"/v1/webhooks/{args.webhook_id}/rotate-secret"
+    if args.grace_seconds:
+        url += f"?grace_seconds={args.grace_seconds}"
+    out = client.post(url)
+    success(f"rotated webhook {args.webhook_id}")
+    print()
+    label("New secret",      out["secret"])
+    label("Previous secret", out["secret_prev"] or "(none)")
+    label("Previous expires", time.strftime(
+        "%Y-%m-%d %H:%M:%S UTC",
+        time.gmtime(float(out["secret_prev_expires_at"])),
+    ))
+    print()
+    warn("Configure both secrets at your receiver before the grace window expires.")
+
+
 def cmd_webhooks_deliveries(args: argparse.Namespace) -> None:
     """List recent webhook delivery attempts."""
     client = APIClient()
@@ -1187,6 +1263,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_keys = sub.add_parser("keys", help="Manage API keys")
     keys_sub = p_keys.add_subparsers(dest="keys_command")
 
+    p_keys_list = keys_sub.add_parser("list", help="List API keys registered for this tenant")
+    p_keys_list.add_argument("--json", action="store_true")
+    p_keys_list.set_defaults(func=cmd_keys_list)
+
+    p_keys_revoke = keys_sub.add_parser("revoke", help="Revoke an API key by prefix")
+    p_keys_revoke.add_argument("prefix", help="12-char key prefix (e.g. hld_AbCdEf...)")
+    p_keys_revoke.add_argument("--yes", action="store_true",
+                                 help="Skip the confirmation prompt")
+    p_keys_revoke.set_defaults(func=cmd_keys_revoke)
+
     p_keys_create = keys_sub.add_parser("create", help="Create a new API key")
     p_keys_create.add_argument("--name", required=True, help="Name for the key")
     p_keys_create.add_argument("--tier", help="Key tier (free, pro, enterprise)")
@@ -1348,6 +1434,13 @@ def build_parser() -> argparse.ArgumentParser:
     # ── webhooks deliveries ──
     p_wh = sub.add_parser("webhooks", help="Webhook delivery inspection")
     wh_sub = p_wh.add_subparsers(dest="webhooks_command")
+    p_wh_rot = wh_sub.add_parser("rotate", help="Rotate the HMAC secret for a webhook")
+    p_wh_rot.add_argument("webhook_id", type=int, help="Webhook id (integer)")
+    p_wh_rot.add_argument("--grace-seconds", type=int, dest="grace_seconds",
+                            help="Overlap window before the previous secret expires "
+                                 "(default 86400 = 24 h, max 7 days)")
+    p_wh_rot.set_defaults(func=cmd_webhooks_rotate)
+
     p_wh_dlv = wh_sub.add_parser("deliveries", help="Recent webhook delivery attempts")
     p_wh_dlv.add_argument("--event-id", dest="event_id", help="Narrow to one event UUID")
     p_wh_dlv.add_argument("--limit", type=int, default=20, help="Max rows (default: 20)")

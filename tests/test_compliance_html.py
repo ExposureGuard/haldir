@@ -94,6 +94,36 @@ def test_demo_flow_mints_and_redirects(haldir_client) -> None:
 
 # ── OpenAPI exclusion ────────────────────────────────────────────────
 
+def test_period_picker_renders_with_inputs(haldir_client, bootstrap_key) -> None:
+    """The page ships a date-range picker so a CISO can re-render
+    against any window without typing query params by hand."""
+    r = haldir_client.get(f"/compliance?key={bootstrap_key}")
+    body = r.data.decode()
+    # Form action targets /compliance with both since + until inputs.
+    assert 'action="/compliance"' in body
+    assert 'name="since"' in body
+    assert 'name="until"' in body
+    # Hidden key field preserves auth across the form submit.
+    assert f'value="{bootstrap_key}"' in body
+    # Quick-pick chips for common audit windows.
+    for chip in ("7d", "30d", "90d", "YTD", "365d"):
+        assert f'>{chip}<' in body
+
+
+def test_explicit_period_passes_through_to_renderer(haldir_client, bootstrap_key) -> None:
+    """Visiting with explicit since/until renders that exact window
+    in the picker — proves the URL is the source of truth, not a
+    server-side default."""
+    r = haldir_client.get(
+        f"/compliance?key={bootstrap_key}"
+        "&since=2026-01-01T00:00:00Z&until=2026-04-01T00:00:00Z"
+    )
+    body = r.data.decode()
+    # Pre-filled date-only values in the form (yyyy-mm-dd).
+    assert 'value="2026-01-01"' in body
+    assert 'value="2026-04-01"' in body
+
+
 def test_compliance_html_excluded_from_openapi() -> None:
     import api
     from haldir_openapi import generate_openapi
