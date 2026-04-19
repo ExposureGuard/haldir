@@ -62,10 +62,11 @@ COPY --chown=haldir:haldir . .
 # the SBOM is a procurement-friendly extra, not a blocking dependency.
 RUN python scripts/gen_sbom.py --out /app/sbom.json || true
 
-# A writable data dir for SQLite when not using Postgres. Declared as
-# a VOLUME so bind-mounts from the host are the supported path.
+# A writable data dir for SQLite when not using Postgres. We don't
+# declare a VOLUME here because Railway bans it (their volume system
+# is configured per-service in their UI, not in Dockerfiles). Plain
+# Docker users can still bind-mount /data via `-v` at run time.
 RUN mkdir -p /data && chown haldir:haldir /data
-VOLUME ["/data"]
 ENV HALDIR_DB_PATH=/data/haldir.db
 
 USER haldir:haldir
