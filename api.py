@@ -1142,6 +1142,31 @@ def list_webhooks():
     return jsonify({"webhooks": webhook_mgr.list_webhooks()})
 
 
+# ── Tenant admin overview (one-call dashboard) ──────────────────────────
+
+@app.route("/v1/admin/overview", methods=["GET"])
+@require_api_key
+def admin_overview():
+    """Single-call dashboard: tier + usage + sessions + vault + audit
+    + webhooks + approvals + health for the authed tenant. Drives any
+    operator UI without N HTTP fan-outs.
+
+    Pure aggregate queries — bounded cost regardless of how many audit
+    rows or sessions a tenant has accumulated."""
+    import haldir_admin
+    from haldir_status import build_status
+
+    tenant = getattr(request, "tenant_id", "")
+    overview = haldir_admin.build_overview(
+        DB_PATH,
+        tenant,
+        watch=watch,
+        tier_limits=TIER_LIMITS,
+        health_snapshot=build_status(DB_PATH, prom_metrics),
+    )
+    return jsonify(overview)
+
+
 @app.route("/v1/webhooks/deliveries", methods=["GET"])
 @require_api_key
 def list_webhook_deliveries():
