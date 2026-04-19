@@ -32,7 +32,7 @@ import secrets
 import hashlib
 from functools import wraps
 
-from flask import Flask, request, jsonify, abort, redirect, g
+from flask import Flask, request, jsonify, abort, redirect, g, send_from_directory
 from flask_cors import CORS
 
 from haldir_db import init_db, get_db
@@ -2127,6 +2127,28 @@ def quickstart_page():
         with open(qs_path) as f:
             return f.read(), 200, {"Content-Type": "text/html"}
     return redirect("/docs")
+
+
+@app.route("/demo")
+def demo_page():
+    """Public, in-browser playground. Walks a visitor through the four
+    primitives (mint key, create session, check permission, log audit)
+    against the live API — same routes the SDKs hit. Real API calls,
+    sandbox tenant per visitor."""
+    demo_path = os.path.join(os.path.dirname(__file__), "landing", "demo.html")
+    if os.path.exists(demo_path):
+        with open(demo_path) as f:
+            return f.read(), 200, {"Content-Type": "text/html"}
+    return redirect("/docs")
+
+
+@app.route("/demo/<path:filename>")
+def demo_assets(filename):
+    """Serve the animated SVG (and any future demo-page assets) from
+    the `demo/` directory. Locked to one directory and the path is
+    sanitized by Flask's send_from_directory."""
+    demo_dir = os.path.join(os.path.dirname(__file__), "demo")
+    return send_from_directory(demo_dir, filename, max_age=3600)
 
 
 # ── Billing (Stripe) ──

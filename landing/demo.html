@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Haldir Demo — Try the Guardian Layer in your browser</title>
+<meta name="description" content="Live, in-browser playground for Haldir. Mint a sandbox key, create a scoped session, check a permission, and log to the hash-chained audit trail — no signup, real API calls.">
+<meta property="og:title" content="Haldir Demo — try the Guardian Layer in your browser">
+<meta property="og:description" content="Mint a sandbox API key, create a scoped session, log to the audit trail. Real API, no signup.">
+<meta property="og:image" content="https://haldir.xyz/icon.svg">
+<link rel="canonical" href="https://haldir.xyz/demo">
+<link rel="alternate" type="application/json" title="OpenAPI 3.1 spec" href="/openapi.json">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box }
+
+  :root {
+    --gold: #b8973a;
+    --gold-soft: rgba(184,151,58,0.5);
+    --gold-glow: rgba(184,151,58,0.08);
+    --w: #e0ddd5;
+    --w80: rgba(224,221,213,0.8);
+    --w50: rgba(224,221,213,0.5);
+    --w20: rgba(224,221,213,0.2);
+    --w08: rgba(224,221,213,0.08);
+    --w04: rgba(224,221,213,0.04);
+    --bg: #050505;
+    --green: #6bbd6b;
+    --red: #d05a5a;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Inter', -apple-system, sans-serif;
+  }
+
+  html { scroll-behavior: smooth }
+  body { background: var(--bg); color: var(--w); font-family: var(--sans); overflow-x: hidden; min-height: 100vh }
+
+  /* ── Nav ── */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 1.5rem 3rem;
+    mix-blend-mode: difference;
+  }
+  .logo {
+    font-family: var(--mono); font-size: 0.8rem; font-weight: 400;
+    letter-spacing: 4px; text-transform: uppercase;
+    color: var(--w); text-decoration: none;
+  }
+  .nav-r { display: flex; gap: 2.5rem; align-items: center }
+  .nav-r a {
+    font-family: var(--mono); font-size: 0.65rem; font-weight: 300;
+    letter-spacing: 2px; text-transform: uppercase;
+    color: var(--w50); text-decoration: none; transition: color 0.3s;
+  }
+  .nav-r a:hover { color: var(--w) }
+
+  /* ── Hero ── */
+  .wrap { max-width: 920px; margin: 0 auto; padding: 7rem 2rem 5rem }
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.6rem; font-weight: 300;
+    letter-spacing: 4px; text-transform: uppercase;
+    color: var(--gold); margin-bottom: 1.5rem;
+  }
+  h1 {
+    font-weight: 200; font-size: clamp(2rem, 4.5vw, 3.4rem);
+    letter-spacing: -1px; line-height: 1.15; margin-bottom: 1rem;
+    max-width: 720px;
+  }
+  h1 em { font-style: normal; color: var(--gold) }
+  .lede {
+    font-size: 1rem; font-weight: 300; color: var(--w50);
+    line-height: 1.8; max-width: 640px; margin-bottom: 3rem;
+  }
+
+  .demo-svg {
+    display: block; margin: 0 auto 4rem;
+    max-width: 780px; width: 100%;
+    border: 1px solid var(--w08); border-radius: 8px;
+  }
+
+  /* ── Section heads ── */
+  h2 {
+    font-family: var(--mono); font-size: 0.7rem; font-weight: 400;
+    letter-spacing: 3px; text-transform: uppercase; color: var(--gold);
+    margin: 5rem 0 1.5rem;
+  }
+  .section-lede {
+    font-size: 0.92rem; font-weight: 300; color: var(--w50);
+    line-height: 1.8; margin-bottom: 2.5rem; max-width: 620px;
+  }
+
+  /* ── Playground ── */
+  .pg {
+    border: 1px solid var(--w08); border-radius: 6px;
+    background: rgba(255,255,255,0.015);
+  }
+  .pg-step {
+    display: grid; grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--w08);
+  }
+  .pg-step:last-child { border-bottom: none }
+  .pg-left { padding: 1.75rem 2rem; border-right: 1px solid var(--w08) }
+  .pg-right { padding: 1rem 0 0 0; min-height: 0 }
+
+  .pg-num {
+    font-family: var(--mono); font-size: 0.55rem; font-weight: 400;
+    letter-spacing: 3px; color: var(--w20); margin-bottom: 0.75rem;
+  }
+  .pg-title {
+    font-size: 1.05rem; font-weight: 400; color: var(--w);
+    margin-bottom: 0.5rem;
+  }
+  .pg-desc {
+    font-size: 0.82rem; font-weight: 300; color: var(--w50);
+    line-height: 1.7; margin-bottom: 1.25rem;
+  }
+
+  .pg-btn {
+    font-family: var(--mono); font-size: 0.62rem; font-weight: 400;
+    letter-spacing: 2px; text-transform: uppercase;
+    background: var(--w); color: var(--bg);
+    padding: 0.7rem 1.6rem; border: none; cursor: pointer;
+    transition: all 0.2s;
+  }
+  .pg-btn:hover:not(:disabled) { background: var(--w80) }
+  .pg-btn:disabled { opacity: 0.3; cursor: not-allowed }
+  .pg-btn.ok { background: var(--green); color: var(--bg) }
+
+  .pg-snippet {
+    margin-top: 1.25rem;
+    font-family: var(--mono); font-size: 0.7rem; line-height: 1.7;
+    color: var(--w50); background: rgba(0,0,0,0.4);
+    padding: 0.85rem 1rem; border-radius: 4px;
+    border: 1px solid var(--w04);
+    overflow-x: auto;
+  }
+  .pg-snippet .k { color: var(--gold) }
+
+  /* Right-pane response viewer */
+  .resp-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--w08);
+    font-family: var(--mono); font-size: 0.6rem;
+    color: var(--w20); letter-spacing: 1.5px;
+  }
+  .resp-status { font-weight: 500 }
+  .resp-status.ok { color: var(--green) }
+  .resp-status.err { color: var(--red) }
+  .resp-body {
+    padding: 1.25rem 1.5rem; min-height: 130px;
+    font-family: var(--mono); font-size: 0.72rem; line-height: 1.7;
+    color: var(--w80); white-space: pre-wrap; word-break: break-all;
+    overflow-x: auto;
+  }
+  .resp-empty { color: var(--w20); font-style: italic }
+  .resp-body .key { color: var(--gold) }
+  .resp-body .str { color: #a5c977 }
+  .resp-body .num { color: #d4b86a }
+  .resp-body .bool { color: #4ea3e0 }
+
+  /* ── What just happened ── */
+  .takeaways {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 1px; background: var(--w08); border: 1px solid var(--w08);
+    margin-top: 4rem;
+  }
+  .takeaway {
+    background: var(--bg); padding: 2.25rem 2rem;
+  }
+  .takeaway-num {
+    font-family: var(--mono); font-size: 0.55rem;
+    color: var(--gold); letter-spacing: 2px; margin-bottom: 1rem;
+  }
+  .takeaway-h {
+    font-size: 0.95rem; font-weight: 500; color: var(--w);
+    margin-bottom: 0.5rem;
+  }
+  .takeaway-d {
+    font-size: 0.8rem; font-weight: 300; color: var(--w50);
+    line-height: 1.7;
+  }
+
+  /* ── CTA strip ── */
+  .cta {
+    margin-top: 5rem; padding: 3rem 2.5rem;
+    border: 1px solid var(--w08); border-radius: 6px;
+    text-align: center;
+    background: radial-gradient(ellipse at center, var(--gold-glow) 0%, transparent 70%);
+  }
+  .cta h3 {
+    font-weight: 200; font-size: 1.6rem; letter-spacing: -0.5px;
+    margin-bottom: 0.5rem;
+  }
+  .cta p {
+    font-size: 0.85rem; font-weight: 300; color: var(--w50);
+    margin-bottom: 1.75rem;
+  }
+  .cta-row { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap }
+  .btn {
+    font-family: var(--mono); font-size: 0.65rem; font-weight: 400;
+    letter-spacing: 2px; text-transform: uppercase;
+    padding: 0.85rem 2rem; text-decoration: none;
+    transition: all 0.3s; cursor: pointer; border: none;
+  }
+  .btn-w { background: var(--w); color: var(--bg) }
+  .btn-w:hover { background: var(--w80) }
+  .btn-g { background: transparent; color: var(--w50); border: 1px solid var(--w20) }
+  .btn-g:hover { color: var(--w); border-color: var(--w50) }
+
+  /* ── Footer ── */
+  footer {
+    border-top: 1px solid var(--w08); padding: 2rem;
+    text-align: center; color: var(--w20);
+    font-family: var(--mono); font-size: 0.65rem; letter-spacing: 1px;
+  }
+  footer a { color: var(--w50); text-decoration: none; margin: 0 0.75rem }
+  footer a:hover { color: var(--w) }
+
+  /* ── Mobile ── */
+  @media (max-width: 780px) {
+    nav { padding: 1rem 1.5rem }
+    .nav-r { gap: 1rem }
+    .nav-r a:nth-child(2) { display: none }
+    .pg-step { grid-template-columns: 1fr }
+    .pg-left { border-right: none; border-bottom: 1px solid var(--w08) }
+    .takeaways { grid-template-columns: 1fr }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo">Haldir</a>
+  <div class="nav-r">
+    <a href="/docs">Docs</a>
+    <a href="/pricing">Pricing</a>
+    <a href="https://github.com/ExposureGuard/haldir" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</nav>
+
+<div class="wrap">
+  <div class="eyebrow">Live demo · No signup</div>
+  <h1>See Haldir <em>govern an agent</em><br>in your browser.</h1>
+  <p class="lede">
+    Watch a 30-second walk-through, then run the same flow yourself
+    against the live API. Every button below mints real Haldir state
+    in a sandbox tenant — your own scoped session, your own audit
+    chain, isolated from every other visitor.
+  </p>
+
+  <img class="demo-svg" src="/demo/quickstart.svg"
+       alt="Animated terminal showing the Haldir SDK flow: install, create a scoped session with a spend cap, check permission, log to the hash-chained audit trail.">
+
+  <h2>Try it live</h2>
+  <p class="section-lede">
+    Four buttons. Four real API calls. By the end you'll have minted a
+    sandbox API key, opened a governed session, checked one permission,
+    and written one tamper-evident audit entry — every one verifiable
+    against the live <a href="/openapi.json" style="color:var(--gold)">OpenAPI spec</a>.
+  </p>
+
+  <div class="pg">
+    <!-- Step 1 -->
+    <div class="pg-step">
+      <div class="pg-left">
+        <div class="pg-num">STEP 01</div>
+        <div class="pg-title">Mint a sandbox API key</div>
+        <div class="pg-desc">
+          Each visitor gets their own throwaway tenant. No email, no
+          billing, no rate-limit hostility. The key works for the rest
+          of this page.
+        </div>
+        <button type="button" class="pg-btn" id="btn-key">Mint key</button>
+        <div class="pg-snippet">
+<span class="k">POST</span> /v1/demo/key</div>
+      </div>
+      <div class="pg-right">
+        <div class="resp-bar">
+          <span>Response</span>
+          <span class="resp-status" id="status-key">—</span>
+        </div>
+        <div class="resp-body resp-empty" id="out-key">Click "Mint key" to see the JSON response.</div>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div class="pg-step">
+      <div class="pg-left">
+        <div class="pg-num">STEP 02</div>
+        <div class="pg-title">Open a governed session</div>
+        <div class="pg-desc">
+          Create a session for the agent <code style="color:var(--w);font-family:var(--mono);font-size:0.78rem">"my-agent"</code>
+          with a $5 spend cap and read+execute scopes. The session is
+          the unit of governance — every later call references it.
+        </div>
+        <button type="button" class="pg-btn" id="btn-sess" disabled>Create session</button>
+        <div class="pg-snippet">
+<span class="k">POST</span> /v1/sessions
+{"agent_id": "my-agent",
+ "scopes":   ["read", "execute"],
+ "spend_limit": 5.00}</div>
+      </div>
+      <div class="pg-right">
+        <div class="resp-bar">
+          <span>Response</span>
+          <span class="resp-status" id="status-sess">—</span>
+        </div>
+        <div class="resp-body resp-empty" id="out-sess">Mint a key first.</div>
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div class="pg-step">
+      <div class="pg-left">
+        <div class="pg-num">STEP 03</div>
+        <div class="pg-title">Check a permission</div>
+        <div class="pg-desc">
+          Ask Haldir whether the agent is allowed to <code style="color:var(--w);font-family:var(--mono);font-size:0.78rem">execute</code>
+          a tool right now. Returns <code style="color:var(--w);font-family:var(--mono);font-size:0.78rem">allowed: true</code>
+          plus the remaining budget — your wrapper code can early-exit
+          on a denial.
+        </div>
+        <button type="button" class="pg-btn" id="btn-check" disabled>Check permission</button>
+        <div class="pg-snippet">
+<span class="k">POST</span> /v1/sessions/:id/check
+{"scope": "execute"}</div>
+      </div>
+      <div class="pg-right">
+        <div class="resp-bar">
+          <span>Response</span>
+          <span class="resp-status" id="status-check">—</span>
+        </div>
+        <div class="resp-body resp-empty" id="out-check">Open a session first.</div>
+      </div>
+    </div>
+
+    <!-- Step 4 -->
+    <div class="pg-step">
+      <div class="pg-left">
+        <div class="pg-num">STEP 04</div>
+        <div class="pg-title">Log to the audit chain</div>
+        <div class="pg-desc">
+          Write an audit entry for a hypothetical $0.50 Stripe charge.
+          Haldir computes a SHA-256 hash binding this entry to the one
+          before it — once chained, no one can rewrite history without
+          breaking the verifier.
+        </div>
+        <button type="button" class="pg-btn" id="btn-log" disabled>Log audit entry</button>
+        <div class="pg-snippet">
+<span class="k">POST</span> /v1/audit
+{"session_id": "ses_...",
+ "tool":   "stripe",
+ "action": "charge",
+ "cost_usd": 0.50}</div>
+      </div>
+      <div class="pg-right">
+        <div class="resp-bar">
+          <span>Response</span>
+          <span class="resp-status" id="status-log">—</span>
+        </div>
+        <div class="resp-body resp-empty" id="out-log">Check a permission first.</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>What just happened</h2>
+  <div class="takeaways">
+    <div class="takeaway">
+      <div class="takeaway-num">01 · GATE</div>
+      <div class="takeaway-h">The agent has an identity now.</div>
+      <div class="takeaway-d">
+        Without Haldir, "my-agent" is whatever string the LLM hallucinated
+        last. With Haldir, it's a session ID with declared scopes, a spend
+        ceiling, and a TTL. Every later call has to point back at it.
+      </div>
+    </div>
+    <div class="takeaway">
+      <div class="takeaway-num">02 · POLICY</div>
+      <div class="takeaway-h">Permission checks happen pre-call.</div>
+      <div class="takeaway-d">
+        The wrapper asks before the agent fires. A denial returns
+        instantly — no upstream API consumed, no money moved, no
+        cleanup later. The model never has to reason about whether
+        it should have done something.
+      </div>
+    </div>
+    <div class="takeaway">
+      <div class="takeaway-num">03 · WATCH</div>
+      <div class="takeaway-h">The audit trail is tamper-evident.</div>
+      <div class="takeaway-d">
+        Each entry's hash is computed over the entry's contents
+        <em>plus the previous entry's hash</em>. Edit any historical
+        entry and every later hash stops verifying. This is what
+        compliance auditors want to see.
+      </div>
+    </div>
+  </div>
+
+  <div class="cta">
+    <h3>Ship it for real?</h3>
+    <p>
+      Same API, your own key, your own data. SDKs for LangChain, CrewAI,
+      AutoGen, and Vercel AI SDK. MIT-licensed and self-hostable.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-w" href="/quickstart">Get an API key</a>
+      <a class="btn btn-g" href="https://github.com/ExposureGuard/haldir" target="_blank" rel="noopener">Star on GitHub</a>
+      <a class="btn btn-g" href="mailto:sterling@haldir.xyz?subject=Haldir%20Design%20Partner">Become a design partner</a>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <a href="/">Home</a> ·
+  <a href="/docs">Docs</a> ·
+  <a href="/pricing">Pricing</a> ·
+  <a href="/swagger">API explorer</a> ·
+  <a href="/status">Status</a> ·
+  <a href="https://github.com/ExposureGuard/haldir" target="_blank" rel="noopener">GitHub</a>
+</footer>
+
+<script>
+  // ── State threaded through the four steps ──────────────────────────
+  const state = { apiKey: null, sessionId: null };
+
+  // Same-origin in production; supports running locally without changes.
+  const API_BASE = "";
+
+  // ── Tiny JSON pretty-printer with token coloring ───────────────────
+  function colorJSON(obj) {
+    const json = JSON.stringify(obj, null, 2);
+    return json
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"([^"\\]+)":/g, '<span class="key">"$1"</span>:')
+      .replace(/: "([^"\\]*)"/g, ': <span class="str">"$1"</span>')
+      .replace(/: (-?\d+\.?\d*)/g, ': <span class="num">$1</span>')
+      .replace(/: (true|false|null)/g, ': <span class="bool">$1</span>');
+  }
+
+  function paint(targetId, statusId, ok, payload) {
+    const out = document.getElementById(targetId);
+    const stat = document.getElementById(statusId);
+    out.classList.remove("resp-empty");
+    out.innerHTML = colorJSON(payload);
+    stat.textContent = ok ? "200 OK" : "ERROR";
+    stat.className = "resp-status " + (ok ? "ok" : "err");
+  }
+
+  function setOk(btnId) {
+    const b = document.getElementById(btnId);
+    b.classList.add("ok");
+    b.textContent = b.textContent.replace(/^Mint|^Create|^Check|^Log/, m => "✓ " + m);
+  }
+
+  async function call(method, path, body) {
+    const headers = { "Content-Type": "application/json" };
+    if (state.apiKey) headers["Authorization"] = "Bearer " + state.apiKey;
+    const r = await fetch(API_BASE + path, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    let data;
+    try { data = await r.json(); }
+    catch (_) { data = { error: "Non-JSON response", status: r.status }; }
+    return { ok: r.ok, status: r.status, data };
+  }
+
+  // ── Step 1 ─ Mint key ─────────────────────────────────────────────
+  document.getElementById("btn-key").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-key");
+    btn.disabled = true; btn.textContent = "Minting...";
+    const { ok, data } = await call("POST", "/v1/demo/key", {});
+    paint("out-key", "status-key", ok, data);
+    if (ok && data.key) {
+      state.apiKey = data.key;
+      setOk("btn-key");
+      btn.textContent = "✓ Key minted";
+      const next = document.getElementById("btn-sess");
+      next.disabled = false;
+      document.getElementById("out-sess").textContent = "Click \"Create session\".";
+    } else {
+      btn.disabled = false;
+      btn.textContent = "Retry";
+    }
+  });
+
+  // ── Step 2 ─ Create session ───────────────────────────────────────
+  document.getElementById("btn-sess").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-sess");
+    btn.disabled = true; btn.textContent = "Creating...";
+    const { ok, data } = await call("POST", "/v1/sessions", {
+      agent_id: "my-agent",
+      scopes: ["read", "execute"],
+      spend_limit: 5.00,
+    });
+    paint("out-sess", "status-sess", ok, data);
+    if (ok && data.session_id) {
+      state.sessionId = data.session_id;
+      setOk("btn-sess");
+      btn.textContent = "✓ Session opened";
+      const next = document.getElementById("btn-check");
+      next.disabled = false;
+      document.getElementById("out-check").textContent = "Click \"Check permission\".";
+    } else {
+      btn.disabled = false;
+      btn.textContent = "Retry";
+    }
+  });
+
+  // ── Step 3 ─ Check permission ─────────────────────────────────────
+  document.getElementById("btn-check").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-check");
+    btn.disabled = true; btn.textContent = "Checking...";
+    const { ok, data } = await call(
+      "POST",
+      "/v1/sessions/" + state.sessionId + "/check",
+      { scope: "execute" },
+    );
+    paint("out-check", "status-check", ok, data);
+    if (ok) {
+      setOk("btn-check");
+      btn.textContent = "✓ Checked";
+      const next = document.getElementById("btn-log");
+      next.disabled = false;
+      document.getElementById("out-log").textContent = "Click \"Log audit entry\".";
+    } else {
+      btn.disabled = false;
+      btn.textContent = "Retry";
+    }
+  });
+
+  // ── Step 4 ─ Log audit entry ──────────────────────────────────────
+  document.getElementById("btn-log").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-log");
+    btn.disabled = true; btn.textContent = "Logging...";
+    const { ok, data } = await call("POST", "/v1/audit", {
+      session_id: state.sessionId,
+      tool: "stripe",
+      action: "charge",
+      cost_usd: 0.50,
+    });
+    paint("out-log", "status-log", ok, data);
+    if (ok) {
+      setOk("btn-log");
+      btn.textContent = "✓ Logged · run again";
+      // Second click re-enables — let people see the hash chain grow.
+      setTimeout(() => { btn.disabled = false }, 600);
+    } else {
+      btn.disabled = false;
+      btn.textContent = "Retry";
+    }
+  });
+</script>
+</body>
+</html>

@@ -229,7 +229,7 @@ def generate_openapi(app: Any, version: str = "0.2.3") -> dict[str, Any]:
     _SKIP_PREFIXES = ("/static", "/_debug")
     _SKIP_EXACT = {"/", "/docs", "/pricing", "/quickstart", "/sitemap.xml",
                    "/robots.txt", "/ai.txt", "/llms.txt", "/llms-full.txt",
-                   "/status"}
+                   "/status", "/demo"}
 
     paths: dict[str, dict[str, Any]] = spec["paths"]
 
@@ -238,6 +238,10 @@ def generate_openapi(app: Any, version: str = "0.2.3") -> dict[str, Any]:
         if raw_path in _SKIP_EXACT:
             continue
         if any(raw_path.startswith(p) for p in _SKIP_PREFIXES):
+            continue
+        # Skip the static demo-asset route (the SVG, etc.) — not part
+        # of the JSON API surface.
+        if raw_path.startswith("/demo/"):
             continue
         # Skip anything that renders HTML (heuristic: no JSON under /).
         if rule.endpoint == "static":
