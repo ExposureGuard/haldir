@@ -899,6 +899,59 @@ def cmd_webhooks_deliveries(args: argparse.Namespace) -> None:
 
 # ── Compliance evidence pack ────────────────────────────────────────
 
+def cmd_compliance_schedules_list(args: argparse.Namespace) -> None:
+    """List recurring evidence-pack schedules for the authed tenant."""
+    client = APIClient()
+    r = client.get("/v1/compliance/schedules")
+    rows = r.get("schedules", [])
+    if getattr(args, "json", False):
+        print(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        info("no schedules registered")
+        return
+    print()
+    print(f"  {Color.DIM}{'id':>26}  {'name':<24}  cadence    next due  delivery{Color.RESET}")
+    for s in rows:
+        next_due = time.strftime(
+            "%Y-%m-%d %H:%M",
+            time.gmtime(float(s.get("next_due", 0))),
+        )
+        print(f"  {Color.WHITE}{s['schedule_id']:>26}{Color.RESET}  "
+              f"{s['name']:<24}  {s['cadence']:<9}  {next_due}  "
+              f"{Color.DIM}{s['delivery']}{Color.RESET}")
+    print()
+
+
+def cmd_compliance_schedules_create(args: argparse.Namespace) -> None:
+    """Register a new schedule."""
+    client = APIClient()
+    r = client.post("/v1/compliance/schedules", json={
+        "name":     args.name,
+        "cadence":  args.cadence,
+        "delivery": args.delivery,
+    })
+    success(f"schedule created: {r['schedule_id']}")
+    label("Cadence",  r["cadence"])
+    label("Delivery", r["delivery"])
+    label("Next due", "immediately on first scheduler tick (last_run_at=0)")
+
+
+def cmd_compliance_schedules_delete(args: argparse.Namespace) -> None:
+    """Remove a schedule by id."""
+    client = APIClient()
+    url = f"{client.base_url}/v1/compliance/schedules/{args.schedule_id}"
+    r = httpx.delete(url, headers=client._headers(), timeout=10.0)
+    if r.status_code == 204:
+        success(f"deleted {args.schedule_id}")
+    elif r.status_code == 404:
+        error("schedule not found")
+        sys.exit(1)
+    else:
+        error(f"delete failed: HTTP {r.status_code} — {r.text}")
+        sys.exit(1)
+
+
 def cmd_compliance_evidence(args: argparse.Namespace) -> None:
     """Pull an auditor-ready proof-of-control pack."""
     client = APIClient()
@@ -1307,6 +1360,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_comp_evi.add_argument("--since", help="Period start (ISO 8601 or unix seconds)")
     p_comp_evi.add_argument("--until", help="Period end (ISO 8601 or unix seconds)")
     p_comp_evi.set_defaults(func=cmd_compliance_evidence)
+
+    # Schedules — recurring auto-delivery of evidence packs.
+    p_comp_sch = comp_sub.add_parser("schedules",
+                                       help="Manage recurring evidence-pack schedules")
+    sch_sub = p_comp_sch.add_subparsers(dest="schedules_command")
+
+    p_sch_ls = sch_sub.add_parser("list", help="List schedules for the authed tenant")
+    p_sch_ls.add_argument("--json", action="store_true")
+    p_sch_ls.set_defaults(func=cmd_compliance_schedules_list)
+
+    p_sch_new = sch_sub.add_parser("create", help="Register a recurring schedule")
+    p_sch_new.add_argument("--name", required=True, help="Friendly id (e.g. monthly-board-prep)")
+    p_sch_new.add_argument("--cadence", required=True,
+                             choices=("daily", "weekly", "monthly", "quarterly"))
+    p_sch_new.add_argument("--delivery", required=True,
+                             help="Target (e.g. webhook:wh_abc123)")
+    p_sch_new.set_defaults(func=cmd_compliance_schedules_create)
+
+    p_sch_del = sch_sub.add_parser("delete", help="Remove a schedule by id")
+    p_sch_del.add_argument("schedule_id", help="Schedule id (e.g. sched_xxx)")
+    p_sch_del.set_defaults(func=cmd_compliance_schedules_delete)
 
     # ── migrate (local; wraps haldir_migrate) ──
     p_mig = sub.add_parser("migrate", help="Apply / inspect schema migrations on the local DB")

@@ -153,20 +153,30 @@ class PgConnectionWrapper:
     def executescript(self, sql):
         """Execute multiple SQL statements (for schema creation)."""
         sql = _sqlite_to_pg(sql)
-        # Split on semicolons but skip empty statements
         statements = [s.strip() for s in sql.split(";") if s.strip()]
         cursor = self._conn.cursor()
         for stmt in statements:
-            if stmt:
-                try:
-                    cursor.execute(stmt)
-                except Exception as e:
-                    # Skip errors for IF NOT EXISTS statements
-                    if "already exists" in str(e):
-                        self._conn.rollback()
-                        continue
+            # Strip out SQL line comments + whitespace BEFORE deciding
+            # whether the statement is a no-op. Without this, a chunk
+            # that survives s.strip() but is comments-only (a fragment
+            # split off the end of a migration file with a trailing
+            # comment block) gets sent to psycopg2, which rightfully
+            # rejects it with "can't execute an empty query".
+            non_comment = "\n".join(
+                line for line in stmt.split("\n")
+                if line.strip() and not line.strip().startswith("--")
+            ).strip()
+            if not non_comment:
+                continue
+            try:
+                cursor.execute(stmt)
+            except Exception as e:
+                # Skip errors for IF NOT EXISTS statements
+                if "already exists" in str(e):
                     self._conn.rollback()
-                    raise
+                    continue
+                self._conn.rollback()
+                raise
         self._conn.commit()
 
     def commit(self):
