@@ -1289,6 +1289,72 @@ def compliance_evidence_manifest():
     })
 
 
+# ── Compliance dashboard (HTML — the URL CISOs bookmark) ─────────────
+
+@app.route("/compliance", methods=["GET"])
+def compliance_html():
+    """Live, browser-rendered evidence pack — the URL a CISO would
+    bookmark and check before every audit cycle. Same data path as
+    /v1/compliance/evidence; HTML is just the presentation layer.
+
+    Auth precedence + sandbox flow mirrors /admin/overview so the two
+    surfaces feel like one product:
+
+      ?key=<hld_...>            sign in via querystring
+      Authorization: Bearer ... sign in via header
+      ?demo=1                   mint a sandbox key + redirect
+      (no key)                  render a sign-in form, status 200
+    """
+    import haldir_compliance
+
+    if request.args.get("demo") == "1":
+        full_key = f"hld_{secrets.token_urlsafe(32)}"
+        key_hash = _hash_key(full_key)
+        tenant_id = f"demo_{key_hash[:12]}"
+        conn = get_db(DB_PATH)
+        conn.execute(
+            "INSERT INTO api_keys (key_hash, key_prefix, tenant_id, name, "
+            "tier, scopes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (key_hash, full_key[:12], tenant_id, "compliance-demo",
+             "free", '["*"]', time.time()),
+        )
+        conn.commit()
+        conn.close()
+        return redirect(f"/compliance?key={full_key}")
+
+    key = request.args.get("key", "")
+    if not key:
+        key = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not key:
+        # Reuse the admin login form — same look, same demo button,
+        # same UX so visitors don't get a different sign-in surface.
+        return _render_admin_login(), 200, {
+            "Content-Type": "text/html; charset=utf-8",
+        }
+
+    key_hash = _hash_key(key)
+    conn = get_db(DB_PATH)
+    row = conn.execute(
+        "SELECT tenant_id FROM api_keys WHERE key_hash = ? AND revoked = 0",
+        (key_hash,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return _render_admin_login(error="Invalid or revoked key."), 401, {
+            "Content-Type": "text/html; charset=utf-8",
+        }
+
+    tenant_id = row["tenant_id"]
+    since = _parse_iso_or_unix(request.args.get("since"))
+    until = _parse_iso_or_unix(request.args.get("until"))
+    pack = haldir_compliance.build_evidence_pack(
+        DB_PATH, tenant_id, since=since, until=until,
+    )
+    return haldir_compliance.render_html(pack, key=key), 200, {
+        "Content-Type": "text/html; charset=utf-8",
+    }
+
+
 # ── Web admin dashboard (HTML mirror of the CLI's `haldir overview`) ──
 
 @app.route("/admin", methods=["GET"])

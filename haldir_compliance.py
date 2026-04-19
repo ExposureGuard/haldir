@@ -541,3 +541,260 @@ def render_markdown(pack: dict[str, Any]) -> str:
     lines.append("")
 
     return "\n".join(lines)
+
+
+# ── HTML rendering (the "CISO bookmarks this URL" view) ─────────────
+
+def render_html(pack: dict[str, Any], key: str = "") -> str:
+    """Browser-rendered evidence pack for the URL a CISO would
+    bookmark. Same eight sections as the Markdown form, dressed in the
+    same dark + gold IBM Plex Mono / Inter look as /status, /demo,
+    /admin. Marked noindex — we don't want signed compliance documents
+    in Google's index."""
+    import html as _h
+
+    p = pack
+    sub = p["identity"]["subscription"]
+    ac = p["access_control"]
+    enc = p["encryption"]
+    a = p["audit_trail"]
+    s = p["spend_governance"]
+    ap = p["approvals"]
+    w = p["webhooks"]
+    sig = p["signatures"]
+
+    chain_color = "#0b8043" if a["chain_verified"] else "#b00020"
+    chain_word = "verified" if a["chain_verified"] else "FAILED"
+    rate = float(w["delivery_success_rate"])
+    rate_color = (
+        "#0b8043" if rate >= 0.99 else
+        "#b58900" if rate >= 0.95 else
+        "#b00020"
+    )
+
+    # Build the access-control table rows.
+    ac_rows: list[str] = []
+    if ac["keys"]:
+        for k in ac["keys"]:
+            scopes_html = ", ".join(
+                f'<code>{_h.escape(s_)}</code>' for s_ in k["scopes"]
+            )
+            last = _h.escape(k["last_used"] or "never")
+            revoked = "yes" if k["revoked"] else "no"
+            ac_rows.append(
+                f"<tr><td><code>{_h.escape(k['prefix'])}</code></td>"
+                f"<td>{_h.escape(k['name'])}</td>"
+                f"<td>{_h.escape(k['tier'])}</td>"
+                f"<td>{scopes_html}</td>"
+                f"<td>{last}</td>"
+                f"<td>{revoked}</td></tr>"
+            )
+    ac_table = (
+        '<table class="kv"><thead><tr>'
+        '<th>prefix</th><th>name</th><th>tier</th>'
+        '<th>scopes</th><th>last used</th><th>revoked</th>'
+        '</tr></thead><tbody>'
+        + "".join(ac_rows)
+        + '</tbody></table>'
+    ) if ac_rows else '<p class="dim">No keys on file.</p>'
+
+    bs = ap["by_status"]
+
+    # Markdown-export download URL preserves the auth (querystring or
+    # the Bearer header — we only know about querystring at render
+    # time, so include it when present).
+    md_link = "/v1/compliance/evidence?format=markdown"
+    if key:
+        md_link += "&key=" + _h.escape(key)
+    json_link = "/v1/compliance/evidence"
+    if key:
+        json_link += "?key=" + _h.escape(key)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Haldir Compliance · {_h.escape(p['tenant_id'])}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+  *{{margin:0;padding:0;box-sizing:border-box}}
+  body{{background:#050505;color:#e0ddd5;font-family:'Inter',sans-serif;
+        line-height:1.6;padding:3rem 1.5rem}}
+  .wrap{{max-width:880px;margin:0 auto}}
+  header{{margin-bottom:2.5rem}}
+  h1{{font-weight:300;font-size:1.6rem;letter-spacing:-0.5px}}
+  .meta{{font-family:'IBM Plex Mono',monospace;font-size:0.7rem;
+         color:rgba(224,221,213,0.4);margin-top:0.4rem;letter-spacing:0.5px}}
+  .actions{{margin-top:1rem;display:flex;gap:0.75rem;flex-wrap:wrap}}
+  .actions a{{font-family:'IBM Plex Mono',monospace;font-size:0.65rem;
+              letter-spacing:2px;text-transform:uppercase;
+              padding:0.6rem 1.2rem;border-radius:4px;text-decoration:none;
+              color:rgba(224,221,213,0.8);
+              border:1px solid rgba(224,221,213,0.2)}}
+  .actions a:hover{{color:#e0ddd5;border-color:rgba(224,221,213,0.5)}}
+  .actions a.primary{{background:#e0ddd5;color:#050505;border-color:#e0ddd5}}
+  .actions a.primary:hover{{background:rgba(224,221,213,0.85)}}
+
+  section{{border:1px solid rgba(224,221,213,0.08);border-radius:6px;
+          padding:1.75rem 2rem;margin-bottom:1.25rem;
+          background:rgba(255,255,255,0.012)}}
+  h2{{font-family:'IBM Plex Mono',monospace;font-size:0.7rem;font-weight:500;
+      letter-spacing:3px;text-transform:uppercase;
+      color:rgba(224,221,213,0.5);margin-bottom:0.5rem}}
+  h2 .cc{{color:#b8973a;margin-left:0.75rem}}
+  .lede{{font-size:0.78rem;color:rgba(224,221,213,0.5);
+         margin-bottom:1.25rem;font-style:italic}}
+  ul{{list-style:none;padding:0}}
+  li{{font-size:0.92rem;padding:0.35rem 0;
+      display:flex;justify-content:space-between;align-items:baseline;
+      border-bottom:1px solid rgba(224,221,213,0.04)}}
+  li:last-child{{border-bottom:none}}
+  li .v{{color:#e0ddd5;font-weight:500;
+        font-family:'IBM Plex Mono',monospace;font-size:0.85rem}}
+  .dim{{color:rgba(224,221,213,0.5);font-size:0.85rem}}
+  code{{font-family:'IBM Plex Mono',monospace;font-size:0.75rem;
+        background:rgba(255,255,255,0.04);padding:0.1rem 0.4rem;
+        border-radius:3px;color:rgba(224,221,213,0.85)}}
+
+  table.kv{{width:100%;border-collapse:collapse;margin-top:0.75rem;
+           font-size:0.8rem}}
+  table.kv th{{text-align:left;font-family:'IBM Plex Mono',monospace;
+              font-size:0.6rem;letter-spacing:2px;text-transform:uppercase;
+              color:rgba(224,221,213,0.4);padding:0.5rem 0.6rem;
+              border-bottom:1px solid rgba(224,221,213,0.08)}}
+  table.kv td{{padding:0.55rem 0.6rem;
+              border-bottom:1px solid rgba(224,221,213,0.04)}}
+  table.kv tr:last-child td{{border-bottom:none}}
+
+  .digest{{font-family:'IBM Plex Mono',monospace;font-size:0.75rem;
+          background:#0a0a0a;padding:0.85rem 1rem;border-radius:4px;
+          word-break:break-all;color:#b8973a;
+          border:1px solid rgba(184,151,58,0.25);margin-top:0.5rem}}
+
+  footer{{font-family:'IBM Plex Mono',monospace;font-size:0.65rem;
+          color:rgba(224,221,213,0.3);text-align:center;margin-top:2rem}}
+  footer a{{color:rgba(224,221,213,0.5);text-decoration:none;margin:0 0.5rem}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Haldir compliance evidence</h1>
+    <div class="meta">
+      <code>{_h.escape(p['tenant_id'])}</code> &middot;
+      tier <span style="color:#b8973a">{_h.escape(sub['tier'])}</span> &middot;
+      period {_h.escape(p['period_start'])} → {_h.escape(p['period_end'])} &middot;
+      generated {_h.escape(p['generated_at'])}
+    </div>
+    <div class="actions">
+      <a class="primary" href="{md_link}">Download Markdown</a>
+      <a href="{json_link}">JSON</a>
+      <a href="/admin/overview?key={_h.escape(key)}">Admin overview</a>
+    </div>
+  </header>
+
+  <section>
+    <h2>1 · Identity</h2>
+    <ul>
+      <li>Subscription tier <span class="v">{_h.escape(sub['tier'])} ({_h.escape(sub['status'])})</span></li>
+      <li>Period under audit <span class="v">{p['identity']['period_days']} days</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>2 · Access control <span class="cc">SOC2 CC6.1</span></h2>
+    <p class="lede">{_h.escape(p['controls']['access_control']['evidence'])}</p>
+    <ul>
+      <li>API keys on file <span class="v">{ac['key_count']:,}</span></li>
+      <li>Least-privilege keys present <span class="v">{ac['least_privilege_used']}</span></li>
+    </ul>
+    {ac_table}
+  </section>
+
+  <section>
+    <h2>3 · Encryption <span class="cc">SOC2 CC6.7</span></h2>
+    <p class="lede">{_h.escape(p['controls']['encryption']['evidence'])}</p>
+    <ul>
+      <li>Cipher <span class="v">{_h.escape(enc['cipher'])}</span></li>
+      <li>Key size <span class="v">{enc['key_size_bits']} bits</span></li>
+      <li>Nonce per encryption <span class="v">{enc['nonce_size_bits']} bits</span></li>
+      <li>Auth tag <span class="v">{enc['tag_size_bits']} bits</span></li>
+      <li>AAD binding <span class="v"><code>{_h.escape(enc['aad_binding'])}</code></span></li>
+      <li>Encryption key configured <span class="v">{enc['key_configured']}</span></li>
+      <li>Cross-tenant ciphertext portable <span class="v">{enc['ciphertext_portable']}</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>4 · Audit trail <span class="cc">SOC2 CC7.2</span></h2>
+    <p class="lede">{_h.escape(p['controls']['audit_trail']['evidence'])}</p>
+    <ul>
+      <li>Entries recorded in period <span class="v">{a['total_entries_in_period']:,}</span></li>
+      <li>Flagged in period <span class="v">{a['flagged_in_period']:,}</span></li>
+      <li>First entry <span class="v">{_h.escape(a['first_recorded'] or '—')}</span></li>
+      <li>Last entry <span class="v">{_h.escape(a['last_recorded'] or '—')}</span></li>
+      <li>Chain algorithm <span class="v">{_h.escape(a['chain_algorithm'])}</span></li>
+      <li>Current chain head <span class="v"><code>{_h.escape(a['current_chain_hash'] or '—')[:24]}{'...' if len(a['current_chain_hash']) > 24 else ''}</code></span></li>
+      <li>Chain integrity at issuance <span class="v" style="color:{chain_color}">{chain_word}</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>5 · Spend governance <span class="cc">SOC2 CC5.2</span></h2>
+    <p class="lede">{_h.escape(p['controls']['spend_governance']['evidence'])}</p>
+    <ul>
+      <li>Total spend in period <span class="v">${s['total_spend_usd_in_period']:,.2f}</span></li>
+      <li>Sessions with spend caps <span class="v">{s['sessions_with_spend_caps']:,} of {s['sessions_total']:,} ({s['pct_sessions_capped'] * 100:.1f}%)</span></li>
+      <li>Payment authorizations <span class="v">{s['payment_authorizations_count']:,} totaling ${s['payment_authorizations_usd']:,.2f}</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>6 · Human approvals <span class="cc">SOC2 CC8.1</span></h2>
+    <p class="lede">{_h.escape(p['controls']['approvals']['evidence'])}</p>
+    <ul>
+      <li>Requests in period <span class="v">{ap['requests_in_period']:,}</span></li>
+      <li>Approved <span class="v">{bs['approved']:,}</span></li>
+      <li>Denied <span class="v">{bs['denied']:,}</span></li>
+      <li>Pending <span class="v">{bs['pending']:,}</span></li>
+      <li>Expired <span class="v">{bs['expired']:,}</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>7 · Outbound alerting <span class="cc">SOC2 CC7.3</span></h2>
+    <p class="lede">{_h.escape(p['controls']['webhooks']['evidence'])}</p>
+    <ul>
+      <li>Registered endpoints <span class="v">{w['registered_endpoints']:,}</span></li>
+      <li>Deliveries in period <span class="v">{w['deliveries_in_period']:,}</span></li>
+      <li>Successful deliveries <span class="v">{w['successful_deliveries']:,} (<span style="color:{rate_color}">{rate * 100:.2f}%</span>)</span></li>
+      <li>Signed payloads <span class="v">{w['signed_payloads']} ({_h.escape(w['signature_algorithm'])})</span></li>
+      <li>Replay protection window <span class="v">{w['replay_protection_window_s']} s</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>8 · Document signature</h2>
+    <ul>
+      <li>Algorithm <span class="v">{_h.escape(sig['algorithm'])}</span></li>
+      <li>Signed at <span class="v">{_h.escape(sig['signed_at'])}</span></li>
+      <li>Input <span class="v dim">{_h.escape(sig['input'])}</span></li>
+    </ul>
+    <div class="digest">{_h.escape(sig['digest'])}</div>
+    <p class="lede" style="margin-top:0.75rem">Verify by re-issuing this evidence pack against the same period and comparing the digest above to the one returned by <code>/v1/compliance/evidence/manifest</code>.</p>
+  </section>
+
+  <footer>
+    <a href="/">haldir.xyz</a> &middot;
+    <a href="/admin/overview?key={_h.escape(key)}">admin</a> &middot;
+    <a href="/swagger">api</a> &middot;
+    <a href="/status">status</a> &middot;
+    <span class="dim">no-index · this URL contains an API key</span>
+  </footer>
+
+</div>
+</body>
+</html>"""
