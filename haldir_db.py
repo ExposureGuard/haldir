@@ -151,23 +151,32 @@ class PgConnectionWrapper:
         return PgCursorWrapper(cursor)
 
     def executescript(self, sql):
-        """Execute multiple SQL statements (for schema creation)."""
+        """Execute multiple SQL statements (for schema creation).
+
+        Comment handling: SQL line comments (`--`) are stripped BEFORE
+        the `;` split, because comment text can legitimately contain
+        semicolons (e.g. "one row per webhook;") and a naive split
+        would carve a comment in half and try to execute the
+        right-hand fragment as SQL. Tested against migration 002
+        which has exactly this case in its leading comment block."""
         sql = _sqlite_to_pg(sql)
-        statements = [s.strip() for s in sql.split(";") if s.strip()]
+        # Strip SQL line comments first so semicolons inside comments
+        # don't fragment the statement list.
+        cleaned_lines = []
+        for line in sql.split("\n"):
+            stripped = line.lstrip()
+            if stripped.startswith("--"):
+                continue
+            # Also handle inline trailing comments: `CREATE TABLE ... ; -- note`
+            if "--" in line:
+                idx = line.find("--")
+                line = line[:idx]
+            cleaned_lines.append(line)
+        clean_sql = "\n".join(cleaned_lines)
+
+        statements = [s.strip() for s in clean_sql.split(";") if s.strip()]
         cursor = self._conn.cursor()
         for stmt in statements:
-            # Strip out SQL line comments + whitespace BEFORE deciding
-            # whether the statement is a no-op. Without this, a chunk
-            # that survives s.strip() but is comments-only (a fragment
-            # split off the end of a migration file with a trailing
-            # comment block) gets sent to psycopg2, which rightfully
-            # rejects it with "can't execute an empty query".
-            non_comment = "\n".join(
-                line for line in stmt.split("\n")
-                if line.strip() and not line.strip().startswith("--")
-            ).strip()
-            if not non_comment:
-                continue
             try:
                 cursor.execute(stmt)
             except Exception as e:

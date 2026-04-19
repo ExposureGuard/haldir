@@ -718,6 +718,12 @@ def _render_overview(o: dict) -> None:
     pending_color = Color.YELLOW if pending else Color.DIM
     print(f"  {Color.DIM}Approvals{Color.RESET}  {pending_color}{pending:>7}{Color.RESET}"
           f" {Color.DIM}pending{Color.RESET}")
+
+    c = o.get("compliance", {})
+    next_due = c.get("next_due_at") or "—"
+    sched_color = Color.GREEN if c.get("active_count") else Color.DIM
+    print(f"  {Color.DIM}Compliance{Color.RESET} {sched_color}{c.get('active_count', 0):>7}{Color.RESET}"
+          f" {Color.DIM}schedules  ·  next pack {next_due}{Color.RESET}")
     print()
 
 

@@ -1600,6 +1600,12 @@ def _render_admin_overview(o: dict, key: str) -> str:
     pending = ap.get("pending_count", 0)
     pending_color = "#b58900" if pending else "#5a5a5a"
 
+    c = o.get("compliance", {})
+    compliance_sub = (
+        f"next pack {c['next_due_at']}" if c.get("next_due_at")
+        else "no recurring schedules"
+    )
+
     # Truncate the key shown in the corner so we don't leak it into
     # OG cards if someone screenshots the page.
     key_short = (_h.escape(key[:8]) + "..." + _h.escape(key[-4:])
@@ -1718,6 +1724,12 @@ def _render_admin_overview(o: dict, key: str) -> str:
       <div class="label">Approvals</div>
       <div class="value" style="color:{pending_color}">{pending:,} <span style="font-weight:300;color:rgba(224,221,213,0.5);font-size:0.85rem">pending</span></div>
       <div class="sub"></div>
+    </div>
+
+    <div class="row">
+      <div class="label">Compliance</div>
+      <div class="value">{c.get('active_count', 0)} <span style="font-weight:300;color:rgba(224,221,213,0.5);font-size:0.85rem">recurring schedules</span></div>
+      <div class="sub">{compliance_sub}</div>
     </div>
 
   </div>

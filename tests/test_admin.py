@@ -58,9 +58,12 @@ def test_overview_has_every_documented_section(haldir_client, bootstrap_key) -> 
     expected = {
         "tenant_id", "tier", "generated_at",
         "usage", "sessions", "vault", "audit",
-        "webhooks", "approvals", "health",
+        "webhooks", "approvals", "compliance", "health",
     }
     assert set(out.keys()) >= expected
+    # Compliance section shape — surfaces recurring schedules.
+    assert {"schedules_count", "active_count",
+            "next_due_at", "last_run_status"} <= set(out["compliance"])
     # Section subkeys.
     assert {"actions_this_month", "actions_limit",
             "actions_pct_used", "spend_usd_this_month"} <= set(out["usage"])

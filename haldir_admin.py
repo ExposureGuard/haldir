@@ -106,6 +106,7 @@ def build_overview(
         "audit":        _audit(db_path, tenant_id, watch=watch),
         "webhooks":     _webhooks(db_path, tenant_id),
         "approvals":    _approvals(db_path, tenant_id),
+        "compliance":   _compliance(db_path, tenant_id),
         "health":       _health(health_snapshot),
     }
 
@@ -302,6 +303,34 @@ def _approvals(db_path: str, tenant_id: str) -> dict[str, Any]:
     finally:
         conn.close()
     return {"pending_count": int(row[0]) if row else 0}
+
+
+def _compliance(db_path: str, tenant_id: str) -> dict[str, Any]:
+    """Surface the recurring evidence-pack schedules so an operator
+    can see at-a-glance that compliance is on autopilot. Counts +
+    next-due summary; the full per-schedule list lives at
+    /v1/compliance/schedules."""
+    try:
+        import haldir_compliance_scheduler as sched
+        rows = sched.list_schedules(db_path, tenant_id)
+    except Exception:
+        rows = []
+    active = [r for r in rows if r["active"]]
+    next_due_ts = min((r["next_due"] for r in active), default=None)
+    next_due_iso = (
+        datetime.fromtimestamp(float(next_due_ts), tz=timezone.utc)
+                .isoformat(timespec="seconds")
+        if next_due_ts else None
+    )
+    return {
+        "schedules_count":  len(rows),
+        "active_count":     len(active),
+        "next_due_at":      next_due_iso,
+        "last_run_status":  (
+            max(rows, key=lambda r: r["last_run_at"])["last_status"]
+            if rows else ""
+        ),
+    }
 
 
 def _health(snapshot: dict[str, Any] | None) -> dict[str, Any]:
