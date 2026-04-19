@@ -17,6 +17,10 @@
 Haldir enforces governance on every AI agent tool call: scoped sessions with spend caps, encrypted secrets the model never sees, hash-chained tamper-evident audit trail, human-in-the-loop approvals, and a proxy that intercepts every MCP call before it reaches your tools. Native SDKs for LangChain, CrewAI, AutoGen, and Vercel AI SDK.
 
 <p align="center">
+  <img src="demo/quickstart.svg" alt="Haldir quickstart: install, create a scoped session, check permission, log the action to the hash-chained audit trail" width="780">
+</p>
+
+<p align="center">
   <img src="docs/architecture.svg" alt="Haldir architecture: Agent → Proxy → (Gate/Vault/Watch/Policy) → Upstream APIs" width="820">
 </p>
 
