@@ -24,6 +24,41 @@ Haldir enforces governance on every AI agent tool call: scoped sessions with spe
   <img src="docs/architecture.svg" alt="Haldir architecture: Agent → Proxy → (Gate/Vault/Watch/Policy) → Upstream APIs" width="820">
 </p>
 
+## CLI
+
+```text
+$ haldir overview
+
+  Haldir tenant overview
+  acct_xyz123  ·  tier pro  ·  2026-04-19T18:42:11+00:00
+
+  Status     ● ok
+  Actions      4,217 / 50,000   ████░░░░░░░░░░░░░░░░    8.4%
+  Spend      $ 47.30 this month
+  Sessions        12 active  ·  3/10 agents
+  Vault            8 secrets  ·  62 accesses this month
+  Audit        1,847 entries  ·  0 flagged (7d)  ·  chain ✓
+  Webhooks         2 registered  ·  541 deliveries (24h)  ·  99.82% success
+  Approvals        1 pending
+```
+
+Install once, drive the whole platform from the terminal:
+
+```bash
+pip install haldir
+haldir login                           # one-time; stashes API key
+haldir overview --watch                # top-style live dashboard
+haldir status                          # green/yellow/red component pills
+haldir ready                           # exits 0/1, perfect for CI
+haldir audit tail --agent my-bot       # the last N entries
+haldir audit export --format=jsonl --out audit-2026-04.jsonl
+haldir audit verify                    # hash chain integrity check
+haldir webhooks deliveries             # last 20 retry attempts
+haldir migrate up                      # apply pending schema migrations
+```
+
+Every command takes `--json` for scripts. `haldir --help` for the full surface.
+
 ## Two ways to run Haldir
 
 | | Self-host | Cloud ([haldir.xyz](https://haldir.xyz)) |

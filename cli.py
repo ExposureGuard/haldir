@@ -636,6 +636,304 @@ def cmd_metrics(args: argparse.Namespace) -> None:
     print_json_table(result)
 
 
+# ── Overview / status / ready (the screenshot moments) ──────────────
+
+def _state_pill(state: str) -> str:
+    """Render an inline status pill: ●  with color matching the state."""
+    color = {
+        "ok":       Color.GREEN,
+        "ready":    Color.GREEN,
+        "alive":    Color.GREEN,
+        "degraded": Color.YELLOW,
+        "down":     Color.RED,
+    }.get(state, Color.DIM)
+    return f"{color}●{Color.RESET} {state}"
+
+
+def _bar(pct: float, width: int = 20) -> str:
+    """Inline progress bar — 20 cells, color shifts as you approach 1.0."""
+    pct = max(0.0, min(1.0, pct))
+    filled = int(round(pct * width))
+    color = (
+        Color.GREEN  if pct < 0.7 else
+        Color.YELLOW if pct < 0.9 else
+        Color.RED
+    )
+    return f"{color}{'█' * filled}{Color.DIM}{'░' * (width - filled)}{Color.RESET}"
+
+
+def _render_overview(o: dict) -> None:
+    """Pretty-print the /v1/admin/overview payload. The screenshot
+    moment for the README + tweets — every value is laid out in the
+    visual hierarchy a reader would scan top-down."""
+    print()
+    print(f"  {Color.BOLD}Haldir tenant overview{Color.RESET}")
+    print(f"  {Color.DIM}{o.get('tenant_id', '?')}  ·  tier "
+          f"{Color.WHITE}{o.get('tier', '?')}{Color.RESET}{Color.DIM}  ·  "
+          f"{o.get('generated_at', '')}{Color.RESET}")
+
+    h = o.get("health", {})
+    print()
+    print(f"  {Color.DIM}Status{Color.RESET}     {_state_pill(h.get('status', 'ok'))}")
+
+    u = o.get("usage", {})
+    pct = float(u.get("actions_pct_used", 0.0))
+    print(f"  {Color.DIM}Actions{Color.RESET}    {Color.WHITE}{u.get('actions_this_month', 0):>7,}{Color.RESET}"
+          f" {Color.DIM}/{Color.RESET} {u.get('actions_limit', 0):,}"
+          f"   {_bar(pct)}  {Color.DIM}{pct * 100:5.1f}%{Color.RESET}")
+    print(f"  {Color.DIM}Spend{Color.RESET}      {Color.WHITE}${u.get('spend_usd_this_month', 0.0):>6.2f}{Color.RESET}"
+          f" {Color.DIM}this month{Color.RESET}")
+
+    s = o.get("sessions", {})
+    print(f"  {Color.DIM}Sessions{Color.RESET}   {Color.WHITE}{s.get('active_count', 0):>7}{Color.RESET}"
+          f" {Color.DIM}active  ·  {s.get('agents_active', 0)}/"
+          f"{s.get('agents_limit', 0)} agents{Color.RESET}")
+
+    v = o.get("vault", {})
+    print(f"  {Color.DIM}Vault{Color.RESET}      {Color.WHITE}{v.get('secrets_count', 0):>7}{Color.RESET}"
+          f" {Color.DIM}secrets  ·  {v.get('secret_access_count', 0)} accesses this month{Color.RESET}")
+
+    a = o.get("audit", {})
+    chain = "✓" if a.get("chain_verified") else "✗"
+    chain_color = Color.GREEN if a.get("chain_verified") else Color.RED
+    print(f"  {Color.DIM}Audit{Color.RESET}      {Color.WHITE}{a.get('total_entries', 0):>7,}{Color.RESET}"
+          f" {Color.DIM}entries  ·  {a.get('flagged_7d', 0)} flagged (7d)  ·  "
+          f"chain {chain_color}{chain}{Color.RESET}")
+
+    w = o.get("webhooks", {})
+    rate = float(w.get("delivery_success_rate_24h", 1.0))
+    rate_color = Color.GREEN if rate >= 0.99 else (Color.YELLOW if rate >= 0.95 else Color.RED)
+    print(f"  {Color.DIM}Webhooks{Color.RESET}   {Color.WHITE}{w.get('registered_count', 0):>7}{Color.RESET}"
+          f" {Color.DIM}registered  ·  {w.get('deliveries_24h', 0)} deliveries (24h)  ·  "
+          f"{rate_color}{rate * 100:.2f}%{Color.RESET}{Color.DIM} success{Color.RESET}")
+
+    ap = o.get("approvals", {})
+    pending = ap.get("pending_count", 0)
+    pending_color = Color.YELLOW if pending else Color.DIM
+    print(f"  {Color.DIM}Approvals{Color.RESET}  {pending_color}{pending:>7}{Color.RESET}"
+          f" {Color.DIM}pending{Color.RESET}")
+    print()
+
+
+def cmd_overview(args: argparse.Namespace) -> None:
+    """Single-call tenant dashboard (calls /v1/admin/overview)."""
+    client = APIClient()
+
+    def _once() -> None:
+        o = client.get("/v1/admin/overview")
+        if getattr(args, "json", False):
+            print(json.dumps(o, indent=2))
+        else:
+            _render_overview(o)
+
+    if not getattr(args, "watch", False):
+        _once()
+        return
+
+    # Live-refresh mode: redraw every interval seconds, top-style.
+    interval = max(1.0, float(args.interval or 5.0))
+    try:
+        while True:
+            sys.stdout.write("\033[2J\033[H")  # clear + home
+            _once()
+            sys.stdout.write(f"  {Color.DIM}refreshing every {interval:.0f}s — Ctrl+C to exit{Color.RESET}\n")
+            sys.stdout.flush()
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print()
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    """System health (calls /v1/status)."""
+    client = APIClient()
+    s = client.get("/v1/status")
+    if getattr(args, "json", False):
+        print(json.dumps(s, indent=2))
+        return
+    print()
+    print(f"  {Color.BOLD}Haldir status{Color.RESET}    {_state_pill(s.get('status', 'ok'))}")
+    print()
+    for c in s.get("components", []):
+        print(f"  {Color.DIM}{c['name']:10}{Color.RESET} {_state_pill(c['state'])}")
+        print(f"             {Color.DIM}{c.get('message', '')}{Color.RESET}")
+    print()
+    m = s.get("metrics", {})
+    sr = m.get("success_rate", {})
+    lat = m.get("latency_seconds", {})
+    print(f"  {Color.DIM}Success rate{Color.RESET} "
+          f"{Color.WHITE}{sr.get('ratio', 1.0) * 100:.3f}%{Color.RESET} "
+          f"{Color.DIM}({sr.get('total', 0)} requests){Color.RESET}")
+    if lat.get("p95"):
+        print(f"  {Color.DIM}Latency p95{Color.RESET}  "
+              f"{Color.WHITE}{lat['p95'] * 1000:.0f} ms{Color.RESET}"
+              f"   {Color.DIM}p99 {lat.get('p99', 0) * 1000:.0f} ms{Color.RESET}")
+    print()
+
+
+def cmd_ready(args: argparse.Namespace) -> None:
+    """One-shot readiness check. Exits 0 if ready, 1 if not — useful
+    for CI / pre-deploy gates."""
+    client = APIClient()
+    try:
+        r = httpx.get(
+            f"{client.base_url}/readyz",
+            headers=client._headers(), timeout=5.0,
+        )
+        body = r.json()
+    except Exception as e:
+        error(f"Could not reach /readyz: {e}")
+        sys.exit(2)
+    if getattr(args, "json", False):
+        print(json.dumps(body, indent=2))
+        sys.exit(0 if body.get("ready") else 1)
+    if body.get("ready"):
+        success("ready")
+    else:
+        error("not ready")
+    for c in body.get("checks", []):
+        mark = f"{Color.GREEN}✓{Color.RESET}" if c["ok"] else f"{Color.RED}✗{Color.RESET}"
+        print(f"  {mark} {c['name']:16} {Color.DIM}{c['message']}  ({c['duration_ms']} ms){Color.RESET}")
+    sys.exit(0 if body.get("ready") else 1)
+
+
+# ── Audit export + verify ────────────────────────────────────────────
+
+def cmd_audit_export(args: argparse.Namespace) -> None:
+    """Stream the audit trail to stdout (or --out FILE)."""
+    client = APIClient()
+    fmt = (args.format or "jsonl").lower()
+    if fmt not in ("csv", "jsonl"):
+        error(f"format must be csv or jsonl, got {fmt!r}")
+        sys.exit(2)
+
+    params: dict[str, str] = {"format": fmt}
+    if args.since:
+        params["since"] = args.since
+    if args.until:
+        params["until"] = args.until
+    if args.session:
+        params["session_id"] = args.session
+    if args.agent:
+        params["agent_id"] = args.agent
+    if args.tool:
+        params["tool"] = args.tool
+
+    url = f"{client.base_url}/v1/audit/export"
+    out = open(args.out, "w") if args.out else sys.stdout
+    try:
+        with httpx.stream("GET", url, params=params,
+                          headers=client._headers(),
+                          timeout=120.0) as r:
+            if r.status_code != 200:
+                error(f"export failed: HTTP {r.status_code}")
+                sys.exit(1)
+            for chunk in r.iter_text():
+                out.write(chunk)
+            if args.out:
+                success(f"wrote {args.out}")
+    finally:
+        if args.out:
+            out.close()
+
+
+def cmd_audit_verify(args: argparse.Namespace) -> None:
+    """Verify the hash chain integrity of the audit trail."""
+    client = APIClient()
+    r = client.get("/v1/audit/verify")
+    if getattr(args, "json", False):
+        print(json.dumps(r, indent=2))
+        return
+    verified = r.get("verified", False)
+    if verified:
+        success(f"chain verified — {r.get('entries_checked', 0)} entries")
+    else:
+        error(f"chain BROKEN at entry {r.get('first_break', '?')}")
+        sys.exit(1)
+
+
+# ── Webhooks: deliveries log ────────────────────────────────────────
+
+def cmd_webhooks_deliveries(args: argparse.Namespace) -> None:
+    """List recent webhook delivery attempts."""
+    client = APIClient()
+    params: dict[str, str] = {"limit": str(args.limit)}
+    if args.event_id:
+        params["event_id"] = args.event_id
+    r = client.get("/v1/webhooks/deliveries", params=params)
+    if getattr(args, "json", False):
+        print(json.dumps(r, indent=2))
+        return
+    deliveries = r.get("deliveries", [])
+    if not deliveries:
+        info("no deliveries on record")
+        return
+    # Compact table.
+    print()
+    print(f"  {Color.DIM}{'when':>20}  {'event':>12}  {'status':>6}  "
+          f"{'try':>3}  {'event_id':<12}  url{Color.RESET}")
+    for d in deliveries:
+        when = time.strftime(
+            "%Y-%m-%d %H:%M:%S",
+            time.gmtime(float(d.get("created_at", 0))),
+        )
+        sc = int(d.get("status_code", 0))
+        sc_color = (
+            Color.GREEN if 200 <= sc < 300 else
+            Color.YELLOW if 400 <= sc < 500 else
+            Color.RED
+        )
+        print(f"  {Color.DIM}{when:>20}{Color.RESET}  "
+              f"{Color.WHITE}{d.get('event_type', ''):>12}{Color.RESET}  "
+              f"{sc_color}{sc:>6}{Color.RESET}  "
+              f"{int(d.get('attempt', 1)):>3}  "
+              f"{Color.DIM}{(d.get('event_id') or '')[:12]:<12}{Color.RESET}  "
+              f"{Color.DIM}{d.get('webhook_url', '')[:60]}{Color.RESET}")
+    print()
+
+
+# ── Migrations (local; wraps haldir_migrate) ────────────────────────
+
+def cmd_migrate(args: argparse.Namespace) -> None:
+    """Apply / inspect schema migrations against the local DB."""
+    import haldir_migrate
+    db_path = (
+        args.db_path
+        or os.environ.get("HALDIR_DB_PATH")
+        or "haldir.db"
+    )
+    sub = args.migrate_command
+    if sub in (None, "up"):
+        s = haldir_migrate.apply_pending(db_path)
+        if s["bootstrapped"]:
+            success("legacy schema adopted as v1")
+        if s["applied"]:
+            success(f"applied: {s['applied']}")
+        else:
+            info(f"nothing to apply ({len(s['skipped'])} already-applied)")
+        if s["drift"]:
+            warn(f"drift on versions {s['drift']} — file checksums diverged from record")
+    elif sub == "status":
+        s = haldir_migrate.status(db_path)
+        if s["applied"]:
+            print(f"{Color.BOLD}applied:{Color.RESET}")
+            for a in s["applied"]:
+                print(f"  {Color.GREEN}✓{Color.RESET} {a['version']:03d}  {a['name']}")
+        else:
+            print(f"{Color.DIM}applied: (none){Color.RESET}")
+        if s["pending"]:
+            print(f"{Color.BOLD}pending:{Color.RESET}")
+            for p in s["pending"]:
+                print(f"  {Color.YELLOW}○{Color.RESET} {p['version']:03d}  {p['name']}")
+        if s["drift"]:
+            warn(f"drift: {s['drift']}")
+    elif sub == "verify":
+        s = haldir_migrate.status(db_path)
+        if s["drift"]:
+            error(f"drift on versions {s['drift']}")
+            sys.exit(2)
+        success("all applied migrations match files on disk")
+
+
 # ── Config ──
 
 def cmd_config_show(args: argparse.Namespace) -> None:
@@ -904,6 +1202,54 @@ def build_parser() -> argparse.ArgumentParser:
     # ── metrics ──
     p_metrics = sub.add_parser("metrics", help="Show platform metrics")
     p_metrics.set_defaults(func=cmd_metrics)
+
+    # ── overview / status / ready ──
+    p_over = sub.add_parser("overview", help="One-call tenant dashboard (the screenshot moment)")
+    p_over.add_argument("--json", action="store_true", help="Emit raw JSON")
+    p_over.add_argument("--watch", action="store_true", help="Refresh continuously, top-style")
+    p_over.add_argument("--interval", type=float, default=5.0, help="Refresh interval (with --watch)")
+    p_over.set_defaults(func=cmd_overview)
+
+    p_status = sub.add_parser("status", help="System health (calls /v1/status)")
+    p_status.add_argument("--json", action="store_true")
+    p_status.set_defaults(func=cmd_status)
+
+    p_ready = sub.add_parser("ready", help="Readiness check; exits 0/1 (CI-friendly)")
+    p_ready.add_argument("--json", action="store_true")
+    p_ready.set_defaults(func=cmd_ready)
+
+    # ── audit export / verify (extend existing audit subparser) ──
+    p_audit_export = audit_sub.add_parser("export", help="Stream the audit trail (CSV or JSONL)")
+    p_audit_export.add_argument("--format", default="jsonl", choices=("jsonl", "csv"))
+    p_audit_export.add_argument("--out", help="Write to file (default: stdout)")
+    p_audit_export.add_argument("--since", help="Lower bound (ISO 8601 or unix seconds)")
+    p_audit_export.add_argument("--until", help="Upper bound (ISO 8601 or unix seconds)")
+    p_audit_export.add_argument("--session", help="Filter by session_id")
+    p_audit_export.add_argument("--agent", help="Filter by agent_id")
+    p_audit_export.add_argument("--tool", help="Filter by tool name")
+    p_audit_export.set_defaults(func=cmd_audit_export)
+
+    p_audit_verify = audit_sub.add_parser("verify", help="Verify the hash chain integrity")
+    p_audit_verify.add_argument("--json", action="store_true")
+    p_audit_verify.set_defaults(func=cmd_audit_verify)
+
+    # ── webhooks deliveries ──
+    p_wh = sub.add_parser("webhooks", help="Webhook delivery inspection")
+    wh_sub = p_wh.add_subparsers(dest="webhooks_command")
+    p_wh_dlv = wh_sub.add_parser("deliveries", help="Recent webhook delivery attempts")
+    p_wh_dlv.add_argument("--event-id", dest="event_id", help="Narrow to one event UUID")
+    p_wh_dlv.add_argument("--limit", type=int, default=20, help="Max rows (default: 20)")
+    p_wh_dlv.add_argument("--json", action="store_true")
+    p_wh_dlv.set_defaults(func=cmd_webhooks_deliveries)
+
+    # ── migrate (local; wraps haldir_migrate) ──
+    p_mig = sub.add_parser("migrate", help="Apply / inspect schema migrations on the local DB")
+    p_mig.add_argument("--db-path", dest="db_path", help="Override DB path (default: HALDIR_DB_PATH)")
+    mig_sub = p_mig.add_subparsers(dest="migrate_command")
+    mig_sub.add_parser("up",     help="Apply pending migrations")
+    mig_sub.add_parser("status", help="List applied + pending migrations")
+    mig_sub.add_parser("verify", help="Detect file-vs-record checksum drift")
+    p_mig.set_defaults(func=cmd_migrate)
 
     # ── config ──
     p_config = sub.add_parser("config", help="View configuration")
