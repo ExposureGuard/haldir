@@ -27,11 +27,13 @@ Routes:
 import os
 import json
 import time
+import uuid
 import secrets
 import hashlib
+import traceback
 from functools import wraps
 
-from flask import Flask, request, jsonify, abort, redirect
+from flask import Flask, request, jsonify, abort, redirect, g
 from flask_cors import CORS
 
 from haldir_db import init_db, get_db
@@ -46,6 +48,12 @@ DB_PATH = os.environ.get("HALDIR_DB_PATH", "/data/haldir.db" if os.path.isdir("/
 ENCRYPTION_KEY = os.environ.get("HALDIR_ENCRYPTION_KEY", "").encode() or None
 
 app = Flask(__name__)
+# Reject bodies larger than 1 MiB. Every Haldir POST body is a small
+# JSON document — sessions, secrets, policy rules — so there's no
+# legitimate reason to accept more. Oversize bodies are cheap DoS fodder
+# (memory-amplification, slow JSON parse). Flask returns 413 automatically
+# when this is exceeded; our error handler converts it to JSON.
+app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024
 CORS(app, resources={r"/v1/*": {"origins": "*"}, r"/mcp": {"origins": "*"}})
 
 # Init DB on startup
@@ -128,6 +136,112 @@ def _idempotency_store(endpoint: str, body: dict, tenant: str,
         conn.commit()
     finally:
         conn.close()
+
+
+# ── Platform middleware ────────────────────────────────────────────────
+#
+# Three cross-cutting concerns applied to every HTTP request:
+#
+#   1. Request-ID propagation — every request gets a UUID (or echoes the
+#      caller's X-Request-ID header). Returned on every response so users
+#      can correlate client logs to server logs, and embedded in JSON
+#      error bodies so bug reports always carry a traceable identifier.
+#
+#   2. Security headers — HSTS, X-Content-Type-Options, Referrer-Policy,
+#      X-Frame-Options. Cheap, standards-based defenses that browsers
+#      enforce on the client side. Applied to all responses.
+#
+#   3. Rate-limit headers — Stripe/GitHub-style X-RateLimit-Limit,
+#      X-RateLimit-Remaining, X-RateLimit-Reset so clients can budget
+#      their traffic before hitting a 429.
+#
+# JSON error handlers below replace Flask's default HTML error pages so
+# API clients always receive a parseable body.
+
+SECURITY_HEADERS = {
+    # HSTS: force HTTPS for a year + subdomains. Tell browsers never to
+    # downgrade to plaintext for haldir.xyz.
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    # Stop MIME-type sniffing; browsers must honor our Content-Type.
+    "X-Content-Type-Options": "nosniff",
+    # Deny framing — nothing on Haldir should be embedded in an iframe.
+    "X-Frame-Options": "DENY",
+    # Don't leak the full URL (which may carry session IDs) to off-site
+    # resources. Stripe uses the same policy.
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    # Disable unused browser features for API responses (defense in depth).
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
+
+@app.before_request
+def _platform_before() -> None:
+    """Attach per-request state: request_id + start timestamp."""
+    # Honor an inbound X-Request-ID from load balancers / gateways so a
+    # single ID flows across the whole stack. Cap length defensively to
+    # avoid header-injection tricks.
+    incoming = (request.headers.get("X-Request-ID") or "").strip()[:64]
+    g.request_id = incoming or uuid.uuid4().hex
+    g.request_start = time.time()
+
+
+@app.after_request
+def _platform_after(response):  # type: ignore[no-untyped-def]
+    """Emit request-ID, security, and rate-limit headers."""
+    response.headers["X-Request-ID"] = getattr(g, "request_id", "")
+    for k, v in SECURITY_HEADERS.items():
+        response.headers.setdefault(k, v)
+
+    # Rate-limit headers (Stripe-compatible). Populated by the rate_limit
+    # before_request hook below when the request was authenticated.
+    rl = getattr(g, "rate_limit", None)
+    if rl:
+        response.headers["X-RateLimit-Limit"] = str(rl["limit"])
+        response.headers["X-RateLimit-Remaining"] = str(max(0, rl["remaining"]))
+        response.headers["X-RateLimit-Reset"] = str(rl["reset"])
+    return response
+
+
+def _json_error(code: str, message: str, status: int, **extra):  # type: ignore[no-untyped-def]
+    """Uniform error envelope: machine-readable `code` + human `error` +
+    request_id so support requests are always traceable."""
+    payload = {
+        "error": message,
+        "code": code,
+        "request_id": getattr(g, "request_id", ""),
+    }
+    payload.update(extra)
+    return jsonify(payload), status
+
+
+@app.errorhandler(404)
+def _err_404(_e):  # type: ignore[no-untyped-def]
+    return _json_error("not_found", "Endpoint not found", 404)
+
+
+@app.errorhandler(405)
+def _err_405(_e):  # type: ignore[no-untyped-def]
+    return _json_error("method_not_allowed", "Method not allowed for this endpoint", 405)
+
+
+@app.errorhandler(413)
+def _err_413(_e):  # type: ignore[no-untyped-def]
+    return _json_error(
+        "payload_too_large",
+        "Request body exceeds 1 MiB limit",
+        413,
+        max_bytes=app.config["MAX_CONTENT_LENGTH"],
+    )
+
+
+@app.errorhandler(500)
+def _err_500(e):  # type: ignore[no-untyped-def]
+    # Log the stack server-side; never leak it to clients.
+    print(f"[!] 500 on {request.method} {request.path} "
+          f"(request_id={getattr(g, 'request_id', '')}): {e}")
+    traceback.print_exc()
+    return _json_error("internal_error", "Internal server error", 500)
+
 
 # ── Billing tier limits ──
 
@@ -863,25 +977,36 @@ def rate_limit():
         effective_tier = billing_tier if billing_tier != "free" else tier
 
         limit = RATE_LIMITS.get(effective_tier, 100)
+        reset = int(entry["start"] + window)
+        # Stash for _platform_after to emit Stripe-style headers on success.
+        g.rate_limit = {
+            "limit": limit,
+            "remaining": limit - entry["count"],
+            "reset": reset,
+        }
         if entry["count"] > limit:
-            return jsonify({
-                "error": "Rate limit exceeded",
-                "limit": limit,
-                "tier": effective_tier,
-                "retry_after": int(entry["start"] + window - now),
-            }), 429
+            return _json_error(
+                "rate_limit_exceeded",
+                "Rate limit exceeded",
+                429,
+                limit=limit,
+                tier=effective_tier,
+                retry_after=int(entry["start"] + window - now),
+            )
 
         if tenant:
             tier_limits = TIER_LIMITS.get(effective_tier, TIER_LIMITS["free"])
             monthly_actions = _get_tenant_monthly_actions(tenant)
             if monthly_actions >= tier_limits["actions_per_month"]:
-                return jsonify({
-                    "error": "Monthly action quota exceeded",
-                    "tier": billing_tier,
-                    "limit": tier_limits["actions_per_month"],
-                    "used": monthly_actions,
-                    "upgrade": "https://haldir.xyz/pricing",
-                }), 429
+                return _json_error(
+                    "monthly_quota_exceeded",
+                    "Monthly action quota exceeded",
+                    429,
+                    tier=billing_tier,
+                    limit=tier_limits["actions_per_month"],
+                    used=monthly_actions,
+                    upgrade="https://haldir.xyz/pricing",
+                )
 
 
 # ── API Docs ──
