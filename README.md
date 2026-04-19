@@ -59,7 +59,21 @@ That's it — point at `https://haldir.xyz`, no signup, live API.
 
 ## Performance
 
-Haldir's governance primitives are fast enough that they're invisible to any agent workload that talks to a remote LLM. Measured on a 2024 laptop:
+Haldir is fast enough to sit in the hot path of every agent tool call without becoming the bottleneck.
+
+**Single-box HTTP throughput** (gunicorn 4 workers, 32 concurrent clients, SQLite backend, every request goes through the full middleware stack — auth, validation, idempotency, metrics, structured logging):
+
+| Endpoint | RPS | p50 | p95 | p99 |
+| --- | --- | --- | --- | --- |
+| `GET /healthz` | 1,822 | 17.4 ms | 28.6 ms | 36.4 ms |
+| `GET /v1/status` | 1,554 | 20.1 ms | 26.5 ms | 31.6 ms |
+| `GET /v1/sessions/:id` | 806 | 26.0 ms | 60.6 ms | 349.4 ms |
+| `POST /v1/sessions` (create) | 1,266 | 25.0 ms | 31.7 ms | 34.5 ms |
+| `POST /v1/audit` (hash-chain write) | 1,247 | 25.1 ms | 33.1 ms | 41.5 ms |
+
+Hardware: 12th-gen Intel Core i3-1215U (8 cores, 8 GB RAM). Postgres deployments see lower tail latency than the p99 column above — the SQLite numbers reflect the default single-file dev path.
+
+**Primitive cost** (pure-Python, no I/O):
 
 | Primitive | p50 | Notes |
 |---|---|---|
@@ -70,10 +84,13 @@ Haldir's governance primitives are fast enough that they're invisible to any age
 | `Watch.log_action` over REST | ~50-150 ms | includes chain lookup + DB write |
 | Full governed-tool envelope (check + log) | ~100-250 ms | |
 
-Agents typically wait 500-3000 ms for an LLM completion and 100-1000 ms for an upstream API call, so Haldir's overhead sits inside the noise. Run your own numbers:
+Agents typically wait 500-3000 ms for an LLM completion and 100-1000 ms for an upstream API call, so Haldir's overhead sits inside the noise. Reproduce locally:
 
 ```bash
-# Local crypto + hash only (no API key needed)
+# Concurrent HTTP throughput (launches a local gunicorn, ~60s total)
+python bench/bench_http.py --duration 10 --concurrency 32 --workers 4
+
+# Primitive cost only (no API key needed)
 python bench/bench_primitives.py --local
 
 # End-to-end against the hosted service
