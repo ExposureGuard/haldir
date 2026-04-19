@@ -30,7 +30,6 @@ import time
 import uuid
 import secrets
 import hashlib
-import traceback
 from functools import wraps
 
 from flask import Flask, request, jsonify, abort, redirect, g
@@ -41,6 +40,40 @@ from haldir_gate.gate import Gate
 from haldir_vault.vault import Vault
 from haldir_watch.watch import Watch
 import haldir_idempotency
+from haldir_logging import configure_logging, get_logger
+from haldir_metrics import registry as prom_metrics
+from haldir_validation import validate_body
+
+configure_logging()
+log = get_logger("haldir.api")
+
+# Platform metrics — declared once at module load, incremented in the
+# before/after request hooks.
+_M_REQUESTS = prom_metrics.counter(
+    "haldir_http_requests_total",
+    "Total HTTP requests the API has handled.",
+    label_names=("method", "path", "status"),
+)
+_M_DURATION = prom_metrics.histogram(
+    "haldir_http_request_duration_seconds",
+    "HTTP request duration (seconds) per route.",
+    label_names=("method", "path"),
+)
+_M_RL_HITS = prom_metrics.counter(
+    "haldir_rate_limit_exceeded_total",
+    "Requests rejected with 429 by the rate limiter.",
+    label_names=("tier",),
+)
+_M_IDEM_HITS = prom_metrics.counter(
+    "haldir_idempotency_hits_total",
+    "POSTs short-circuited by a prior Idempotency-Key match.",
+    label_names=("endpoint",),
+)
+_M_IDEM_MISMATCH = prom_metrics.counter(
+    "haldir_idempotency_mismatches_total",
+    "Idempotency-Key reused against a different body (422).",
+    label_names=("endpoint",),
+)
 
 # ── App setup ──
 
@@ -75,8 +108,9 @@ watch = Watch(db_path=DB_PATH)
 
 # Require encryption key in production
 if not ENCRYPTION_KEY:
-    print("[!] WARNING: No HALDIR_ENCRYPTION_KEY set. A random key was generated.")
-    print("[!] Secrets will be LOST on restart. Set HALDIR_ENCRYPTION_KEY env var.")
+    log.warning(
+        "no HALDIR_ENCRYPTION_KEY set — generated ephemeral key; secrets will be lost on restart",
+    )
 
 
 # ── Idempotency helpers ────────────────────────────────────────────────
@@ -113,8 +147,10 @@ def _idempotency_lookup(endpoint: str, body: dict, tenant: str):
                 conn, tenant, idem_key, endpoint, body,
             )
             if hit is not None:
+                _M_IDEM_HITS.inc(endpoint=endpoint)
                 return jsonify(hit.body), hit.status
         except haldir_idempotency.IdempotencyMismatch as e:
+            _M_IDEM_MISMATCH.inc(endpoint=endpoint)
             return jsonify({"error": str(e)}), 422
     finally:
         conn.close()
@@ -187,7 +223,7 @@ def _platform_before() -> None:
 
 @app.after_request
 def _platform_after(response):  # type: ignore[no-untyped-def]
-    """Emit request-ID, security, and rate-limit headers."""
+    """Emit request-ID, security, and rate-limit headers, then access log."""
     response.headers["X-Request-ID"] = getattr(g, "request_id", "")
     for k, v in SECURITY_HEADERS.items():
         response.headers.setdefault(k, v)
@@ -199,6 +235,37 @@ def _platform_after(response):  # type: ignore[no-untyped-def]
         response.headers["X-RateLimit-Limit"] = str(rl["limit"])
         response.headers["X-RateLimit-Remaining"] = str(max(0, rl["remaining"]))
         response.headers["X-RateLimit-Reset"] = str(rl["reset"])
+
+    # Metrics + structured access log.
+    start = getattr(g, "request_start", None)
+    duration_s = (time.time() - start) if start else None
+    # Use the matched URL rule (e.g. `/v1/sessions/<id>/check`) rather
+    # than the raw path so metric cardinality stays bounded — otherwise
+    # every UUID in a URL produces a new time series.
+    rule = getattr(request.url_rule, "rule", None)
+    metric_path = rule or "unmatched"
+    _M_REQUESTS.inc(
+        method=request.method,
+        path=metric_path,
+        status=str(response.status_code),
+    )
+    if duration_s is not None:
+        _M_DURATION.observe(duration_s, method=request.method, path=metric_path)
+
+    # Skip /healthz access logs by default (noisy, uninteresting) —
+    # flip HALDIR_LOG_HEALTHZ=1 to include them.
+    if request.path != "/healthz" or os.environ.get("HALDIR_LOG_HEALTHZ") == "1":
+        log.info(
+            "request",
+            extra={
+                "method": request.method,
+                "path": request.path,
+                "status": response.status_code,
+                "duration_ms": int(duration_s * 1000) if duration_s is not None else None,
+                "remote_addr": request.remote_addr,
+                "user_agent": request.headers.get("User-Agent", "")[:120],
+            },
+        )
     return response
 
 
@@ -236,10 +303,11 @@ def _err_413(_e):  # type: ignore[no-untyped-def]
 
 @app.errorhandler(500)
 def _err_500(e):  # type: ignore[no-untyped-def]
-    # Log the stack server-side; never leak it to clients.
-    print(f"[!] 500 on {request.method} {request.path} "
-          f"(request_id={getattr(g, 'request_id', '')}): {e}")
-    traceback.print_exc()
+    # Log the stack server-side with full context; never leak it to clients.
+    log.exception(
+        "unhandled exception",
+        extra={"method": request.method, "path": request.path},
+    )
     return _json_error("internal_error", "Internal server error", 500)
 
 
@@ -412,8 +480,8 @@ def create_demo_key():
             "name": "landing-demo",
             "tier": "free",
         }), 201
-    except Exception as e:
-        print(f"[!] Demo key creation failed: {e}")
+    except Exception:
+        log.exception("demo key creation failed")
         return jsonify({"error": "Demo temporarily unavailable. Try again in a moment."}), 503
 
 
@@ -421,11 +489,18 @@ def create_demo_key():
 
 @app.route("/v1/sessions", methods=["POST"])
 @require_api_key
+@validate_body({
+    "agent_id":    {"type": str,   "required": True, "maxlen": 128},
+    "scopes":      {"type": list,  "default": ["read", "browse"]},
+    "ttl":         {"type": int,   "default": 3600, "min": 0, "max": 86400 * 30},
+    "spend_limit": {"type": float, "default": None, "min": 0},
+})
 def create_session():
-    data = request.json or {}
-    agent_id = data.get("agent_id")
-    if not agent_id:
-        return jsonify({"error": "agent_id is required"}), 400
+    data = request.validated
+    agent_id = data["agent_id"]
+    scopes = data["scopes"]
+    ttl = data["ttl"]
+    spend_limit = data["spend_limit"]
 
     tenant = getattr(request, "tenant_id", "")
     cached = _idempotency_lookup("/v1/sessions", data, tenant)
@@ -452,23 +527,6 @@ def create_session():
             "current": current_agents,
             "upgrade": "https://haldir.xyz/pricing",
         }), 403
-
-    scopes = data.get("scopes", ["read", "browse"])
-    try:
-        ttl = int(data.get("ttl", 3600))
-    except (TypeError, ValueError):
-        return jsonify({"error": "ttl must be an integer"}), 400
-    if ttl < 0 or ttl > 86400 * 30:
-        return jsonify({"error": "ttl must be between 0 and 2592000 (30 days)"}), 400
-
-    spend_limit = data.get("spend_limit")
-    if spend_limit is not None:
-        try:
-            spend_limit = float(spend_limit)
-        except (TypeError, ValueError):
-            return jsonify({"error": "spend_limit must be a number"}), 400
-        if spend_limit < 0:
-            return jsonify({"error": "spend_limit must be non-negative"}), 400
 
     gate.register_agent(agent_id, default_scopes=scopes, tenant_id=tenant)
     session = gate.create_session(agent_id, scopes=scopes, ttl=ttl, spend_limit=spend_limit, tenant_id=tenant)
@@ -598,25 +656,21 @@ def list_secrets():
 
 @app.route("/v1/payments/authorize", methods=["POST"])
 @require_api_key
+@validate_body({
+    "session_id":  {"type": str,   "required": True, "maxlen": 128},
+    # Minimum 1 cent, maximum $1M per single authorization — guards
+    # against fat-finger disasters and still leaves headroom for
+    # enterprise purchases.
+    "amount":      {"type": float, "required": True, "min": 0.01, "max": 1_000_000},
+    "currency":    {"type": str,   "default": "USD", "maxlen": 8},
+    "description": {"type": str,   "default": "",    "maxlen": 500},
+})
 def authorize_payment():
-    data = request.json or {}
-    session_id = data.get("session_id")
-    amount = data.get("amount")
-
-    if not session_id or amount is None:
-        return jsonify({"error": "session_id and amount are required"}), 400
-
-    try:
-        amount = float(amount)
-    except (TypeError, ValueError):
-        return jsonify({"error": "amount must be a number"}), 400
-    if amount <= 0:
-        return jsonify({"error": "amount must be positive"}), 400
-    if amount > 1_000_000:
-        return jsonify({"error": "amount exceeds maximum ($1,000,000)"}), 400
+    data = request.validated
+    session_id = data["session_id"]
+    amount = data["amount"]
 
     tenant = getattr(request, "tenant_id", "")
-
     cached = _idempotency_lookup("/v1/payments/authorize", data, tenant)
     if cached is not None:
         return cached
@@ -626,9 +680,9 @@ def authorize_payment():
         return jsonify({"error": "Invalid or expired session"}), 401
 
     result = vault.authorize_payment(
-        session, float(amount),
-        currency=data.get("currency", "USD"),
-        description=data.get("description", ""),
+        session, amount,
+        currency=data["currency"],
+        description=data["description"],
     )
 
     status = 200 if result["authorized"] else 403
@@ -756,8 +810,8 @@ def track_usage(response):
             )
             conn.commit()
             conn.close()
-        except Exception as e:
-            print(f"[!] Usage tracking failed for tenant {tenant}: {e}")
+        except Exception:
+            log.exception("usage tracking failed", extra={"tenant_id": tenant})
     return response
 
 
@@ -985,6 +1039,7 @@ def rate_limit():
             "reset": reset,
         }
         if entry["count"] > limit:
+            _M_RL_HITS.inc(tier=effective_tier)
             return _json_error(
                 "rate_limit_exceeded",
                 "Rate limit exceeded",
@@ -2715,11 +2770,39 @@ def icon_svg():
 </svg>''', 200, {"Content-Type": "image/svg+xml"}
 
 
-# ── Health ──
+# ── Health & metrics ──
 
 @app.route("/healthz")
 def healthz():
     return jsonify({"status": "ok", "service": "haldir", "version": "0.1.0"})
+
+
+@app.route("/metrics")
+def prometheus_metrics():
+    """Prometheus scrape endpoint.
+
+    Gated behind HALDIR_METRICS_TOKEN: the scraper must pass it as
+    `?token=...` OR via `Authorization: Bearer <token>`. If the env var
+    is unset we refuse to expose metrics at all — safer than leaking
+    internal telemetry to the public internet.
+
+    Returns Prometheus text exposition format (v0.0.4)."""
+    expected = os.environ.get("HALDIR_METRICS_TOKEN", "")
+    if not expected:
+        return _json_error(
+            "metrics_disabled",
+            "Metrics endpoint disabled — set HALDIR_METRICS_TOKEN to enable",
+            503,
+        )
+    provided = (
+        request.args.get("token", "")
+        or request.headers.get("Authorization", "").replace("Bearer ", "")
+    )
+    if not secrets.compare_digest(provided, expected):
+        return _json_error("unauthorized", "Valid metrics token required", 401)
+    return prom_metrics.render(), 200, {
+        "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+    }
 
 
 @app.route("/v1")
