@@ -822,6 +822,100 @@ def verify_audit_chain():
     return jsonify(result)
 
 
+# ── Audit export (compliance / SIEM / archival) ─────────────────────────
+#
+# Two endpoints. The first streams the trail in CSV or JSONL; the second
+# returns the same integrity manifest without the body, for consumers
+# who verify out-of-band. Both share an ExportFilters object so the
+# OpenAPI contract stays in lock-step.
+
+def _parse_export_filters() -> "haldir_export.ExportFilters":
+    from haldir_export import ExportFilters
+
+    def _f(k: str) -> float | None:
+        v = request.args.get(k)
+        if not v:
+            return None
+        try:
+            # Accept both unix seconds and ISO 8601.
+            return float(v)
+        except ValueError:
+            try:
+                from datetime import datetime
+                return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return None
+
+    return ExportFilters(
+        session_id=request.args.get("session_id"),
+        agent_id=request.args.get("agent_id"),
+        tool=request.args.get("tool"),
+        since=_f("since"),
+        until=_f("until"),
+        flagged_only=request.args.get("flagged") == "true",
+    )
+
+
+@app.route("/v1/audit/export", methods=["GET"])
+@require_api_key
+def export_audit_trail():
+    """Stream the caller's audit trail for ingest into a SIEM, data
+    warehouse, or compliance archive. Supports CSV and JSONL; every
+    export is chronological (timestamp ASC) and carries an integrity
+    manifest either as the final JSONL record or via the companion
+    /v1/audit/export/manifest endpoint."""
+    import haldir_export
+
+    fmt = request.args.get("format", "jsonl").lower()
+    if fmt not in ("csv", "jsonl"):
+        return _json_error(
+            "invalid_format",
+            "format must be 'csv' or 'jsonl'",
+            400,
+            got=fmt,
+        )
+
+    tenant = getattr(request, "tenant_id", "")
+    filters = _parse_export_filters()
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    ext = "csv" if fmt == "csv" else "jsonl"
+    mimetype = "text/csv" if fmt == "csv" else "application/x-ndjson"
+    filename = f"haldir-audit-{tenant or 'export'}-{stamp}.{ext}"
+
+    from flask import Response
+    return Response(
+        haldir_export.export_stream(DB_PATH, tenant, filters, fmt),
+        mimetype=f"{mimetype}; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            # X-Accel-Buffering=no lets reverse proxies (nginx) stream
+            # to the client as chunks arrive, instead of buffering the
+            # whole response and defeating the point.
+            "X-Accel-Buffering": "no",
+            # Tell consumers the manifest is embedded in the stream
+            # (JSONL) or available out-of-band (CSV).
+            "X-Haldir-Export-Manifest": (
+                "embedded-final-line" if fmt == "jsonl" else "out-of-band"
+            ),
+            "X-Haldir-Export-Format-Version": "1",
+        },
+    )
+
+
+@app.route("/v1/audit/export/manifest", methods=["GET"])
+@require_api_key
+def export_audit_manifest():
+    """Return the chain-verification manifest for the same filter set
+    an export would use, without shipping the body. Lets auditors
+    verify an archived export by re-running this call and comparing
+    the sha256 + last_chain_hash."""
+    import haldir_export
+    tenant = getattr(request, "tenant_id", "")
+    filters = _parse_export_filters()
+    manifest = haldir_export.compute_manifest(DB_PATH, tenant, filters)
+    return jsonify(manifest)
+
+
 # ── Usage tracking (for billing) ──
 
 @app.after_request
