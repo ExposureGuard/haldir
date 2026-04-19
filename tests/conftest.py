@@ -51,3 +51,21 @@ def bootstrap_key(haldir_client):
     )
     assert r.status_code == 201, f"bootstrap failed: {r.status_code} {r.data!r}"
     return r.get_json()["key"]
+
+
+@pytest.fixture
+def fresh_counter(bootstrap_key):
+    """Reset the in-memory rate-limit counter for the bootstrap key
+    so a test starts with count=0. Otherwise the cumulative request
+    volume from the rest of the suite (300+ tests, many making
+    multiple authed calls each) burns through the free-tier hourly
+    quota before later tests run.
+
+    Opt-in: only tests that depend on a clean rate-limit window need
+    this. Other tests run unaffected."""
+    import api
+    import hashlib
+    key_hash = hashlib.sha256(bootstrap_key.encode()).hexdigest()
+    api._rate_limits.pop(key_hash, None)
+    yield
+    api._rate_limits.pop(key_hash, None)

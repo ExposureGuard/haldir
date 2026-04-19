@@ -49,8 +49,13 @@ def test_validate_delivery_accepts_webhook() -> None:
 
 
 def test_validate_delivery_rejects_unknown_scheme() -> None:
-    with pytest.raises(sched.ScheduleValidationError, match="webhook:"):
-        sched.validate_delivery("email:foo@bar.com")
+    """webhook + email are supported; s3 / gcs / postman / etc. are
+    not (yet). Reject at create time so the holder doesn't sit on a
+    silently-broken schedule."""
+    with pytest.raises(sched.ScheduleValidationError, match="scheme"):
+        sched.validate_delivery("s3://my-bucket/evidence")
+    with pytest.raises(sched.ScheduleValidationError, match="scheme"):
+        sched.validate_delivery("postman:abc")
 
 
 def test_validate_delivery_rejects_empty_target() -> None:

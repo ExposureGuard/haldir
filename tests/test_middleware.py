@@ -8,12 +8,28 @@ Run: python -m pytest tests/test_middleware.py -v
 
 from __future__ import annotations
 
+import copy
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pytest  # noqa: E402
+
 import api  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _lift_agent_cap(monkeypatch) -> None:
+    """Free tier caps agents at 1 per tenant. Cumulative test volume
+    blows past that, so other tests that mint sessions under the
+    bootstrap tenant fail with 403 quota_exceeded by the time this
+    module runs. Lift the cap to a sentinel-large value for the
+    duration of these tests; matches the same autouse pattern in
+    test_audit_export / test_admin / test_compliance."""
+    patched = copy.deepcopy(api.TIER_LIMITS)
+    patched["free"]["agents"] = 999
+    monkeypatch.setattr(api, "TIER_LIMITS", patched)
 
 
 # ── Request-ID propagation ───────────────────────────────────────────────
@@ -128,9 +144,12 @@ def test_oversize_body_returns_413_json(haldir_client, bootstrap_key) -> None:
 
 # ── Rate-limit headers ──────────────────────────────────────────────────
 
-def test_rate_limit_headers_on_authenticated_request(haldir_client, bootstrap_key) -> None:
+def test_rate_limit_headers_on_authenticated_request(haldir_client, bootstrap_key, fresh_counter) -> None:
     """An authenticated /v1/ request exposes remaining quota so callers
-    can self-pace before hitting 429."""
+    can self-pace before hitting 429.
+
+    Uses the fresh_counter fixture because cumulative test volume
+    burns through the free-tier hourly limit otherwise."""
     r = haldir_client.post(
         "/v1/sessions",
         json={"agent_id": "rl-test", "scopes": ["read"], "ttl": 60},

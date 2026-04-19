@@ -36,17 +36,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-@pytest.fixture
-def fresh_counter(bootstrap_key):
-    """Reset the in-memory rate-limit counter for the bootstrap key so
-    each test starts with count=0. Otherwise tests leak state into each
-    other through api._rate_limits (module-level dict)."""
-    import api
-    import hashlib
-    key_hash = hashlib.sha256(bootstrap_key.encode()).hexdigest()
-    api._rate_limits.pop(key_hash, None)
-    yield
-    api._rate_limits.pop(key_hash, None)
+# `fresh_counter` lives in conftest.py — shared across the suite.
 
 
 # ── Happy-path headers on a 200 response ──────────────────────────────

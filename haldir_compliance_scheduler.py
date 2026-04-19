@@ -74,18 +74,37 @@ def validate_cadence(c: str) -> str:
     return c
 
 
+_DELIVERY_SCHEMES = ("webhook:", "email:")
+# Loose RFC 5322 sanity check — we want to reject obvious garbage at
+# create time, not run a full parser. Real validation happens at
+# dispatch (the SMTP server rejects bad addrs).
+_EMAIL_RE = __import__("re").compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
 def validate_delivery(d: str) -> str:
-    """Today only `webhook:<id>` is supported. Future schemes
-    (email:, s3://) get added here as we wire their dispatchers."""
+    """Supported schemes:
+
+      webhook:<webhook_id>   — fired through WebhookManager (signed,
+                               retried, logged in webhook_deliveries)
+      email:<addr>           — sent via SMTP if HALDIR_SMTP_HOST is
+                               configured; logged + skipped gracefully
+                               otherwise (the schedule still records
+                               the run as 'no_dispatcher' so
+                               operators can see it)
+    """
     d = (d or "").strip()
-    if not d.startswith("webhook:"):
+    if not any(d.startswith(s) for s in _DELIVERY_SCHEMES):
         raise ScheduleValidationError(
-            f"delivery must be 'webhook:<webhook_id>' (got {d!r}); "
-            "email + s3 schemes ship in a follow-up tranche"
+            f"delivery scheme must be one of {_DELIVERY_SCHEMES} (got {d!r})"
         )
-    target = d.split(":", 1)[1].strip()
+    scheme, _, target = d.partition(":")
+    target = target.strip()
     if not target:
-        raise ScheduleValidationError("delivery missing target id after ':'")
+        raise ScheduleValidationError("delivery missing target after ':'")
+    if scheme == "email" and not _EMAIL_RE.match(target):
+        raise ScheduleValidationError(
+            f"email delivery target {target!r} is not a valid address"
+        )
     return d
 
 
@@ -274,6 +293,7 @@ def fire_one(
         return {"success": False, "status": "build_failed", "error": str(e)}
 
     delivery = schedule["delivery"]
+
     if delivery.startswith("webhook:"):
         # Fire as a regular webhook event so the existing delivery
         # machinery (retries, deliveries log, HMAC signing) applies.
@@ -296,15 +316,40 @@ def fire_one(
             tenant_id=schedule["tenant_id"],
         )
         _record_run(db_path, schedule["schedule_id"],
-                    success=True, status="fired",
-                    error="")
-        log.info("compliance schedule fired", extra={
+                    success=True, status="fired", error="")
+        log.info("compliance schedule fired (webhook)", extra={
             "schedule_id": schedule["schedule_id"],
             "tenant_id": schedule["tenant_id"],
             "event_id": event_id,
         })
         return {"success": True, "status": "fired",
                 "event_id": event_id, "digest": pack["signatures"]["digest"]}
+
+    if delivery.startswith("email:"):
+        import haldir_compliance
+        import haldir_email
+        to_addr = delivery.split(":", 1)[1]
+        markdown = haldir_compliance.render_markdown(pack)
+        result = haldir_email.send_evidence_pack(to_addr, pack, markdown)
+        _record_run(
+            db_path, schedule["schedule_id"],
+            success=result["success"],
+            status=result["status"],
+            error=result.get("error", ""),
+        )
+        log.info("compliance schedule fired (email)", extra={
+            "schedule_id": schedule["schedule_id"],
+            "tenant_id":   schedule["tenant_id"],
+            "to":          to_addr,
+            "status":      result["status"],
+        })
+        out = {"success": result["success"], "status": result["status"],
+               "digest": pack["signatures"]["digest"]}
+        if result.get("error"):
+            out["error"] = result["error"]
+        if result.get("message_id"):
+            out["message_id"] = result["message_id"]
+        return out
 
     err = f"unsupported delivery scheme: {delivery!r}"
     _record_run(db_path, schedule["schedule_id"],
