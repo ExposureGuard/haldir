@@ -1,14 +1,20 @@
 """
-Haldir compliance evidence pack — auditor-ready proof of control.
+Haldir audit-prep evidence pack — platform-side evidence bundled for
+auditor review.
 
-CISOs preparing for a SOC2, ISO 27001, or EU AI Act audit need a single
-artifact that proves their AI agent infrastructure enforced the
-controls they claimed. Today they cobble that together by hand from
-Postgres queries and screenshots. This module produces it in one call.
+**This is not a SOC2 attestation.** A real SOC2 audit is done by a
+human auditor against organization-wide evidence (policies, procedures,
+provisioning logs, change-management records, physical security,
+etc.). This module produces the portion that covers agent activity on
+Haldir — one slice of what goes into a full audit package.
 
-The evidence pack is a structured document covering eight sections —
-each anchored to a real piece of state inside Haldir, each mappable to
-a SOC2 trust criterion or equivalent. The output ships in three forms:
+Every section maps to a SOC2 trust-services criterion it's *relevant
+to*, not one it *satisfies*. The distinction matters: an auditor
+reading this can pattern-match "ah, evidence for CC6.1" and slot it
+into their workpapers, but they still need the org-wide policy
+documents + provisioning logs + review records to close the criterion.
+
+The pack ships in three forms:
 
   format=json      machine-readable; for evidence-locker upload
   format=markdown  human-readable; for the "show this to the auditor"
@@ -20,19 +26,20 @@ a SOC2 trust criterion or equivalent. The output ships in three forms:
   identity          Tenant id, tier, period under audit, generation
                     timestamp.
   access_control    API key inventory: name, prefix, scopes, last-used
-                    timestamp. Maps to SOC2 CC6.1 (logical access).
+                    timestamp. Relevant to SOC2 CC6.1 (logical access).
   encryption        Vault cipher (AES-256-GCM), key configuration
-                    state, AAD binding policy. Maps to CC6.7
+                    state, AAD binding policy. Relevant to CC6.7
                     (encryption at rest).
   audit_trail       Total entries, time range, integrity verification
-                    result, sample chain manifest. Maps to CC7.2
+                    result, sample chain manifest. Relevant to CC7.2
                     (system monitoring) + CC7.3 (security event
                     response).
   spend_governance  Sessions had spend caps; how often a cap was
                     exceeded; payments authorized within budget.
-                    Maps to internal financial controls.
+                    Relevant to CC5.2 (risk mitigation).
   approvals         Human-in-the-loop approval requests, decisions,
-                    reasoning. Maps to CC8.1 (change management).
+                    reasoning. Relevant to CC8.1 (change management,
+                    human oversight).
   webhooks          Outbound integrations + delivery success rate.
                     Evidence the alerting plumbing is operational.
   signatures        Cryptographic anchors: chain hash at end of
@@ -40,11 +47,14 @@ a SOC2 trust criterion or equivalent. The output ships in three forms:
                     The pack hashes itself so an auditor can verify
                     nothing changed after the report was issued.
 
-── SOC2 control mapping ──────────────────────────────────────────────
+── SOC2 relevance mapping ────────────────────────────────────────────
 
-The pack includes a `controls` field that explicitly maps each section
-to the SOC2 trust services criteria it provides evidence for. Auditors
-consume this directly; the customer doesn't have to translate.
+The pack includes a `controls` field that explicitly notes which SOC2
+trust services criteria each section provides evidence for. Auditors
+slot this into their workpapers; the customer doesn't have to
+translate. It does NOT mean the tenant has satisfied the criterion
+org-wide — only that Haldir has contributed one piece of evidence
+toward it.
 
 ── Output is signed ─────────────────────────────────────────────────
 
@@ -69,49 +79,87 @@ FORMAT_VERSION = 1
 
 # ── SOC2 control mapping ─────────────────────────────────────────────
 
+# Maps each pack section to the SOC2 trust-services criterion its
+# data is RELEVANT TO at audit time. Read `evidence` as "what Haldir
+# contributes toward the criterion" — not "what closes the criterion."
+# A full SOC2 audit always requires org-wide evidence beyond what any
+# single platform can produce.
 SOC2_CONTROLS: dict[str, dict[str, str]] = {
     "access_control": {
         "criterion": "CC6.1",
         "title": "Logical and Physical Access Controls",
-        "evidence": "API key inventory + per-key scope list proves "
-                    "least-privilege enforcement.",
+        "evidence": (
+            "API key inventory + per-key scope list. Contributes to "
+            "CC6.1; full criterion also requires documented access "
+            "policy, provisioning/de-provisioning procedures, periodic "
+            "access reviews, and SSO/MFA enforcement."
+        ),
     },
     "encryption": {
         "criterion": "CC6.7",
         "title": "Restricted Logical Access — Encryption",
-        "evidence": "Vault uses AES-256-GCM with AAD binding to "
-                    "(tenant_id, secret_name); ciphertext is "
-                    "non-portable across tenants.",
+        "evidence": (
+            "Vault uses AES-256-GCM with AAD binding to "
+            "(tenant_id, secret_name); ciphertext is non-portable "
+            "across tenants. Contributes to CC6.7; full criterion "
+            "also requires documented encryption standards, "
+            "key-management procedures, and TLS-in-transit evidence."
+        ),
     },
     "audit_trail": {
         "criterion": "CC7.2",
         "title": "System Operations — Detection of Security Events",
-        "evidence": "SHA-256 hash chain over every recorded action "
-                    "produces tamper-evident logs; verify_chain "
-                    "result included.",
+        "evidence": (
+            "SHA-256 hash chain over every recorded agent action. "
+            "Contributes to CC7.2 by producing tamper-evident logs "
+            "an auditor can spot-check. Full criterion also requires "
+            "documented anomaly detection and incident-response "
+            "procedures."
+        ),
     },
     "spend_governance": {
         "criterion": "CC5.2",
         "title": "Internal Control — Risk Mitigation",
-        "evidence": "Per-session spend caps prevent runaway agent "
-                    "behavior; payment authorizations recorded with "
-                    "remaining-budget snapshots.",
+        "evidence": (
+            "Per-session spend caps + payment-authorization records "
+            "with remaining-budget snapshots. Contributes to CC5.2 "
+            "by proving risk limits are enforced at the platform "
+            "layer."
+        ),
     },
     "approvals": {
         "criterion": "CC8.1",
         "title": "Change Management — Human Approval",
-        "evidence": "Approval-request lifecycle (created → "
-                    "approved/denied with note) recorded for every "
-                    "high-risk action.",
+        "evidence": (
+            "Approval-request lifecycle (created → approved/denied "
+            "with note) for agent actions. Contributes to CC8.1 as "
+            "evidence of human-in-the-loop controls; full criterion "
+            "covers software change management more broadly "
+            "(code review, test coverage, deploy approvals)."
+        ),
     },
     "webhooks": {
         "criterion": "CC7.3",
         "title": "System Operations — Security Event Response",
-        "evidence": "Outbound webhook deliveries (per-attempt "
-                    "status, retries, backoff) proving alerting "
-                    "channels are operational.",
+        "evidence": (
+            "Outbound webhook deliveries (per-attempt status, "
+            "retries, backoff) proving the alerting channels "
+            "Haldir fires are operational. Contributes to CC7.3; "
+            "full criterion also requires documented incident-"
+            "response procedures."
+        ),
     },
 }
+
+# Surface-level disclaimer embedded in every rendered form of the pack.
+DISCLAIMER = (
+    "This document is evidence about agent activity on Haldir, "
+    "relevant to (but not sufficient for) a SOC2 / ISO 27001 / EU AI "
+    "Act audit. A full audit requires documented policies, "
+    "procedures, and evidence across the entire organization — not "
+    "just the slice Haldir can see. Use this pack as one input to "
+    "your audit package, not as a substitute for the audit itself."
+)
 
 
 # ── Top-level builder ────────────────────────────────────────────────
@@ -132,6 +180,7 @@ def build_evidence_pack(
 
     pack: dict[str, Any] = {
         "format_version":  FORMAT_VERSION,
+        "disclaimer":      DISCLAIMER,
         "generated_at":    _iso(now),
         "period_start":    _iso(since),
         "period_end":      _iso(until),
@@ -431,7 +480,12 @@ def render_markdown(pack: dict[str, Any]) -> str:
     translation."""
     p = pack
     lines: list[str] = []
-    lines.append(f"# Haldir Compliance Evidence Pack")
+    lines.append("# Haldir Audit-Prep Evidence Pack")
+    lines.append("")
+    lines.append(
+        "> **Not a SOC2 attestation.** "
+        + p.get("disclaimer", DISCLAIMER)
+    )
     lines.append("")
     lines.append(f"**Tenant:** `{p['tenant_id']}`  ")
     lines.append(f"**Period:** {p['period_start']} → {p['period_end']}  ")
@@ -451,7 +505,7 @@ def render_markdown(pack: dict[str, Any]) -> str:
 
     # Access control
     ac = p["access_control"]
-    lines.append("## 2. Access control · SOC2 CC6.1")
+    lines.append("## 2. Access control · relevant to SOC2 CC6.1")
     lines.append("")
     lines.append(f"_{p['controls']['access_control']['evidence']}_")
     lines.append("")
@@ -470,7 +524,7 @@ def render_markdown(pack: dict[str, Any]) -> str:
 
     # Encryption
     enc = p["encryption"]
-    lines.append("## 3. Encryption · SOC2 CC6.7")
+    lines.append("## 3. Encryption · relevant to SOC2 CC6.7")
     lines.append("")
     lines.append(f"_{p['controls']['encryption']['evidence']}_")
     lines.append("")
@@ -485,7 +539,7 @@ def render_markdown(pack: dict[str, Any]) -> str:
 
     # Audit trail
     a = p["audit_trail"]
-    lines.append("## 4. Audit trail · SOC2 CC7.2")
+    lines.append("## 4. Audit trail · relevant to SOC2 CC7.2")
     lines.append("")
     lines.append(f"_{p['controls']['audit_trail']['evidence']}_")
     lines.append("")
@@ -501,7 +555,7 @@ def render_markdown(pack: dict[str, Any]) -> str:
 
     # Spend
     s = p["spend_governance"]
-    lines.append("## 5. Spend governance · SOC2 CC5.2")
+    lines.append("## 5. Spend governance · relevant to SOC2 CC5.2")
     lines.append("")
     lines.append(f"_{p['controls']['spend_governance']['evidence']}_")
     lines.append("")
@@ -512,7 +566,7 @@ def render_markdown(pack: dict[str, Any]) -> str:
 
     # Approvals
     ap = p["approvals"]
-    lines.append("## 6. Human approvals · SOC2 CC8.1")
+    lines.append("## 6. Human approvals · relevant to SOC2 CC8.1")
     lines.append("")
     lines.append(f"_{p['controls']['approvals']['evidence']}_")
     lines.append("")
@@ -523,7 +577,7 @@ def render_markdown(pack: dict[str, Any]) -> str:
 
     # Webhooks
     w = p["webhooks"]
-    lines.append("## 7. Outbound alerting · SOC2 CC7.3")
+    lines.append("## 7. Outbound alerting · relevant to SOC2 CC7.3")
     lines.append("")
     lines.append(f"_{p['controls']['webhooks']['evidence']}_")
     lines.append("")
@@ -660,11 +714,14 @@ def render_html(pack: dict[str, Any], key: str = "",
             "#b58900" if pct >= 50 else
             "#b00020"
         )
+        # Deliberately honest: no verdict claims "SOC2-compliant" or
+        # equivalent. The dashboard says how well you're using Haldir's
+        # features; an actual audit is still the auditor's judgement.
         verdict = (
-            "SOC2-ready" if pct >= 90 else
-            "audit-prep territory" if pct >= 70 else
-            "gaps to close" if pct >= 40 else
-            "pre-prep"
+            "Audit-prep strong" if pct >= 90 else
+            "Audit-prep solid" if pct >= 70 else
+            "Gaps to close" if pct >= 40 else
+            "Pre-prep"
         )
         criteria_rows: list[str] = []
         for c in score.get("criteria", []):
@@ -693,7 +750,7 @@ def render_html(pack: dict[str, Any], key: str = "",
     <div class="score-flex">
       <div class="score-badge">
         <div class="score-num" style="color:{score_color}">{pct}<span>%</span></div>
-        <div class="score-sub">SOC2 readiness</div>
+        <div class="score-sub">Haldir audit-prep</div>
       </div>
       <div class="score-summary">
         <div class="score-verdict" style="color:{score_color}">{verdict}</div>
@@ -703,6 +760,12 @@ def render_html(pack: dict[str, Any], key: str = "",
           <span style="color:#b58900">! {score.get('warning', 0)}</span> warnings
           &nbsp;·&nbsp;
           <span style="color:#b00020">✗ {score.get('failing', 0)}</span> failing
+        </div>
+        <div class="score-note">
+          Not a SOC2 attestation — measures how well your Haldir
+          deployment aligns with signals <em>relevant to</em> a SOC2
+          audit. A full audit requires evidence across your entire
+          organization, not just what Haldir sees.
         </div>
       </div>
     </div>
@@ -716,7 +779,7 @@ def render_html(pack: dict[str, Any], key: str = "",
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Haldir Compliance · {_h.escape(p['tenant_id'])}</title>
+<title>Haldir Audit-Prep · {_h.escape(p['tenant_id'])}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
@@ -782,6 +845,9 @@ def render_html(pack: dict[str, Any], key: str = "",
                  margin-bottom:0.5rem}}
   .score-tally{{font-family:'IBM Plex Mono',monospace;font-size:0.75rem;
                color:rgba(224,221,213,0.7)}}
+  .score-note{{margin-top:0.75rem;font-size:0.78rem;line-height:1.55;
+              color:rgba(224,221,213,0.55);max-width:560px}}
+  .score-note em{{color:rgba(224,221,213,0.75);font-style:italic}}
   .criteria{{display:grid;gap:0.75rem}}
   .crit{{border:1px solid rgba(224,221,213,0.06);border-radius:6px;
         padding:0.9rem 1.1rem;background:#050505}}
@@ -844,7 +910,7 @@ def render_html(pack: dict[str, Any], key: str = "",
 <div class="wrap">
 
   <header>
-    <h1>Haldir compliance evidence</h1>
+    <h1>Haldir audit-prep evidence</h1>
     <div class="meta">
       <code>{_h.escape(p['tenant_id'])}</code> &middot;
       tier <span style="color:#b8973a">{_h.escape(sub['tier'])}</span> &middot;
@@ -879,7 +945,7 @@ def render_html(pack: dict[str, Any], key: str = "",
   </section>
 
   <section>
-    <h2>2 · Access control <span class="cc">SOC2 CC6.1</span></h2>
+    <h2>2 · Access control <span class="cc">relevant to SOC2 CC6.1</span></h2>
     <p class="lede">{_h.escape(p['controls']['access_control']['evidence'])}</p>
     <ul>
       <li>API keys on file <span class="v">{ac['key_count']:,}</span></li>
@@ -889,7 +955,7 @@ def render_html(pack: dict[str, Any], key: str = "",
   </section>
 
   <section>
-    <h2>3 · Encryption <span class="cc">SOC2 CC6.7</span></h2>
+    <h2>3 · Encryption <span class="cc">relevant to SOC2 CC6.7</span></h2>
     <p class="lede">{_h.escape(p['controls']['encryption']['evidence'])}</p>
     <ul>
       <li>Cipher <span class="v">{_h.escape(enc['cipher'])}</span></li>
@@ -903,7 +969,7 @@ def render_html(pack: dict[str, Any], key: str = "",
   </section>
 
   <section>
-    <h2>4 · Audit trail <span class="cc">SOC2 CC7.2</span></h2>
+    <h2>4 · Audit trail <span class="cc">relevant to SOC2 CC7.2</span></h2>
     <p class="lede">{_h.escape(p['controls']['audit_trail']['evidence'])}</p>
     <ul>
       <li>Entries recorded in period <span class="v">{a['total_entries_in_period']:,}</span></li>
@@ -917,7 +983,7 @@ def render_html(pack: dict[str, Any], key: str = "",
   </section>
 
   <section>
-    <h2>5 · Spend governance <span class="cc">SOC2 CC5.2</span></h2>
+    <h2>5 · Spend governance <span class="cc">relevant to SOC2 CC5.2</span></h2>
     <p class="lede">{_h.escape(p['controls']['spend_governance']['evidence'])}</p>
     <ul>
       <li>Total spend in period <span class="v">${s['total_spend_usd_in_period']:,.2f}</span></li>
@@ -927,7 +993,7 @@ def render_html(pack: dict[str, Any], key: str = "",
   </section>
 
   <section>
-    <h2>6 · Human approvals <span class="cc">SOC2 CC8.1</span></h2>
+    <h2>6 · Human approvals <span class="cc">relevant to SOC2 CC8.1</span></h2>
     <p class="lede">{_h.escape(p['controls']['approvals']['evidence'])}</p>
     <ul>
       <li>Requests in period <span class="v">{ap['requests_in_period']:,}</span></li>
@@ -939,7 +1005,7 @@ def render_html(pack: dict[str, Any], key: str = "",
   </section>
 
   <section>
-    <h2>7 · Outbound alerting <span class="cc">SOC2 CC7.3</span></h2>
+    <h2>7 · Outbound alerting <span class="cc">relevant to SOC2 CC7.3</span></h2>
     <p class="lede">{_h.escape(p['controls']['webhooks']['evidence'])}</p>
     <ul>
       <li>Registered endpoints <span class="v">{w['registered_endpoints']:,}</span></li>

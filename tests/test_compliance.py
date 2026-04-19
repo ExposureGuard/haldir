@@ -164,7 +164,7 @@ def test_evidence_markdown_endpoint(haldir_client, bootstrap_key) -> None:
     assert "attachment" in r.headers.get("Content-Disposition", "")
     assert r.headers.get("X-Haldir-Evidence-Digest")
     body = r.data.decode()
-    assert "# Haldir Compliance Evidence Pack" in body
+    assert "# Haldir Audit-Prep Evidence Pack" in body
     assert "## 1. Identity" in body
     assert "## 8. Document signature" in body
 

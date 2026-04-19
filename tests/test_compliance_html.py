@@ -40,7 +40,7 @@ def test_valid_key_renders_evidence_pack(haldir_client, bootstrap_key) -> None:
     body = r.data.decode()
 
     # Top chrome.
-    assert "Haldir compliance evidence" in body
+    assert "Haldir audit-prep evidence" in body
     # Eight section headers all present.
     for hdr in (
         "1 · Identity",
@@ -76,7 +76,7 @@ def test_authorization_header_works_too(haldir_client, bootstrap_key) -> None:
         headers={"Authorization": f"Bearer {bootstrap_key}"},
     )
     assert r.status_code == 200
-    assert "Haldir compliance evidence" in r.data.decode()
+    assert "Haldir audit-prep evidence" in r.data.decode()
 
 
 # ── Demo flow ────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ def test_demo_flow_mints_and_redirects(haldir_client) -> None:
     minted = loc.split("key=")[1]
     r2 = haldir_client.get(f"/compliance?key={minted}")
     assert r2.status_code == 200
-    assert "Haldir compliance evidence" in r2.data.decode()
+    assert "Haldir audit-prep evidence" in r2.data.decode()
 
 
 # ── OpenAPI exclusion ────────────────────────────────────────────────

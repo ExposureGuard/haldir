@@ -92,7 +92,7 @@ def test_send_composes_message_correctly(monkeypatch) -> None:
     msg = captured["msg"]
     assert msg["To"] == "ciso@acme.com"
     assert msg["From"] == "compliance@haldir.xyz"
-    assert "compliance evidence pack" in msg["Subject"].lower()
+    assert "audit-prep evidence pack" in msg["Subject"].lower()
     assert msg["X-Haldir-Tenant"] == "tenant_xyz"
     assert msg["X-Haldir-Evidence-Digest"].startswith("deadbeef")
 
@@ -158,7 +158,7 @@ def test_fire_one_email_delivery_routes_through_haldir_email(
     assert out["success"] is True
     assert out["status"] == "sent"
     assert captured["to"] == "cto@example.com"
-    assert "Compliance Evidence Pack" in captured["md"]
+    assert "Audit-Prep Evidence Pack" in captured["md"]
 
 
 def test_fire_one_email_records_unconfigured(tmp_path, monkeypatch) -> None:

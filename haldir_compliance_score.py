@@ -1,43 +1,43 @@
 """
-Haldir compliance readiness score — the "are we SOC2-ready today" answer.
+Haldir readiness score — how well a tenant is using Haldir's
+audit-relevant features.
 
-Vanta's killer UX moment is the single percentage at the top of the
-dashboard: "87% ready for your SOC2 audit." Customers stare at that
-number; board members ask for it; the product's entire engagement
-loop is people pushing it toward 100%.
+This is NOT a SOC2 attestation and NOT a compliance claim. It's a
+platform-side signal: "are you using the governance features the way
+an auditor would want to see them used?" A real SOC2 audit requires
+documented policies, procedures, and evidence across the entire
+organization — not just the slice Haldir can see.
 
-This module produces the same number for Haldir tenants.
+Think of it the way Vanta's own product works: the dashboard
+percentage drives repeat engagement and gap-closing, but the actual
+audit is done by a human auditor against evidence you hand them. This
+module produces that kind of number for the agent-activity portion of
+an audit package.
 
-Each SOC2 trust-services criterion Haldir covers is mapped to a
-concrete signal in the tenant's live state:
+Each check maps to a SOC2 trust-services criterion it's RELEVANT TO
+(not "satisfies"). The relevance map is:
 
-  CC6.1 Access control    → has any scope-restricted API key
-                            (not just wildcard)
-  CC6.7 Encryption         → HALDIR_ENCRYPTION_KEY is set (not
-                            ephemeral)
-  CC7.2 Audit operations   → audit_log has at least one entry AND
-                            the chain verifies
-  CC7.3 Security monitoring → at least one webhook registered AND
-                            24-hour delivery success rate >= 95%
-  CC5.2 Risk mitigation    → at least one session with a spend_limit
-                            has been created
-  CC8.1 Change management  → at least one approval rule OR one
-                            approval decision exists
+  CC6.1 (access control)        → has any scope-restricted API key
+                                  (not just wildcard)
+  CC6.7 (encryption at rest)    → HALDIR_ENCRYPTION_KEY is set
+                                  (not ephemeral)
+  CC7.2 (monitoring)            → audit_log has recent entries AND
+                                  the hash chain verifies
+  CC7.3 (event response)        → webhooks registered AND 24-hour
+                                  delivery success rate >= 95%
+  CC5.2 (risk mitigation)       → at least one session with a
+                                  spend_limit > 0
+  CC8.1 (change management,
+         human-in-the-loop)     → at least one approval rule OR one
+                                  approval decision recorded
 
-A criterion returns one of three states: pass / warn / fail. The
-top-line score is `passing_criteria / total_criteria * 100`, rounded
-to a whole number. Warn contributes 0.5.
-
-The scoring algorithm is deliberately simple — 6 criteria, equal
-weight. A sophisticated weighted scheme invites bike-shedding and
-obscures the product insight: a CISO wants "go fix these three
-items" before they want "you're 72.5% on the Bayesian-adjusted
-composite."
+States: pass / warn / fail. Score is `sum(state_weight) / count * 100`
+with pass=1.0, warn=0.5, fail=0.0.
 
 Each criterion carries a human-readable `reason` + a `remediation`
-hint so the UI can render "what to do to close the gap" next to
-every failing row. That's the feature that keeps customers opening
-the dashboard every week.
+hint so the UI can render "what to do to close the gap" next to every
+non-passing row. That's what keeps customers opening the dashboard
+weekly — and it's all honest about what it measures.
 """
 
 from __future__ import annotations
@@ -49,17 +49,22 @@ from dataclasses import dataclass, asdict
 from typing import Any
 
 
-# A criterion maps 1:1 to a SOC2 trust services criterion. The
-# controls dict mirrors the structure in haldir_compliance so the
-# evidence pack + the score share vocabulary.
+# Each criterion carries the SOC2 trust-services criterion its check
+# is RELEVANT TO — the signal helps satisfy that control at audit
+# time, it does not on its own satisfy it. The `control` field name
+# on CriterionResult is kept for API stability; read it as
+# "relevant_to_soc2_criterion".
 CRITERIA: tuple[tuple[str, str, str], ...] = (
-    # (key,               control,  description)
-    ("access_control",    "CC6.1",  "Logical access is scope-restricted"),
-    ("encryption",        "CC6.7",  "Secrets at rest use a persistent key"),
-    ("audit_trail",       "CC7.2",  "Audit chain verifies + entries recent"),
+    # (key,               relevant_to,  description)
+    # `relevant_to` = SOC2 criterion this signal helps satisfy;
+    # passing this check is evidence FOR that criterion, not a claim
+    # that you satisfy it org-wide.
+    ("access_control",    "CC6.1",  "At least one API key uses restricted scopes"),
+    ("encryption",        "CC6.7",  "Persistent encryption key configured"),
+    ("audit_trail",       "CC7.2",  "Audit chain verifies with recent entries"),
     ("alerting",          "CC7.3",  "Webhook alerting operational (>=95% 24h)"),
-    ("spend_governance",  "CC5.2",  "Sessions run with spend caps"),
-    ("approvals",         "CC8.1",  "Human approval workflow active"),
+    ("spend_governance",  "CC5.2",  "At least one session runs with a spend cap"),
+    ("approvals",         "CC8.1",  "Human-in-the-loop approvals configured"),
 )
 
 STATE_PASS = "pass"
@@ -90,8 +95,11 @@ class CriterionResult:
 
 def _evaluate_access_control(db_path: str, tenant_id: str) -> CriterionResult:
     """PASS if ANY scope-restricted key exists. Wildcard-only means
-    the tenant is operating with effective root, which no auditor
-    accepts under CC6.1 least-privilege requirements."""
+    the tenant is operating with effective root — relevant to an
+    auditor reviewing CC6.1 least-privilege controls, though full
+    CC6.1 also requires documented access policy, provisioning
+    procedures, and periodic review evidence that sit outside
+    Haldir's scope."""
     from haldir_db import get_db
     conn = get_db(db_path)
     try:
@@ -105,7 +113,7 @@ def _evaluate_access_control(db_path: str, tenant_id: str) -> CriterionResult:
     if not rows:
         return CriterionResult(
             "access_control", "CC6.1",
-            "Logical access is scope-restricted",
+            "At least one API key uses restricted scopes",
             STATE_FAIL,
             "No active API keys.",
             "Mint at least one key via POST /v1/keys; use scopes for least-privilege.",
@@ -123,14 +131,14 @@ def _evaluate_access_control(db_path: str, tenant_id: str) -> CriterionResult:
     if has_narrow:
         return CriterionResult(
             "access_control", "CC6.1",
-            "Logical access is scope-restricted",
+            "At least one API key uses restricted scopes",
             STATE_PASS,
             "At least one key runs on restricted scopes.",
             "",
         )
     return CriterionResult(
         "access_control", "CC6.1",
-        "Logical access is scope-restricted",
+        "At least one API key uses restricted scopes",
         STATE_WARN,
         "All active keys hold wildcard scope ['*'].",
         "Mint scope-restricted keys for non-admin uses: "
@@ -145,14 +153,14 @@ def _evaluate_encryption() -> CriterionResult:
     if os.environ.get("HALDIR_ENCRYPTION_KEY"):
         return CriterionResult(
             "encryption", "CC6.7",
-            "Secrets at rest use a persistent key",
+            "Persistent encryption key configured",
             STATE_PASS,
             "HALDIR_ENCRYPTION_KEY is configured. Cipher: AES-256-GCM.",
             "",
         )
     return CriterionResult(
         "encryption", "CC6.7",
-        "Secrets at rest use a persistent key",
+        "Persistent encryption key configured",
         STATE_WARN,
         "No HALDIR_ENCRYPTION_KEY set — an ephemeral key is generated on boot.",
         "Generate a persistent key and set it as an env var: "
@@ -178,7 +186,7 @@ def _evaluate_audit_trail(db_path: str, tenant_id: str) -> CriterionResult:
     if total == 0:
         return CriterionResult(
             "audit_trail", "CC7.2",
-            "Audit chain verifies + entries recent",
+            "Audit chain verifies with recent entries",
             STATE_FAIL,
             "Audit log is empty.",
             "Log the first action: `haldir audit log <session-id> --tool <name> --action <verb>`.",
@@ -188,7 +196,7 @@ def _evaluate_audit_trail(db_path: str, tenant_id: str) -> CriterionResult:
     if not chain_ok:
         return CriterionResult(
             "audit_trail", "CC7.2",
-            "Audit chain verifies + entries recent",
+            "Audit chain verifies with recent entries",
             STATE_FAIL,
             f"Chain verification failed across {total:,} entries.",
             "Investigate tampering via `haldir audit verify`; contact support.",
@@ -197,7 +205,7 @@ def _evaluate_audit_trail(db_path: str, tenant_id: str) -> CriterionResult:
     if recent == 0:
         return CriterionResult(
             "audit_trail", "CC7.2",
-            "Audit chain verifies + entries recent",
+            "Audit chain verifies with recent entries",
             STATE_WARN,
             f"{total:,} entries on file but none in the last 24 h.",
             "Audit activity has stalled — confirm your agents are still logging.",
@@ -205,7 +213,7 @@ def _evaluate_audit_trail(db_path: str, tenant_id: str) -> CriterionResult:
 
     return CriterionResult(
         "audit_trail", "CC7.2",
-        "Audit chain verifies + entries recent",
+        "Audit chain verifies with recent entries",
         STATE_PASS,
         f"Chain verified across {total:,} entries; {recent:,} in the last 24 h.",
         "",
@@ -297,7 +305,7 @@ def _evaluate_spend_governance(db_path: str, tenant_id: str) -> CriterionResult:
     if total == 0:
         return CriterionResult(
             "spend_governance", "CC5.2",
-            "Sessions run with spend caps",
+            "At least one session runs with a spend cap",
             STATE_WARN,
             "No sessions exist yet.",
             "Mint a session with `haldir session create --agent <id> --spend-limit 5.00`.",
@@ -305,7 +313,7 @@ def _evaluate_spend_governance(db_path: str, tenant_id: str) -> CriterionResult:
     if with_caps == 0:
         return CriterionResult(
             "spend_governance", "CC5.2",
-            "Sessions run with spend caps",
+            "At least one session runs with a spend cap",
             STATE_FAIL,
             f"{total:,} session(s) exist but none have a spend_limit > 0.",
             "Pass `--spend-limit <usd>` when creating sessions so an agent "
@@ -313,7 +321,7 @@ def _evaluate_spend_governance(db_path: str, tenant_id: str) -> CriterionResult:
         )
     return CriterionResult(
         "spend_governance", "CC5.2",
-        "Sessions run with spend caps",
+        "At least one session runs with a spend cap",
         STATE_PASS,
         f"{with_caps:,} of {total:,} session(s) run with spend caps.",
         "",
@@ -350,14 +358,14 @@ def _evaluate_approvals(db_path: str, tenant_id: str) -> CriterionResult:
     if rule_count > 0 or decisions > 0:
         return CriterionResult(
             "approvals", "CC8.1",
-            "Human approval workflow active",
+            "Human-in-the-loop approvals configured",
             STATE_PASS,
             f"{rule_count} rule(s) + {decisions:,} decision(s) recorded.",
             "",
         )
     return CriterionResult(
         "approvals", "CC8.1",
-        "Human approval workflow active",
+        "Human-in-the-loop approvals configured",
         STATE_WARN,
         "No approval rules configured and no decisions recorded.",
         "Register a rule for risky actions: "

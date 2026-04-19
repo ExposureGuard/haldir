@@ -1,5 +1,5 @@
 """
-Tests for haldir_compliance_score — the SOC2-ready % number.
+Tests for haldir_compliance_score — the Haldir audit-prep % number.
 
 Scope:
   - Fresh tenant starts at a known low score (no keys, no audit rows,
@@ -197,8 +197,11 @@ def test_score_endpoint_requires_admin_read(haldir_client, bootstrap_key) -> Non
 def test_compliance_html_includes_score_banner(haldir_client, bootstrap_key) -> None:
     r = haldir_client.get(f"/compliance?key={bootstrap_key}")
     body = r.data.decode()
-    # The big % number + "SOC2 readiness" label.
-    assert "SOC2 readiness" in body
+    # The big % number + "Haldir audit-prep" label (honest framing:
+    # not a SOC2 attestation, platform-readiness signal).
+    assert "Haldir audit-prep" in body
+    # Explicit disclaimer noting this is NOT a SOC2 attestation.
+    assert "Not a SOC2 attestation" in body
     # At least one SOC2 criterion code.
     assert any(cc in body for cc in ("CC6.1", "CC6.7", "CC7.2", "CC7.3", "CC5.2", "CC8.1"))
     # A state badge.

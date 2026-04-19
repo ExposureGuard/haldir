@@ -105,26 +105,32 @@ def _build_message(to_addr: str, pack: dict[str, Any],
     msg = EmailMessage()
     msg["From"] = _from_addr()
     msg["To"] = to_addr
-    msg["Subject"] = f"Haldir compliance evidence pack — {period}"
+    msg["Subject"] = f"Haldir audit-prep evidence pack — {period}"
     msg["Message-ID"] = msg_id
     msg["X-Haldir-Tenant"] = tenant
     msg["X-Haldir-Evidence-Digest"] = digest
 
     summary = (
-        f"Haldir compliance evidence pack\n"
+        f"Haldir audit-prep evidence pack\n"
         f"\n"
         f"Tenant:   {tenant}\n"
         f"Period:   {period}\n"
         f"Digest:   {digest}\n"
         f"\n"
+        f"This pack is evidence about agent activity on Haldir,\n"
+        f"relevant to (but not sufficient for) a SOC2 / ISO 27001 /\n"
+        f"EU AI Act audit. A full audit requires evidence across the\n"
+        f"entire organization — not just what Haldir sees. Use this\n"
+        f"as one input to your audit package.\n"
+        f"\n"
         f"The full evidence pack is attached as Markdown. Sections:\n"
         f"  1. Identity\n"
-        f"  2. Access control          (SOC2 CC6.1)\n"
-        f"  3. Encryption              (SOC2 CC6.7)\n"
-        f"  4. Audit trail             (SOC2 CC7.2)\n"
-        f"  5. Spend governance        (SOC2 CC5.2)\n"
-        f"  6. Human approvals         (SOC2 CC8.1)\n"
-        f"  7. Outbound alerting       (SOC2 CC7.3)\n"
+        f"  2. Access control          (relevant to SOC2 CC6.1)\n"
+        f"  3. Encryption              (relevant to SOC2 CC6.7)\n"
+        f"  4. Audit trail             (relevant to SOC2 CC7.2)\n"
+        f"  5. Spend governance        (relevant to SOC2 CC5.2)\n"
+        f"  6. Human approvals         (relevant to SOC2 CC8.1)\n"
+        f"  7. Outbound alerting       (relevant to SOC2 CC7.3)\n"
         f"  8. Document signature\n"
         f"\n"
         f"Verify the digest by re-issuing the pack against the same\n"
