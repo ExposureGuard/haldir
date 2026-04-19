@@ -43,6 +43,7 @@ import haldir_idempotency
 from haldir_logging import configure_logging, get_logger
 from haldir_metrics import registry as prom_metrics
 from haldir_validation import validate_body
+from haldir_openapi import generate_openapi
 
 configure_logging()
 log = get_logger("haldir.api")
@@ -2751,15 +2752,6 @@ def ai_plugin():
         return f.read(), 200, {"Content-Type": "application/json"}
 
 
-@app.route("/openapi.json")
-def openapi_spec():
-    p = os.path.join(os.path.dirname(__file__), "openapi.json")
-    if os.path.exists(p):
-        with open(p) as f:
-            return f.read(), 200, {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
-    return jsonify({"error": "OpenAPI spec not yet generated"}), 404
-
-
 @app.route("/icon.svg")
 def icon_svg():
     return '''<svg viewBox="0 0 80 92" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2803,6 +2795,45 @@ def prometheus_metrics():
     return prom_metrics.render(), 200, {
         "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
     }
+
+
+# ── OpenAPI + Swagger UI ────────────────────────────────────────────────
+
+@app.route("/openapi.json")
+def openapi_spec():
+    """OpenAPI 3.1 spec, generated directly from the live Flask route
+    table + @validate_body schemas. Never out of sync with the code."""
+    return jsonify(generate_openapi(app))
+
+
+@app.route("/swagger")
+def swagger_ui():
+    """Interactive API explorer (Swagger UI served from jsdelivr CDN)."""
+    return (
+        """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Haldir API — Swagger UI</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+<style>html,body{margin:0;padding:0;background:#050505}</style>
+</head>
+<body>
+<div id="swagger-ui"></div>
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+  window.onload = () => SwaggerUIBundle({
+    url: '/openapi.json',
+    dom_id: '#swagger-ui',
+    deepLinking: true,
+    presets: [SwaggerUIBundle.presets.apis],
+  });
+</script>
+</body>
+</html>""",
+        200,
+        {"Content-Type": "text/html; charset=utf-8"},
+    )
 
 
 @app.route("/v1")

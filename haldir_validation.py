@@ -131,6 +131,10 @@ def validate_body(schema: dict[str, dict[str, Any]]) -> Callable[[Callable], Cal
             request.validated = validated  # type: ignore[attr-defined]
             return fn(*args, **kwargs)
 
+        # Stash the schema on the wrapper so the OpenAPI generator (and
+        # anyone else wanting to introspect the request contract) can
+        # pull it back off the Flask view without re-parsing source.
+        wrapper.__haldir_schema__ = schema  # type: ignore[attr-defined]
         return wrapper
 
     return decorator
