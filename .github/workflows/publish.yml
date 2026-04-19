@@ -1,0 +1,74 @@
+name: publish
+
+# Auto-publish to PyPI on tag push, plus a manual button so we can
+# republish a tag from the GitHub Actions UI without re-tagging.
+#
+# Uses PyPI's "Trusted Publishing" via OIDC — no API tokens stored in
+# repo secrets. PyPI verifies the workflow identity directly. Setup:
+# https://docs.pypi.org/trusted-publishers/
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag or branch to build (default: current)"
+        required: false
+        default: ""
+
+jobs:
+  publish:
+    name: Build + publish to PyPI
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/haldir
+    permissions:
+      # Required for PyPI trusted publishing (OIDC).
+      id-token: write
+      # Required to attach the built sdist + wheel to the GH release.
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build sdist + wheel
+        run: |
+          rm -rf dist build *.egg-info
+          python -m build
+
+      - name: Verify artifacts
+        run: |
+          ls -lh dist/
+          pip install --upgrade twine
+          twine check dist/*
+
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No `password` arg — OIDC handles auth.
+
+      - name: Attach artifacts to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          generate_release_notes: false
+          # If the release exists (we created it manually), this updates it.
+          # If not, it creates a new one with the tag's annotation as body.
