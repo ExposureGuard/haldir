@@ -91,8 +91,31 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024
 CORS(app, resources={r"/v1/*": {"origins": "*"}, r"/mcp": {"origins": "*"}})
 
-# Init DB on startup
+# Init DB on startup. init_db() creates tables via the legacy
+# CREATE TABLE IF NOT EXISTS path, which is safe to keep as a belt-
+# and-suspenders — the migrations runner becomes canonical going
+# forward, but init_db() remains a no-op safety net for any table
+# that doesn't yet have a migration covering it.
 init_db(DB_PATH)
+
+# Schema migrations. Under HALDIR_AUTO_MIGRATE=1 we apply every
+# pending migration at import time so each gunicorn cold start
+# converges to the declared schema. Under the default (off) the
+# operator runs `python -m haldir_migrate up` explicitly — useful
+# when deploys want migrations in a dedicated job before traffic
+# reaches the workers.
+if os.environ.get("HALDIR_AUTO_MIGRATE") == "1":
+    import haldir_migrate
+    _mig_summary = haldir_migrate.apply_pending(DB_PATH)
+    if _mig_summary["applied"] or _mig_summary["bootstrapped"]:
+        log.info("schema migrations run at boot", extra={
+            "applied":      _mig_summary["applied"],
+            "bootstrapped": _mig_summary["bootstrapped"],
+        })
+    if _mig_summary["drift"]:
+        log.warning("schema migration drift detected", extra={
+            "drifted_versions": _mig_summary["drift"],
+        })
 
 # Idempotency schema — retry-safe POST handling for /v1/audit and
 # /v1/payments/authorize. See haldir_idempotency.py.

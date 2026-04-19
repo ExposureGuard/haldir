@@ -78,6 +78,7 @@ jobs:
             tests/test_db.py \
             tests/test_rate_limit_headers.py \
             tests/test_audit_export.py \
+            tests/test_migrate.py \
             tests/test_vault_properties.py \
             tests/test_watch_properties.py \
             --cov=haldir_gate \

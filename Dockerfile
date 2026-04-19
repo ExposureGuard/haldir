@@ -81,10 +81,19 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # tini handles signal forwarding; gunicorn runs 1 worker + 4 threads
 # by default (override with GUNICORN_WORKERS / _THREADS at runtime).
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["sh", "-c", "exec gunicorn api:app \
-    --bind 0.0.0.0:8080 \
-    --workers ${GUNICORN_WORKERS:-1} \
-    --threads ${GUNICORN_THREADS:-4} \
-    --timeout 120 \
-    --access-logfile - \
-    --error-logfile -"]
+# Run migrations before gunicorn binds. `|| true` keeps the container
+# alive if migrations fail (operator sees the traceback in logs and
+# decides — better than a restart loop that hides the real error).
+# Set HALDIR_AUTO_MIGRATE=0 to opt out; the operator then runs
+# `python -m haldir_migrate up` in a separate job before deploy.
+CMD ["sh", "-c", "\
+    if [ \"${HALDIR_AUTO_MIGRATE:-1}\" = \"1\" ]; then \
+        python -m haldir_migrate up || true; \
+    fi && \
+    exec gunicorn api:app \
+        --bind 0.0.0.0:8080 \
+        --workers ${GUNICORN_WORKERS:-1} \
+        --threads ${GUNICORN_THREADS:-4} \
+        --timeout 120 \
+        --access-logfile - \
+        --error-logfile -"]
