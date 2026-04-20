@@ -3858,6 +3858,46 @@ def ai_plugin():
         return f.read(), 200, {"Content-Type": "application/json"}
 
 
+@app.route("/.well-known/jwks.json")
+def jwks_json():
+    """JSON Web Key Set — publishes the Ed25519 public key used to
+    sign Signed Tree Heads.
+
+    An auditor pins a `kid` from this endpoint at enrollment. Future
+    STHs tagged with that `kid` can be verified offline without
+    Haldir participating. If Haldir ever rotates the key, a new `kid`
+    appears here; the auditor sees the rotation explicitly and
+    decides whether to trust it. Same pattern OIDC / Sigstore /
+    Fulcio use for their signing keys.
+
+    Shape conforms to RFC 7517 JWK format with `crv: Ed25519`
+    (draft-ietf-cose-webauthn-algorithms extension, also how Okta /
+    Auth0 / Ory / Supabase publish their OKP keys)."""
+    import haldir_merkle as merkle
+    import base64
+
+    priv, source = merkle.load_ed25519_signing_key_from_env()
+    pub_raw = priv.public_key().public_bytes_raw()
+    kid = merkle._key_id_for_pubkey(pub_raw)
+
+    def b64url(b: bytes) -> str:
+        return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+    return jsonify({
+        "keys": [
+            {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "use": "sig",
+                "alg": "EdDSA",
+                "kid": kid,
+                "x":   b64url(pub_raw),
+                "x-haldir-source": source,
+            }
+        ]
+    })
+
+
 @app.route("/AGENTS.md")
 def agents_md():
     """Emerging convention — AI coding agents (Cursor, Codex, Aider,

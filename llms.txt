@@ -50,9 +50,10 @@ POST /v1/keys {"name": "my-app"}
 - GET /v1/audit/export — Stream audit trail in CSV or JSONL with integrity manifest
 
 ### Tamper-evidence (RFC 6962 Merkle)
-- GET /v1/audit/tree-head — Current Signed Tree Head (tree_size, root_hash, HMAC signature)
+- GET /v1/audit/tree-head — Current Signed Tree Head (tree_size, root_hash, signature). Default HMAC-SHA256; upgrades to Ed25519 when HALDIR_TREE_SIGNING_KEY_ED25519_SEED is set (same primitive Sigstore / Fulcio use).
 - GET /v1/audit/inclusion-proof/{entry_id} — RFC 6962 inclusion proof bundled with the STH
 - GET /v1/audit/consistency-proof?first=N&second=M — Prove later tree is an append-only extension of earlier one
+- GET /.well-known/jwks.json — Ed25519 public key (RFC 7517 JWK). Auditors pin `kid` at enrollment, verify every later STH offline with zero trust in Haldir.
 
 ### Compliance (audit-prep, not a SOC2 attestation)
 - GET /v1/compliance/evidence — Signed audit-prep evidence pack (JSON or markdown)
@@ -122,6 +123,7 @@ PyPI: https://pypi.org/project/haldir/
 - AGENTS.md: https://haldir.xyz/AGENTS.md (conventions for AI coding agents touching this repo)
 - MCP manifest: https://haldir.xyz/.well-known/mcp/mcp.json
 - MCP server card: https://haldir.xyz/.well-known/mcp/server-card.json
+- JWKS (STH public keys): https://haldir.xyz/.well-known/jwks.json
 - ai-plugin.json: https://haldir.xyz/.well-known/ai-plugin.json
 - GitHub: https://github.com/ExposureGuard/haldir
 - Smithery: https://smithery.ai/server/haldir/haldir

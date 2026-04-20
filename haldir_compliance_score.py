@@ -244,6 +244,8 @@ def _evaluate_tamper_evidence(db_path: str, tenant_id: str) -> CriterionResult:
         )
     size = int(sth.get("tree_size", 0))
     source = sth.get("signing_key_source", "")
+    algo = sth.get("algorithm", "")
+    is_asymmetric = "Ed25519" in algo
     if size == 0:
         return CriterionResult(
             "tamper_evidence", "CC7.2",
@@ -258,15 +260,36 @@ def _evaluate_tamper_evidence(db_path: str, tenant_id: str) -> CriterionResult:
             "RFC 6962 Signed Tree Head over the audit log",
             STATE_WARN,
             f"{size:,}-leaf tree signed with an ephemeral key (rotates on restart).",
-            "Set HALDIR_TREE_SIGNING_KEY (or reuse HALDIR_ENCRYPTION_KEY) for a "
-            "stable STH signing key customers can pin.",
+            "Set HALDIR_TREE_SIGNING_KEY_ED25519_SEED (preferred, "
+            "asymmetric — anyone verifies via /.well-known/jwks.json "
+            "without being able to forge) or HALDIR_TREE_SIGNING_KEY "
+            "(HMAC) for a stable STH signing key customers can pin.",
+        )
+    # Stable HMAC beats ephemeral but Ed25519 + JWKS is the elite tier
+    # — auditors can verify without holding any forgery-capable key.
+    if is_asymmetric:
+        reason = (
+            f"{size:,}-leaf tree signed with Ed25519 (asymmetric); "
+            f"public key published at /.well-known/jwks.json. "
+            f"Key source: {source}."
+        )
+    else:
+        reason = (
+            f"{size:,}-leaf tree signed with HMAC-SHA256 (symmetric). "
+            f"Key source: {source}. Upgrade path: set "
+            "HALDIR_TREE_SIGNING_KEY_ED25519_SEED to flip to asymmetric "
+            "so auditors can verify without a forgery-capable key."
         )
     return CriterionResult(
         "tamper_evidence", "CC7.2",
         "RFC 6962 Signed Tree Head over the audit log",
         STATE_PASS,
-        f"{size:,}-leaf tree signed (key source: {source}).",
-        "",
+        reason,
+        "" if is_asymmetric else (
+            "Flip to asymmetric Ed25519 by setting "
+            "HALDIR_TREE_SIGNING_KEY_ED25519_SEED in the environment. "
+            "No customer action required; existing proofs keep verifying."
+        ),
     )
 
 

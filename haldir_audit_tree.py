@@ -100,14 +100,38 @@ def _load_leaves(db_path: str, tenant_id: str,
 
 # ── Signed Tree Head ──────────────────────────────────────────────
 
+def _sign(tree_size: int, root: bytes) -> dict[str, Any]:
+    """Pick the signing algorithm based on env. Ed25519 beats HMAC
+    when an Ed25519 seed/key is configured; otherwise stay on HMAC
+    for back-compat with existing verifiers + clients.
+
+    Triggered by any of:
+      HALDIR_TREE_SIGNING_KEY_ED25519          (base64 32-byte raw)
+      HALDIR_TREE_SIGNING_KEY_ED25519_SEED     (any string)
+      HALDIR_STH_ALGORITHM=ed25519             (explicit opt-in)
+    """
+    import os
+    want_ed25519 = bool(
+        os.environ.get("HALDIR_TREE_SIGNING_KEY_ED25519")
+        or os.environ.get("HALDIR_TREE_SIGNING_KEY_ED25519_SEED")
+        or os.environ.get("HALDIR_STH_ALGORITHM", "").lower() == "ed25519"
+    )
+    if want_ed25519:
+        key, source = merkle.load_ed25519_signing_key_from_env()
+        sth = merkle.sign_sth(tree_size, root, key)
+    else:
+        key, source = merkle.load_signing_key_from_env()
+        sth = merkle.sign_sth(tree_size, root, key)
+    sth["signing_key_source"] = source
+    return sth
+
+
 def get_tree_head(db_path: str, tenant_id: str) -> dict[str, Any]:
     """Compute the current Merkle root + STH for a tenant's log."""
     leaves = [lh for _, lh in _load_leaves(db_path, tenant_id)]
     root = merkle.mth(leaves)
-    signing_key, source = merkle.load_signing_key_from_env()
-    sth = merkle.sign_sth(len(leaves), root, signing_key)
+    sth = _sign(len(leaves), root)
     sth["tenant_id"] = tenant_id
-    sth["signing_key_source"] = source
     return sth
 
 
@@ -134,10 +158,8 @@ def get_inclusion_proof(
     leaves = [lh for _, lh in loaded]
     path = merkle.inclusion_path(leaves, index)
     root = merkle.mth(leaves)
-    signing_key, source = merkle.load_signing_key_from_env()
-    sth = merkle.sign_sth(len(leaves), root, signing_key)
+    sth = _sign(len(leaves), root)
     sth["tenant_id"] = tenant_id
-    sth["signing_key_source"] = source
 
     return {
         "algorithm":  "RFC6962-SHA256",

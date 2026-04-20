@@ -32,6 +32,8 @@ from haldir_merkle import (  # noqa: E402
     verify_inclusion_hex as verify_inclusion_proof,
     verify_consistency_hex as verify_consistency_proof,
     verify_sth,
+    STH_ALGORITHM as STH_ALGORITHM_HMAC,
+    STH_ALGORITHM_ED25519,
 )
 
 __all__ = [
@@ -46,4 +48,6 @@ __all__ = [
     "verify_inclusion_proof",
     "verify_consistency_proof",
     "verify_sth",
+    "STH_ALGORITHM_HMAC",
+    "STH_ALGORITHM_ED25519",
 ]

@@ -324,39 +324,92 @@ def _rebuild_consistency(
 
 
 # ── Signed Tree Head ──────────────────────────────────────────────
+#
+# Two signing algorithms supported:
+#
+#   HMAC-SHA256  — symmetric. Fast, zero-dep (stdlib), back-compat
+#                  with every v0.3.0 client. Downside: anyone who
+#                  holds the key to verify can also forge. Fine when
+#                  the auditor trusts Haldir with the key.
+#
+#   Ed25519      — asymmetric. Haldir holds the private key; anyone
+#                  can verify with just the public key via the JWKS
+#                  endpoint. This is the primitive Sigstore/Fulcio
+#                  uses for their CT logs, and what lets a customer
+#                  prove "Haldir didn't forge this" without holding
+#                  any secret Haldir could use against them.
+#
+# sign_sth dispatches on the key object type. An auditor dispatches
+# on the `algorithm` field of the STH dict.
 
 STH_ALGORITHM = "HMAC-SHA256-over-canonical-sth"
+STH_ALGORITHM_ED25519 = "Ed25519-over-canonical-sth"
 
 
 def _canonical_sth(tree_size: int, root_hash: bytes, signed_at: int) -> bytes:
-    """The exact bytes that get HMAC'd. An auditor reproduces these
-    from the published STH fields and re-runs the HMAC."""
+    """The exact bytes that get signed. An auditor reproduces these
+    from the published STH fields and re-runs the signature. Same
+    canonical form for both HMAC and Ed25519 — only the signing
+    algorithm differs."""
     return f"sth:{tree_size}:{root_hash.hex()}:{signed_at}".encode()
 
 
 def sign_sth(
     tree_size: int,
     root_hash: bytes,
-    signing_key: bytes,
+    signing_key: "bytes | Ed25519Private",
     signed_at: int | None = None,
 ) -> dict:
     """Produce a signed tree head. Returns a serializable dict the
-    API can jsonify unchanged."""
+    API can jsonify unchanged.
+
+    Dispatches on `signing_key` type:
+      - bytes                → HMAC-SHA256 (back-compat)
+      - Ed25519PrivateKey    → Ed25519 signature + key_id (pubkey fpr)
+    """
     ts = int(signed_at if signed_at is not None else time.time())
     canonical = _canonical_sth(tree_size, root_hash, ts)
-    sig = hmac.new(signing_key, canonical, hashlib.sha256).hexdigest()
+
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    if isinstance(signing_key, ed25519.Ed25519PrivateKey):
+        sig = signing_key.sign(canonical).hex()
+        pub = signing_key.public_key().public_bytes_raw()
+        return {
+            "tree_size":  tree_size,
+            "root_hash":  root_hash.hex(),
+            "signed_at":  ts,
+            "signature":  sig,
+            "algorithm":  STH_ALGORITHM_ED25519,
+            "public_key": pub.hex(),
+            "key_id":     _key_id_for_pubkey(pub),
+        }
+    # HMAC fallback.
+    sig_h = hmac.new(signing_key, canonical, hashlib.sha256).hexdigest()
     return {
         "tree_size":  tree_size,
         "root_hash":  root_hash.hex(),
         "signed_at":  ts,
-        "signature":  sig,
+        "signature":  sig_h,
         "algorithm":  STH_ALGORITHM,
     }
 
 
-def verify_sth(sth: dict, signing_key: bytes) -> bool:
-    """Verify an STH's HMAC. Use this when the auditor has the
-    signing key (e.g. Haldir published it in a JWKS)."""
+def verify_sth(sth: dict, signing_key: "bytes | Ed25519Public | None" = None) -> bool:
+    """Verify an STH's signature.
+
+    Algorithm dispatch is driven by sth["algorithm"]:
+      - HMAC-SHA256-over-canonical-sth     → requires the symmetric key
+      - Ed25519-over-canonical-sth         → uses the public key from
+                                              the STH itself (or the
+                                              caller-pinned one, which
+                                              is the secure path)
+
+    For Ed25519, passing None uses the public key embedded in the
+    STH. That is NOT a trust root on its own — Haldir could have put
+    any key in there. A real auditor pins the public key out of band
+    (from /.well-known/jwks.json, saved at enrollment) and passes it
+    here so an attacker rewriting the log can't also rewrite the key.
+    """
     try:
         canonical = _canonical_sth(
             int(sth["tree_size"]),
@@ -365,8 +418,43 @@ def verify_sth(sth: dict, signing_key: bytes) -> bool:
         )
     except (KeyError, ValueError):
         return False
-    expected = hmac.new(signing_key, canonical, hashlib.sha256).hexdigest()
+
+    algo = sth.get("algorithm", STH_ALGORITHM)
+
+    if algo == STH_ALGORITHM_ED25519:
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+        from cryptography.exceptions import InvalidSignature
+        # Resolve the verification key.
+        if signing_key is None:
+            pub_hex = sth.get("public_key")
+            if not pub_hex:
+                return False
+            pub_bytes = bytes.fromhex(pub_hex)
+        elif isinstance(signing_key, (bytes, bytearray)):
+            pub_bytes = bytes(signing_key)
+        elif isinstance(signing_key, ed25519.Ed25519PublicKey):
+            pub_bytes = signing_key.public_bytes_raw()
+        else:
+            return False
+        try:
+            pub = ed25519.Ed25519PublicKey.from_public_bytes(pub_bytes)
+            pub.verify(bytes.fromhex(sth.get("signature", "")), canonical)
+            return True
+        except (InvalidSignature, ValueError):
+            return False
+
+    # HMAC path.
+    if signing_key is None or not isinstance(signing_key, (bytes, bytearray)):
+        return False
+    expected = hmac.new(bytes(signing_key), canonical, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, sth.get("signature", ""))
+
+
+def _key_id_for_pubkey(pub_raw: bytes) -> str:
+    """Short, stable identifier for an Ed25519 public key. SHA-256
+    of the raw 32-byte pubkey, truncated to 16 hex chars. Lets JWKS
+    consumers pin a `key_id` across rotations without the whole key."""
+    return hashlib.sha256(pub_raw).hexdigest()[:16]
 
 
 def derive_signing_key(seed: str) -> bytes:
@@ -376,8 +464,18 @@ def derive_signing_key(seed: str) -> bytes:
     return hashlib.sha256(seed.encode()).digest()
 
 
+def derive_ed25519_key_from_seed(seed: str):
+    """Deterministically derive an Ed25519 private key from a string
+    seed. Used so HALDIR_TREE_SIGNING_KEY_ED25519_SEED can be any
+    printable secret and the same seed always gives the same key
+    (survives restarts without operators passing 32-byte raw keys)."""
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    seed_bytes = hashlib.sha256(seed.encode()).digest()  # 32 bytes
+    return ed25519.Ed25519PrivateKey.from_private_bytes(seed_bytes)
+
+
 def load_signing_key_from_env() -> tuple[bytes, str]:
-    """Pick the signing-key source following env precedence:
+    """Pick the HMAC signing-key source following env precedence:
 
         HALDIR_TREE_SIGNING_KEY   explicit (preferred)
         HALDIR_ENCRYPTION_KEY     fallback; dual-use of the vault key
@@ -385,6 +483,8 @@ def load_signing_key_from_env() -> tuple[bytes, str]:
 
     Returns (key_bytes, source_label). Ephemeral sources make the
     STHs unverifiable across restarts — fine for dev, never for prod.
+
+    For the asymmetric (Ed25519) path, see load_ed25519_signing_key_from_env.
     """
     explicit = os.environ.get("HALDIR_TREE_SIGNING_KEY")
     if explicit:
@@ -396,6 +496,59 @@ def load_signing_key_from_env() -> tuple[bytes, str]:
     if not hasattr(load_signing_key_from_env, "_ephemeral"):
         load_signing_key_from_env._ephemeral = os.urandom(32)  # type: ignore[attr-defined]
     return load_signing_key_from_env._ephemeral, "ephemeral"  # type: ignore[attr-defined]
+
+
+def load_ed25519_signing_key_from_env():
+    """Pick the Ed25519 signing key following env precedence:
+
+        HALDIR_TREE_SIGNING_KEY_ED25519         base64url(32-byte-raw)
+        HALDIR_TREE_SIGNING_KEY_ED25519_SEED    arbitrary string → SHA-256 → private key
+        HALDIR_TREE_SIGNING_KEY                 fallback: derive from HMAC seed
+        ephemeral                                dev-only; generated on first call
+
+    Returns (Ed25519PrivateKey, source_label). The returned private
+    key has a public_key() whose raw bytes go into the JWKS endpoint.
+    """
+    import base64
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    raw_b64 = os.environ.get("HALDIR_TREE_SIGNING_KEY_ED25519", "").strip()
+    if raw_b64:
+        try:
+            raw = base64.urlsafe_b64decode(raw_b64 + "==")
+            if len(raw) == 32:
+                return (
+                    ed25519.Ed25519PrivateKey.from_private_bytes(raw),
+                    "HALDIR_TREE_SIGNING_KEY_ED25519",
+                )
+        except (ValueError, Exception):
+            pass  # fall through to seed / ephemeral
+
+    seed = os.environ.get("HALDIR_TREE_SIGNING_KEY_ED25519_SEED", "").strip()
+    if seed:
+        return (
+            derive_ed25519_key_from_seed(seed),
+            "HALDIR_TREE_SIGNING_KEY_ED25519_SEED",
+        )
+
+    # Reuse the HMAC seed if the operator set one — gives a stable key
+    # across restarts without separate configuration.
+    hmac_explicit = os.environ.get("HALDIR_TREE_SIGNING_KEY", "").strip()
+    if hmac_explicit:
+        return (
+            derive_ed25519_key_from_seed("haldir-ed25519:" + hmac_explicit),
+            "HALDIR_TREE_SIGNING_KEY (reused seed)",
+        )
+
+    # Ephemeral — per-process, generated once and cached on the function.
+    if not hasattr(load_ed25519_signing_key_from_env, "_ephemeral"):
+        load_ed25519_signing_key_from_env._ephemeral = (  # type: ignore[attr-defined]
+            ed25519.Ed25519PrivateKey.generate()
+        )
+    return (
+        load_ed25519_signing_key_from_env._ephemeral,  # type: ignore[attr-defined]
+        "ephemeral",
+    )
 
 
 # ── Proof serialization (for HTTP + SDK + tests) ──────────────────

@@ -106,6 +106,8 @@
     "audit_log_tamper_evident":   true,
     "offline_proof_verification": true,
     "signed_evidence_packs":      true,
-    "scoped_api_keys":            true
+    "scoped_api_keys":            true,
+    "asymmetric_sth_signing":     "Ed25519 via /.well-known/jwks.json (opt-in when HALDIR_TREE_SIGNING_KEY_ED25519_SEED is set)",
+    "jwks_endpoint":              "/.well-known/jwks.json"
   }
 }

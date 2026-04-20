@@ -79,7 +79,8 @@ def test_pack_signs_itself() -> None:
     hashable = {k: v for k, v in pack.items() if k not in excluded}
     if "tamper_evidence" in hashable and isinstance(hashable["tamper_evidence"], dict):
         te = dict(hashable["tamper_evidence"])
-        for volatile in ("signed_at", "signature", "signing_key_source"):
+        for volatile in ("signed_at", "signature", "signing_key_source",
+                          "public_key", "key_id"):
             te.pop(volatile, None)
         hashable["tamper_evidence"] = te
     canonical = json.dumps(hashable, sort_keys=True, separators=(",", ":"))

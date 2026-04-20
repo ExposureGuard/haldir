@@ -340,16 +340,25 @@ def _section_tamper_evidence(db_path: str, tenant_id: str) -> dict[str, Any]:
     try:
         import haldir_audit_tree
         sth = haldir_audit_tree.get_tree_head(db_path, tenant_id)
+        sig_algo = sth.get("algorithm", "HMAC-SHA256")
+        is_asymmetric = "Ed25519" in sig_algo
         return {
             # Tree hashing algorithm — what the root_hash is computed with.
             "algorithm":           "RFC6962-SHA256",
             # Signature algorithm — how the STH was signed.
-            "signature_algorithm": sth.get("algorithm", "HMAC-SHA256"),
+            "signature_algorithm": sig_algo,
+            # Asymmetric signing means Haldir alone holds the private key;
+            # anyone can verify via the public JWKS endpoint without
+            # being able to forge. Highest-trust configuration.
+            "asymmetric_signing":  is_asymmetric,
             "tree_size":           sth.get("tree_size", 0),
             "root_hash":           sth.get("root_hash", ""),
             "signed_at":           sth.get("signed_at", ""),
             "signature":           sth.get("signature", ""),
             "signing_key_source":  sth.get("signing_key_source", ""),
+            "key_id":              sth.get("key_id", ""),
+            "public_key":          sth.get("public_key", ""),
+            "jwks_endpoint":       ("/.well-known/jwks.json" if is_asymmetric else ""),
             "inclusion_proof_endpoint":   "/v1/audit/inclusion-proof/<entry_id>",
             "consistency_proof_endpoint": "/v1/audit/consistency-proof?first=N&second=M",
         }
@@ -505,7 +514,11 @@ def _section_signatures(pack: dict[str, Any]) -> dict[str, Any]:
     # signing metadata that changes on every call.
     if "tamper_evidence" in hashable and isinstance(hashable["tamper_evidence"], dict):
         te = dict(hashable["tamper_evidence"])
-        for volatile in ("signed_at", "signature", "signing_key_source"):
+        # signed_at + signature + key identity vary across calls even
+        # when the underlying tree is unchanged. algorithm / root_hash /
+        # tree_size attest to tree identity and STAY in the digest.
+        for volatile in ("signed_at", "signature", "signing_key_source",
+                          "public_key", "key_id"):
             te.pop(volatile, None)
         hashable["tamper_evidence"] = te
     canonical = json.dumps(
