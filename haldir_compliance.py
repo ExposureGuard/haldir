@@ -489,13 +489,27 @@ def _section_signatures(pack: dict[str, Any]) -> dict[str, Any]:
         DB state must produce the same digest, otherwise an auditor
         re-verifying an archived pack hours later gets a divergent
         result and false-flags tampering.
+      - `tamper_evidence.signed_at` + `tamper_evidence.signature` —
+        same reason. The Signed Tree Head is re-signed on every pack
+        build so the HMAC timestamp moves; only the structural
+        fields (algorithm, tree_size, root_hash) attest to tree
+        identity and belong in the digest input.
 
     Period bounds (`period_start`, `period_end`) ARE in the input —
     they lock what the digest attests to. An auditor reproduces the
     digest by passing the same since/until query."""
     excluded = {"signatures", "generated_at"}
+    hashable = {k: v for k, v in pack.items() if k not in excluded}
+    # Normalize the tamper_evidence section: keep the stable identity
+    # (tree_size, root_hash, algorithm, endpoints) and drop the HMAC
+    # signing metadata that changes on every call.
+    if "tamper_evidence" in hashable and isinstance(hashable["tamper_evidence"], dict):
+        te = dict(hashable["tamper_evidence"])
+        for volatile in ("signed_at", "signature", "signing_key_source"):
+            te.pop(volatile, None)
+        hashable["tamper_evidence"] = te
     canonical = json.dumps(
-        {k: v for k, v in pack.items() if k not in excluded},
+        hashable,
         sort_keys=True, separators=(",", ":"),
     )
     return {

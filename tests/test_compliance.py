@@ -70,14 +70,19 @@ def test_pack_signs_itself() -> None:
     sig = pack["signatures"]
     assert sig["algorithm"] == "SHA-256"
     assert len(sig["digest"]) == 64
-    # Reproducible: re-hash the input the signature claims (excludes
-    # both `signatures` and `generated_at` — see _section_signatures
-    # for why generated_at is excluded).
+    # Reproducible: re-hash the input the signature claims. Mirrors
+    # _section_signatures exactly — drop `signatures` + `generated_at`
+    # and normalize the tamper_evidence section (the STH HMAC is
+    # re-signed on every pack build, so signed_at + signature move;
+    # tree_size + root_hash do not).
     excluded = {"signatures", "generated_at"}
-    canonical = json.dumps(
-        {k: v for k, v in pack.items() if k not in excluded},
-        sort_keys=True, separators=(",", ":"),
-    )
+    hashable = {k: v for k, v in pack.items() if k not in excluded}
+    if "tamper_evidence" in hashable and isinstance(hashable["tamper_evidence"], dict):
+        te = dict(hashable["tamper_evidence"])
+        for volatile in ("signed_at", "signature", "signing_key_source"):
+            te.pop(volatile, None)
+        hashable["tamper_evidence"] = te
+    canonical = json.dumps(hashable, sort_keys=True, separators=(",", ":"))
     expected = hashlib.sha256(canonical.encode()).hexdigest()
     assert sig["digest"] == expected
 
@@ -179,12 +184,18 @@ def test_evidence_rejects_bad_format(haldir_client, bootstrap_key) -> None:
 
 
 def test_manifest_endpoint_matches_embedded_signature(haldir_client, bootstrap_key) -> None:
+    # Pin since/until explicitly. With implicit defaults each handler
+    # stamps its own time.time(), the period bounds drift, and the
+    # digests legitimately differ — that's the contract, not a bug.
+    # Auditors reproducing a digest re-send the same window; this test
+    # models that.
+    qs = "since=2026-01-01T00:00:00Z&until=2026-04-01T00:00:00Z"
     full = haldir_client.get(
-        "/v1/compliance/evidence",
+        f"/v1/compliance/evidence?{qs}",
         headers={"Authorization": f"Bearer {bootstrap_key}"},
     ).get_json()
     manifest = haldir_client.get(
-        "/v1/compliance/evidence/manifest",
+        f"/v1/compliance/evidence/manifest?{qs}",
         headers={"Authorization": f"Bearer {bootstrap_key}"},
     ).get_json()
     # Same tenant, same window, same input → same digest.
