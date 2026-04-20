@@ -85,12 +85,23 @@ POST /v1/keys {"name": "my-app"}
 
 ## MCP Server
 
-Haldir is also available as an MCP server for Claude, Cursor, Windsurf, and any MCP-compatible AI:
+Haldir ships as an MCP stdio server — installable in Claude Desktop, Cursor, Windsurf, and any MCP-compatible client with one config entry:
 
-pip install haldir
+    pip install haldir
+    haldir mcp config  # prints a ready-to-paste mcpServers snippet
 
-MCP endpoint: POST https://haldir.xyz/mcp (JSON-RPC 2.0)
-Smithery: https://smithery.ai/server/haldir/haldir (98/100 quality score)
+Claude Desktop config:
+
+    {"mcpServers": {"haldir": {
+        "command": "haldir",
+        "args":    ["mcp", "serve"],
+        "env":     {"HALDIR_API_KEY": "hld_your_key"}
+    }}}
+
+Exposes ~18 governance primitives as MCP tools: haldir_create_session, haldir_check_permission, haldir_log_audit_action, haldir_get_tree_head, haldir_get_inclusion_proof, haldir_get_consistency_proof, haldir_store_secret, haldir_compliance_score, haldir_build_evidence_pack, and more.
+
+HTTP/SSE endpoint: POST https://haldir.xyz/mcp (JSON-RPC 2.0)
+Smithery: https://smithery.ai/server/haldir/haldir
 PyPI: https://pypi.org/project/haldir/
 
 ## Quick Start

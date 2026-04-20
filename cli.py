@@ -1301,6 +1301,47 @@ def cmd_init(args: argparse.Namespace) -> None:
     print(f"  {bootstrap_token}")
 
 
+def cmd_mcp_serve(args: argparse.Namespace) -> None:
+    """Run the Haldir MCP stdio server.
+
+    Claude Desktop, Cursor, Windsurf, and any MCP client spawn this as
+    a subprocess and talk JSON-RPC 2.0 over stdin/stdout. Requires
+    HALDIR_API_KEY in the env block of the client's MCP config."""
+    import haldir_mcp_server
+    haldir_mcp_server.main()
+
+
+def cmd_mcp_config(args: argparse.Namespace) -> None:
+    """Print a ready-to-paste MCP client config snippet.
+
+    Supports Claude Desktop (~/Library/Application Support/Claude/
+    claude_desktop_config.json on macOS, %APPDATA%\\Claude on Windows),
+    Cursor (~/.cursor/mcp.json), and Windsurf (~/.codeium/windsurf/
+    mcp_config.json). All three clients share the same MCP config
+    schema, so the snippet below drops into any of them."""
+    import json as _json
+    api_key = get_api_key() or "hld_your_key_here"
+    base_url = get_base_url()
+    snippet = {
+        "mcpServers": {
+            "haldir": {
+                "command": "haldir",
+                "args":    ["mcp", "serve"],
+                "env": {
+                    "HALDIR_API_KEY":  api_key,
+                    "HALDIR_BASE_URL": base_url,
+                },
+            }
+        }
+    }
+    print(_json.dumps(snippet, indent=2))
+    print()
+    info("Paste this into your MCP client config:")
+    print("  Claude Desktop:  ~/Library/Application Support/Claude/claude_desktop_config.json")
+    print("  Cursor:          ~/.cursor/mcp.json")
+    print("  Windsurf:        ~/.codeium/windsurf/mcp_config.json")
+
+
 def cmd_dev(args: argparse.Namespace) -> None:
     """Start (or stop) the self-host stack via docker compose."""
     import subprocess
@@ -1642,6 +1683,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_dev.add_argument("--reset", action="store_true", help="Wipe volumes before starting (deletes all local data)")
     p_dev.add_argument("--foreground", "-f", action="store_true", help="Run in foreground (stream logs to terminal)")
     p_dev.set_defaults(func=cmd_dev)
+
+    # ── mcp (stdio server for Claude Desktop / Cursor / Windsurf) ──
+    p_mcp = sub.add_parser(
+        "mcp",
+        help="Run Haldir as an MCP stdio server (Claude Desktop, Cursor, Windsurf)",
+    )
+    mcp_sub = p_mcp.add_subparsers(dest="mcp_command")
+
+    p_mcp_serve = mcp_sub.add_parser(
+        "serve",
+        help="Run the MCP stdio server (use in mcpServers config of your client)",
+    )
+    p_mcp_serve.set_defaults(func=cmd_mcp_serve)
+
+    p_mcp_config = mcp_sub.add_parser(
+        "config",
+        help="Print a ready-to-paste MCP client config snippet",
+    )
+    p_mcp_config.set_defaults(func=cmd_mcp_config)
 
     return parser
 
