@@ -2927,47 +2927,47 @@ def mcp_discovery():
 
 @app.route("/.well-known/mcp/server-card.json")
 def mcp_server_card():
-    """MCP server card for automated discovery and Smithery listing."""
-    return jsonify({
-        "name": "haldir",
-        "displayName": "Haldir — AI Agent Security Gateway",
-        "description": (
-            "Security and governance layer for AI agents. Enforces session-scoped permissions, "
-            "manages encrypted secrets with access control, controls spend budgets, and logs "
-            "every action to a tamper-evident audit trail with anomaly detection."
-        ),
-        "version": "0.1.0",
-        "url": "https://haldir.xyz",
-        "mcpEndpoint": "https://haldir.xyz/mcp",
-        "transport": "http",
-        "capabilities": MCP_CAPABILITIES,
-        "tools": [{"name": t["name"], "description": t["description"]} for t in MCP_TOOLS],
-        "prompts": [{"name": p["name"], "description": p["description"]} for p in MCP_PROMPTS],
-        "configSchema": {
-            "type": "object",
-            "properties": {
-                "apiKey": {
-                    "type": "string",
-                    "description": "Haldir API key for authentication (starts with hld_). Create one via POST /v1/keys.",
-                },
-                "baseUrl": {
-                    "type": "string",
-                    "description": "Base URL of the Haldir API server. Defaults to https://haldir.xyz",
-                    "default": "https://haldir.xyz",
-                },
+    """MCP server card for automated discovery and Smithery listing.
+
+    Two layers merged:
+      1. Static richness from `.well-known/mcp/server-card.json` on
+         disk — curated description, categories, tags, use-cases,
+         trust signals, full link map.
+      2. Live tools + prompts + capabilities from the in-process
+         MCP_TOOLS / MCP_PROMPTS / MCP_CAPABILITIES dicts so the
+         card never drifts from what the server actually advertises.
+    """
+    card_path = os.path.join(
+        os.path.dirname(__file__), ".well-known", "mcp", "server-card.json",
+    )
+    base: dict = {}
+    if os.path.exists(card_path):
+        with open(card_path) as f:
+            base = json.load(f)
+    # Overlay live server state.
+    base["capabilities"] = MCP_CAPABILITIES
+    base["tools"] = [
+        {"name": t["name"], "description": t["description"]} for t in MCP_TOOLS
+    ]
+    base["prompts"] = [
+        {"name": p["name"], "description": p["description"]} for p in MCP_PROMPTS
+    ]
+    base.setdefault("configSchema", {
+        "type": "object",
+        "properties": {
+            "apiKey": {
+                "type": "string",
+                "description": "Haldir API key (starts with hld_). Mint via POST /v1/keys.",
             },
-            "required": ["apiKey"],
+            "baseUrl": {
+                "type": "string",
+                "description": "Base URL of the Haldir API server.",
+                "default": "https://haldir.xyz",
+            },
         },
-        "author": {
-            "name": "0xN0rD",
-            "url": "https://haldir.xyz",
-        },
-        "license": "MIT",
-        "tags": [
-            "security", "governance", "ai-agents", "permissions", "audit",
-            "secrets", "budget", "compliance", "least-privilege", "mcp",
-        ],
+        "required": ["apiKey"],
     })
+    return jsonify(base)
 
 
 # ── Proxy Mode ──
@@ -3856,6 +3856,17 @@ def ai_plugin():
     p = os.path.join(os.path.dirname(__file__), "ai-plugin.json")
     with open(p) as f:
         return f.read(), 200, {"Content-Type": "application/json"}
+
+
+@app.route("/AGENTS.md")
+def agents_md():
+    """Emerging convention — AI coding agents (Cursor, Codex, Aider,
+    Claude Code, Windsurf, Devin) look for AGENTS.md at repo and site
+    root for project-specific conventions. Mirror the on-disk file so
+    the live site and the git tree stay in sync."""
+    p = os.path.join(os.path.dirname(__file__), "AGENTS.md")
+    with open(p) as f:
+        return f.read(), 200, {"Content-Type": "text/markdown; charset=utf-8"}
 
 
 @app.route("/icon.svg")

@@ -1,15 +1,16 @@
 # Haldir — The Guardian Layer for AI Agents
 
-> Haldir provides identity, secrets management, and audit logging for AI agents via REST API and MCP (Model Context Protocol).
+> Haldir provides identity, secrets, tamper-evident audit, and SOC2 audit-prep evidence packs for AI agents via REST API and MCP.
 
 ## What Haldir Does
 
 Haldir sits between AI agents and the tools they use. It enforces governance on every action:
 
 - **Gate**: Scoped sessions with permissions and spend limits. Agents authenticate through Gate before accessing any tool.
-- **Vault**: Encrypted secrets (API keys, credentials, tokens). Agents request access; Vault checks session scope before returning values.
-- **Watch**: Immutable audit log for every action. Anomaly detection, cost tracking, compliance exports.
+- **Vault**: Encrypted secrets (API keys, credentials, tokens). AES-256-GCM with AAD binding. Agents request access; Vault checks session scope before returning values.
+- **Watch**: Immutable audit log for every action. SHA-256 hash chain + RFC 6962 Merkle tree + Signed Tree Head. Inclusion and consistency proofs an auditor can verify offline — the same cryptographic primitive Certificate Transparency uses for WebPKI.
 - **Proxy**: Intercepts every MCP tool call. The agent connects to Haldir; Haldir forwards to upstream servers after enforcing policies.
+- **Compliance**: Signed audit-prep evidence packs relevant to SOC2 (CC5.2, CC6.1, CC6.7, CC7.2, CC7.3, CC8.1) with live readiness score, HTML dashboard, recurring email delivery.
 
 ## API Base URL
 
@@ -45,6 +46,19 @@ POST /v1/keys {"name": "my-app"}
 - POST /v1/audit — Log action {"session_id": "ses_xxx", "tool": "stripe", "action": "charge", "cost_usd": 29.99}
 - GET /v1/audit — Query audit trail. Params: session_id, agent_id, tool, flagged, limit
 - GET /v1/audit/spend — Spend summary. Params: session_id, agent_id
+- GET /v1/audit/verify — Verify the SHA-256 hash chain end-to-end
+- GET /v1/audit/export — Stream audit trail in CSV or JSONL with integrity manifest
+
+### Tamper-evidence (RFC 6962 Merkle)
+- GET /v1/audit/tree-head — Current Signed Tree Head (tree_size, root_hash, HMAC signature)
+- GET /v1/audit/inclusion-proof/{entry_id} — RFC 6962 inclusion proof bundled with the STH
+- GET /v1/audit/consistency-proof?first=N&second=M — Prove later tree is an append-only extension of earlier one
+
+### Compliance (audit-prep, not a SOC2 attestation)
+- GET /v1/compliance/evidence — Signed audit-prep evidence pack (JSON or markdown)
+- GET /v1/compliance/evidence/manifest — Just the signature block (auditor re-verify)
+- GET /v1/compliance/score — 0-100 readiness score + per-criterion pass/warn/fail + remediation
+- POST /v1/compliance/schedules — Recurring evidence delivery to email or webhook
 
 ### Approvals (Human-in-the-loop)
 - POST /v1/approvals/rules — Add approval rule {"type": "spend_over", "threshold": 100}
@@ -90,8 +104,14 @@ PyPI: https://pypi.org/project/haldir/
 ## Links
 
 - Website: https://haldir.xyz
+- Live tamper demo: https://haldir.xyz/demo/tamper (click Tamper, watch the Merkle tree reject it)
+- Evidence pack: https://haldir.xyz/compliance?demo=1
 - API Docs: https://haldir.xyz/docs
 - OpenAPI Spec: https://haldir.xyz/openapi.json
+- AGENTS.md: https://haldir.xyz/AGENTS.md (conventions for AI coding agents touching this repo)
+- MCP manifest: https://haldir.xyz/.well-known/mcp/mcp.json
+- MCP server card: https://haldir.xyz/.well-known/mcp/server-card.json
+- ai-plugin.json: https://haldir.xyz/.well-known/ai-plugin.json
 - GitHub: https://github.com/ExposureGuard/haldir
 - Smithery: https://smithery.ai/server/haldir/haldir
 - PyPI: https://pypi.org/project/haldir/

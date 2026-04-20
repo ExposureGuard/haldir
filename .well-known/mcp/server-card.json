@@ -1,0 +1,111 @@
+{
+  "$schema": "https://modelcontextprotocol.io/schemas/server-card/v1.json",
+  "name": "haldir",
+  "display_name": "Haldir — AI Agent Governance",
+  "version": "0.3.0",
+  "summary": "Scoped sessions, encrypted vault, immutable + tamper-evident audit log, RFC 6962 Merkle proofs, and SOC2 audit-prep evidence packs for AI agents.",
+  "description": "Haldir is the governance layer agents connect to before calling tools. Use it to: mint scoped sessions with spend limits and TTLs (Gate); store and retrieve encrypted secrets with AES-256-GCM + AAD binding (Vault); log every tool call to a SHA-256 hash-chained + RFC 6962 Merkle-signed audit trail with anomaly detection (Watch); request human-in-the-loop approvals; generate signed audit-prep evidence packs for SOC2 workpapers; and proxy MCP tool calls through a policy enforcement layer.\n\nThe tamper-evidence story is cryptographic, not monitoring: every audit log has a Signed Tree Head an auditor can pin, and inclusion/consistency proofs verify offline with the same primitive Certificate Transparency uses for the global WebPKI.",
+  "vendor": {
+    "name": "Haldir",
+    "url": "https://haldir.xyz",
+    "contact_email": "sterling@getexposureguard.com"
+  },
+  "license": "MIT",
+  "homepage": "https://haldir.xyz",
+  "repository": "https://github.com/ExposureGuard/haldir",
+  "documentation": "https://haldir.xyz/docs",
+  "transport": {
+    "http": {
+      "endpoint": "https://haldir.xyz/mcp",
+      "authentication": {
+        "type": "bearer",
+        "instructions": "Pass an API key via `Authorization: Bearer <key>`. Mint the first key with `POST /v1/keys` (no auth for the first key) or `haldir init` via the CLI."
+      }
+    },
+    "stdio": {
+      "package": "haldir",
+      "command": "haldir mcp serve",
+      "env_required": ["HALDIR_API_KEY"],
+      "install_hint": "pip install haldir"
+    }
+  },
+  "capabilities": {
+    "tools":     true,
+    "prompts":   true,
+    "resources": false,
+    "sampling":  false
+  },
+  "categories": [
+    "security",
+    "compliance",
+    "governance",
+    "audit",
+    "identity"
+  ],
+  "tags": [
+    "ai-agents",
+    "rfc-6962",
+    "merkle-tree",
+    "tamper-evidence",
+    "soc2",
+    "audit-log",
+    "secrets-management",
+    "scoped-sessions",
+    "spend-limits",
+    "human-in-the-loop",
+    "webhooks",
+    "evidence-pack",
+    "cryptographic-proofs"
+  ],
+  "use_cases": [
+    {
+      "name": "Scope + spend-limit an agent before it touches tools",
+      "tool": "create_session",
+      "example": "create_session(agent_id='refund-bot', scopes=['stripe:refund'], spend_limit=50.0, ttl=3600)"
+    },
+    {
+      "name": "Log a tool call so the chain + Merkle tree cover it",
+      "tool": "log_audit_action",
+      "example": "log_audit_action(session_id='ses_xxx', tool='stripe', action='refund', cost_usd=12.50)"
+    },
+    {
+      "name": "Prove an audit entry is in the current signed tree",
+      "tool": "get_inclusion_proof",
+      "example": "get_inclusion_proof(entry_id='ent_xxx')  # returns RFC 6962 audit_path + root + STH"
+    },
+    {
+      "name": "Prove the current tree is an append-only extension of an earlier STH",
+      "tool": "get_consistency_proof",
+      "example": "get_consistency_proof(first=1000, second=5000)"
+    },
+    {
+      "name": "Generate signed audit-prep evidence for a SOC2 workpaper",
+      "tool": "build_evidence_pack",
+      "example": "build_evidence_pack(period_start='2026-01-01', period_end='2026-04-01')"
+    }
+  ],
+  "links": {
+    "landing":       "https://haldir.xyz",
+    "docs":          "https://haldir.xyz/docs",
+    "openapi":       "https://haldir.xyz/openapi.json",
+    "llms":          "https://haldir.xyz/llms.txt",
+    "llms_full":     "https://haldir.xyz/llms-full.txt",
+    "ai_plugin":     "https://haldir.xyz/.well-known/ai-plugin.json",
+    "mcp_manifest":  "https://haldir.xyz/.well-known/mcp/mcp.json",
+    "agents_md":     "https://haldir.xyz/AGENTS.md",
+    "tamper_demo":   "https://haldir.xyz/demo/tamper",
+    "evidence_pack": "https://haldir.xyz/compliance?demo=1",
+    "sdk_python":    "https://pypi.org/project/haldir/",
+    "repo":          "https://github.com/ExposureGuard/haldir",
+    "smithery":      "https://smithery.ai/server/haldir/haldir"
+  },
+  "trust_signals": {
+    "open_source":                true,
+    "rfc_6962_merkle":            true,
+    "encryption_at_rest":         "AES-256-GCM",
+    "audit_log_tamper_evident":   true,
+    "offline_proof_verification": true,
+    "signed_evidence_packs":      true,
+    "scoped_api_keys":            true
+  }
+}
