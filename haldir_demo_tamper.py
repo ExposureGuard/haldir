@@ -132,11 +132,15 @@ def ensure_seeded() -> None:
             return
         now = time.time()
         for r in SEED_ROWS:
+            # ON CONFLICT DO NOTHING works on SQLite 3.24+ AND Postgres 9.5+.
+            # "INSERT OR IGNORE" is SQLite-only and raises a syntax error on
+            # Postgres — bit us on prod before we caught it.
             conn.execute(
-                "INSERT OR IGNORE INTO audit_log "
+                "INSERT INTO audit_log "
                 "(entry_id, tenant_id, session_id, agent_id, action, tool, "
                 " details, cost_usd, timestamp, flagged, prev_hash, entry_hash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?) "
+                "ON CONFLICT (entry_id) DO NOTHING",
                 (
                     r["entry_id"], DEMO_TENANT, r["session_id"],
                     r["agent_id"], r["action"], r["tool"],
