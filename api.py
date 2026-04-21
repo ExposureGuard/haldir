@@ -1113,6 +1113,95 @@ def get_audit_inclusion_proof(entry_id: str):
     return jsonify(proof)
 
 
+@app.route("/v1/audit/sth-log", methods=["GET"])
+@require_api_key
+@require_scope("audit:read")
+def get_audit_sth_log():
+    """Self-published log of every Signed Tree Head Haldir has issued
+    for this tenant.
+
+    Query params:
+      since (int)   — exclusive lower bound on tree_size (default 0)
+      limit (int)   — max rows to return (default 1000, max 10000)
+
+    Returns:
+      {
+        "tenant_id":  ...,
+        "count":      <int total recorded>,
+        "earliest":   <oldest row or null>,
+        "latest":     <newest row or null>,
+        "sths":       [<rows>...]
+      }
+
+    The combination of this endpoint and /v1/audit/sth-log/verify
+    closes Haldir's tamper-evidence loop: an auditor can pin any
+    STH today, demand the full log next quarter, and prove with
+    certainty that no historical STH has been rewritten."""
+    import haldir_sth_log
+    tenant = getattr(request, "tenant_id", "")
+    try:
+        since = int(request.args.get("since", "0"))
+        limit = min(int(request.args.get("limit", "1000")), 10000)
+    except ValueError:
+        return _json_error(
+            "invalid_argument",
+            "since and limit must be integers",
+            400,
+        )
+    return jsonify({
+        "tenant_id": tenant,
+        "count":     haldir_sth_log.count(DB_PATH, tenant),
+        "earliest":  haldir_sth_log.earliest(DB_PATH, tenant),
+        "latest":    haldir_sth_log.latest(DB_PATH, tenant),
+        "sths":      haldir_sth_log.list(DB_PATH, tenant, since, limit),
+    })
+
+
+@app.route("/v1/audit/sth-log/verify", methods=["GET"])
+@require_api_key
+@require_scope("audit:read")
+def verify_audit_sth_log():
+    """Anti-equivocation verifier: an auditor pins (tree_size, root_hash)
+    at one point in time and asks Haldir to prove the recorded STH at
+    that tree_size still matches.
+
+    Three outcomes:
+      verified=true                 → pinned root matches the recorded
+                                       row at that tree_size
+      verified=false reason=equivocation
+                                    → DIFFERENT root recorded at the
+                                       pinned tree_size (cryptographic
+                                       proof of misbehaviour)
+      verified=false reason=not_in_log
+                                    → no row at that tree_size; either
+                                       predates retention or pinned STH
+                                       is forged
+
+    Query params:
+      pinned_size (int, required)
+      pinned_root (hex, required)
+    """
+    import haldir_sth_log
+    tenant = getattr(request, "tenant_id", "")
+    pinned_size_s = request.args.get("pinned_size", "")
+    pinned_root   = request.args.get("pinned_root", "").strip().lower()
+    if not pinned_size_s or not pinned_root:
+        return _json_error(
+            "invalid_argument",
+            "pinned_size and pinned_root are required query params",
+            400,
+        )
+    try:
+        pinned_size = int(pinned_size_s)
+    except ValueError:
+        return _json_error(
+            "invalid_argument", "pinned_size must be an integer", 400,
+        )
+    return jsonify(haldir_sth_log.verify_against_pinned(
+        DB_PATH, tenant, pinned_size, pinned_root,
+    ))
+
+
 @app.route("/v1/audit/consistency-proof", methods=["GET"])
 @require_api_key
 @require_scope("audit:read")

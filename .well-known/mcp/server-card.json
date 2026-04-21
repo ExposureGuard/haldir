@@ -111,6 +111,7 @@
     "jwks_endpoint":              "/.well-known/jwks.json",
     "x402_compatible":            true,
     "x402_manifest":              "/.well-known/x402.json",
-    "agentic_market_listed":      "https://agentic.market"
+    "agentic_market_listed":      "https://agentic.market",
+    "anti_equivocation":          "Self-published STH log at /v1/audit/sth-log; verify a pinned STH at /v1/audit/sth-log/verify"
   }
 }

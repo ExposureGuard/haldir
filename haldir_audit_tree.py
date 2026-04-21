@@ -127,11 +127,27 @@ def _sign(tree_size: int, root: bytes) -> dict[str, Any]:
 
 
 def get_tree_head(db_path: str, tenant_id: str) -> dict[str, Any]:
-    """Compute the current Merkle root + STH for a tenant's log."""
+    """Compute the current Merkle root + STH for a tenant's log.
+
+    Side-effect: every freshly-signed STH is recorded into the
+    self-published STH log via haldir_sth_log.record(). The (tenant,
+    tree_size) primary key makes this idempotent — repeated calls
+    at the same tree size never write duplicates. This is what gives
+    Haldir its anti-equivocation property: an auditor can pin any
+    STH today and verify a year from now that Haldir hasn't
+    rewritten history."""
     leaves = [lh for _, lh in _load_leaves(db_path, tenant_id)]
     root = merkle.mth(leaves)
     sth = _sign(len(leaves), root)
     sth["tenant_id"] = tenant_id
+    # Persist to the self-published log. Best-effort — never block
+    # the response on log-write errors (record() swallows + returns
+    # False, so the user still gets their STH).
+    try:
+        import haldir_sth_log
+        haldir_sth_log.record(db_path, tenant_id, sth)
+    except Exception:
+        pass
     return sth
 
 
