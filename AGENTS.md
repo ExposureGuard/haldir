@@ -119,5 +119,9 @@ building a tool list, the canonical entry points are:
 - `/.well-known/ai.txt` — authorship + data-use statement
 - `/.well-known/mcp/mcp.json` — MCP server manifest
 - `/.well-known/mcp/server-card.json` — human-readable server card
+- `/.well-known/x402.json` — x402 paid-resource manifest (agentic.market compatible)
+- `/v1/x402/manifest` — same content as well-known, preferred by some crawlers
 
 For the adversarial demo that proves the tamper-evidence claim: `/demo/tamper`.
+
+For agent-to-agent commerce: `/v1/x402/tree-head`, `/v1/x402/inclusion-proof/<entry_id>`, `/v1/x402/evidence-pack` — USDC-priced via x402 v2 (gated behind `HALDIR_X402_ENABLED=1`).

@@ -108,6 +108,9 @@
     "signed_evidence_packs":      true,
     "scoped_api_keys":            true,
     "asymmetric_sth_signing":     "Ed25519 via /.well-known/jwks.json (opt-in when HALDIR_TREE_SIGNING_KEY_ED25519_SEED is set)",
-    "jwks_endpoint":              "/.well-known/jwks.json"
+    "jwks_endpoint":              "/.well-known/jwks.json",
+    "x402_compatible":            true,
+    "x402_manifest":              "/.well-known/x402.json",
+    "agentic_market_listed":      "https://agentic.market"
   }
 }

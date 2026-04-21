@@ -3202,6 +3202,83 @@ def demo_assets(filename):
     return send_from_directory(demo_dir, filename, max_age=3600)
 
 
+# ── x402 pay-per-request surface (agentic.market compatible) ─────────
+#
+# Three Haldir primitives exposed as x402-v2 paid resources. Gated
+# behind HALDIR_X402_ENABLED so the default deploy doesn't force USDC
+# on free-tier visitors. When enabled, the decorator handles the full
+# 402 flow: header validation → facilitator verify → facilitator
+# settle → Merkle-logged payment → underlying handler response with
+# PAYMENT-RESPONSE carrying the tx hash.
+
+import haldir_x402
+
+X402_PRICE_TREE_HEAD      = 1000    # $0.001 USDC
+X402_PRICE_INCLUSION      = 10000   # $0.01  USDC
+X402_PRICE_EVIDENCE_PACK  = 100000  # $0.10  USDC
+
+
+@app.route("/v1/x402/tree-head", methods=["GET"])
+@haldir_x402.require_x402_payment(
+    amount_atomic=X402_PRICE_TREE_HEAD,
+    description="Current RFC 6962 Signed Tree Head for the demo tenant's audit log — Ed25519-signed, verifiable against /.well-known/jwks.json.",
+    resource_name="tree-head",
+)
+def x402_tree_head():
+    import haldir_audit_tree
+    tenant = getattr(request, "tenant_id", "") or "demo-tamper-public"
+    return jsonify(haldir_audit_tree.get_tree_head(DB_PATH, tenant))
+
+
+@app.route("/v1/x402/inclusion-proof/<entry_id>", methods=["GET"])
+@haldir_x402.require_x402_payment(
+    amount_atomic=X402_PRICE_INCLUSION,
+    description="RFC 6962 inclusion proof for a single audit entry — bundled with the current STH, verifiable offline with the Haldir SDK or any RFC 6962 verifier.",
+    resource_name="inclusion-proof",
+)
+def x402_inclusion_proof(entry_id: str):
+    import haldir_audit_tree
+    tenant = getattr(request, "tenant_id", "") or "demo-tamper-public"
+    proof = haldir_audit_tree.get_inclusion_proof(DB_PATH, tenant, entry_id)
+    if proof is None:
+        return jsonify({"error": "entry not found in this tenant's log",
+                        "entry_id": entry_id}), 404
+    return jsonify(proof)
+
+
+@app.route("/v1/x402/evidence-pack", methods=["GET"])
+@haldir_x402.require_x402_payment(
+    amount_atomic=X402_PRICE_EVIDENCE_PACK,
+    description="Signed audit-prep evidence pack relevant to SOC2 CC5.2, CC6.1, CC6.7, CC7.2, CC7.3, CC8.1. JSON with eight sections + SHA-256 self-signature + embedded STH.",
+    resource_name="evidence-pack",
+)
+def x402_evidence_pack():
+    import haldir_compliance
+    tenant = getattr(request, "tenant_id", "") or "demo-tamper-public"
+    since = _parse_iso_or_unix(request.args.get("since"))
+    until = _parse_iso_or_unix(request.args.get("until"))
+    return jsonify(haldir_compliance.build_evidence_pack(
+        DB_PATH, tenant, since=since, until=until,
+    ))
+
+
+@app.route("/v1/x402/manifest", methods=["GET"])
+def x402_manifest():
+    """Discovery endpoint — lists every x402 resource this server
+    exposes with price + network + payTo. Public; no auth. Agentic
+    crawlers (agentic.market, x402.org/ecosystem) pull this to list
+    us in their directories."""
+    return jsonify(haldir_x402.build_manifest(app))
+
+
+@app.route("/.well-known/x402.json", methods=["GET"])
+def x402_well_known():
+    """Same content as /v1/x402/manifest at the well-known path. Some
+    directory crawlers look here, some at /v1/x402/manifest — we
+    advertise both so neither misses us."""
+    return jsonify(haldir_x402.build_manifest(app))
+
+
 # ── /demo/tamper — adversarial tamper-evidence demo ──────────────────
 #
 # Public, no-auth page. A visitor sees a live audit log for a seeded

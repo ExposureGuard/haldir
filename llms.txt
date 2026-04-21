@@ -61,6 +61,18 @@ POST /v1/keys {"name": "my-app"}
 - GET /v1/compliance/score — 0-100 readiness score + per-criterion pass/warn/fail + remediation
 - POST /v1/compliance/schedules — Recurring evidence delivery to email or webhook
 
+### x402 pay-per-request surface (agent-to-agent commerce)
+Haldir exposes its cryptographic primitives as x402 v2 paid resources so autonomous agents can buy proofs with USDC. Gated by HALDIR_X402_ENABLED=1; when off returns 503.
+
+- GET /v1/x402/tree-head — Current Ed25519-Signed Tree Head, $0.001 USDC
+- GET /v1/x402/inclusion-proof/{entry_id} — RFC 6962 inclusion proof + STH, $0.01 USDC
+- GET /v1/x402/evidence-pack — Signed audit-prep evidence pack, $0.10 USDC
+- GET /v1/x402/manifest — Machine-readable list of all paid resources
+- GET /.well-known/x402.json — Same content at the convention path crawlers look at
+
+Wire protocol: https://github.com/coinbase/x402/blob/main/specs/transports-v2/http.md
+Facilitator: https://x402.org/facilitator (configurable via HALDIR_X402_FACILITATOR_URL)
+
 ### Approvals (Human-in-the-loop)
 - POST /v1/approvals/rules — Add approval rule {"type": "spend_over", "threshold": 100}
 - POST /v1/approvals/request — Request human approval for an action
