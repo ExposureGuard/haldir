@@ -4203,6 +4203,18 @@ def agents_md():
         return f.read(), 200, {"Content-Type": "text/markdown; charset=utf-8"}
 
 
+@app.route("/THREAT_MODEL.md")
+def threat_model_md():
+    """Public threat-model document — STRIDE per component, named
+    adversaries, honest residual-risk declarations, disclosure policy.
+    Enterprise security buyers and technical investors read this
+    first; serving it at the repo + site root means there's one
+    canonical version no marketing team can dilute."""
+    p = os.path.join(os.path.dirname(__file__), "THREAT_MODEL.md")
+    with open(p) as f:
+        return f.read(), 200, {"Content-Type": "text/markdown; charset=utf-8"}
+
+
 @app.route("/icon.svg")
 def icon_svg():
     return '''<svg viewBox="0 0 80 92" fill="none" xmlns="http://www.w3.org/2000/svg">

@@ -135,6 +135,7 @@ PyPI: https://pypi.org/project/haldir/
 - API Docs: https://haldir.xyz/docs
 - OpenAPI Spec: https://haldir.xyz/openapi.json
 - AGENTS.md: https://haldir.xyz/AGENTS.md (conventions for AI coding agents touching this repo)
+- THREAT_MODEL.md: https://haldir.xyz/THREAT_MODEL.md (STRIDE analysis + named adversaries + honest residual-risk declarations)
 - MCP manifest: https://haldir.xyz/.well-known/mcp/mcp.json
 - MCP server card: https://haldir.xyz/.well-known/mcp/server-card.json
 - JWKS (STH public keys): https://haldir.xyz/.well-known/jwks.json

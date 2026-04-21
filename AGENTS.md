@@ -121,6 +121,7 @@ building a tool list, the canonical entry points are:
 - `/.well-known/mcp/server-card.json` — human-readable server card
 - `/.well-known/x402.json` — x402 paid-resource manifest (agentic.market compatible)
 - `/v1/x402/manifest` — same content as well-known, preferred by some crawlers
+- `/THREAT_MODEL.md` — STRIDE per component, named adversaries, residual-risk declarations, disclosure policy
 
 For the adversarial demo that proves the tamper-evidence claim: `/demo/tamper`.
 

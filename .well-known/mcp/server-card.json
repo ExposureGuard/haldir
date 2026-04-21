@@ -112,6 +112,7 @@
     "x402_compatible":            true,
     "x402_manifest":              "/.well-known/x402.json",
     "agentic_market_listed":      "https://agentic.market",
-    "anti_equivocation":          "Self-published STH log at /v1/audit/sth-log; verify a pinned STH at /v1/audit/sth-log/verify"
+    "anti_equivocation":          "Self-published STH log at /v1/audit/sth-log; verify a pinned STH at /v1/audit/sth-log/verify",
+    "threat_model":               "/THREAT_MODEL.md (full STRIDE analysis + named adversaries + residual-risk declarations)"
   }
 }

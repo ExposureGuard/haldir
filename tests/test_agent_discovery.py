@@ -106,6 +106,36 @@ def test_agents_md_served(haldir_client) -> None:
         assert heading in body, f"AGENTS.md missing section: {heading!r}"
 
 
+def test_threat_model_served(haldir_client) -> None:
+    """THREAT_MODEL.md is what enterprise security buyers + technical
+    investors read first. Has to be at /THREAT_MODEL.md AND has to
+    actually carry STRIDE coverage + named adversaries + residual-
+    risk declarations — not marketing copy."""
+    r = haldir_client.get("/THREAT_MODEL.md")
+    assert r.status_code == 200
+    assert r.headers["Content-Type"].startswith("text/markdown")
+    body = r.data.decode()
+    # Required structural pieces. If any of these go missing the doc
+    # has been gutted into marketing.
+    for marker in (
+        "STRIDE",
+        "Adversaries",
+        "Residual",
+        "Out of scope",
+        "disclosure",
+        "Cryptographic primitives",
+        "AES-256-GCM",
+        "RFC 6962",
+        "Ed25519",
+        "anti-equivocation",
+    ):
+        assert marker.lower() in body.lower(), (
+            f"THREAT_MODEL.md missing required marker: {marker!r}"
+        )
+    # Disclosure contact must be present.
+    assert "sterling@" in body or "security.txt" in body
+
+
 # ── MCP discovery surface ────────────────────────────────────────────
 
 def test_mcp_manifest_served(haldir_client) -> None:
