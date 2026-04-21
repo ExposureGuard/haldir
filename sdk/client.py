@@ -271,6 +271,34 @@ class HaldirClient:
             params["agent_id"] = agent_id
         return self._request("GET", "/v1/audit/spend", params=params)
 
+    # ── Tamper-evidence surface (RFC 6962 Merkle + Ed25519 STH) ──
+
+    def get_tree_head(self) -> dict:
+        """Current Signed Tree Head for the authenticated tenant's
+        audit log. Returns tree_size + root_hash + signature +
+        algorithm + signed_at + (Ed25519 only) key_id + public_key.
+
+        Pin this at enrollment; auditors use it as the trust root for
+        every later inclusion + consistency proof."""
+        return self._request("GET", "/v1/audit/tree-head")
+
+    def get_inclusion_proof(self, entry_id: str) -> dict:
+        """RFC 6962 inclusion proof for a single audit entry, bundled
+        with the current STH. Verifies offline via
+        haldir.verify_inclusion_proof() — no further server calls."""
+        return self._request(
+            "GET", f"/v1/audit/inclusion-proof/{entry_id}",
+        )
+
+    def get_consistency_proof(self, first: int, second: int) -> dict:
+        """Prove the tree of size `second` is an append-only extension
+        of the tree of size `first`. Same primitive Certificate
+        Transparency uses for detecting WebPKI log forks."""
+        return self._request(
+            "GET", "/v1/audit/consistency-proof",
+            params={"first": first, "second": second},
+        )
+
 
 # ── Async Client ──
 
@@ -445,3 +473,22 @@ class HaldirAsyncClient:
         if agent_id:
             params["agent_id"] = agent_id
         return await self._request("GET", "/v1/audit/spend", params=params)
+
+    # ── Tamper-evidence surface (RFC 6962 Merkle + Ed25519 STH) ──
+
+    async def get_tree_head(self) -> dict:
+        """Current Signed Tree Head (async)."""
+        return await self._request("GET", "/v1/audit/tree-head")
+
+    async def get_inclusion_proof(self, entry_id: str) -> dict:
+        """RFC 6962 inclusion proof for a single audit entry (async)."""
+        return await self._request(
+            "GET", f"/v1/audit/inclusion-proof/{entry_id}",
+        )
+
+    async def get_consistency_proof(self, first: int, second: int) -> dict:
+        """Append-only consistency proof between two tree sizes (async)."""
+        return await self._request(
+            "GET", "/v1/audit/consistency-proof",
+            params={"first": first, "second": second},
+        )

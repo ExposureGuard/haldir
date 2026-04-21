@@ -1,10 +1,23 @@
 """
 langchain-haldir — governance layer for LangChain agents.
 
-    from langchain_haldir import HaldirCallbackHandler, GovernedTool, HaldirSecrets, create_session
+Two-line adoption::
 
-Audit trails, spend caps, secrets vault, and instant revocation — wired into
-any LangChain agent or tool.
+    from langchain_haldir import HaldirSession
+
+    with HaldirSession.for_agent("my-bot") as haldir:
+        executor = AgentExecutor(..., callbacks=[haldir.handler])
+        result = executor.invoke({"input": "..."})
+    # Session auto-revoked. Every tool + LLM call audited.
+    # STH in result["_haldir_sth"] — pin it for offline verification.
+
+Advanced / explicit path::
+
+    from langchain_haldir import HaldirCallbackHandler, GovernedTool, HaldirSecrets
+
+Audit trails, spend caps (including LLM token cost), secrets vault,
+instant revocation, and RFC 6962 tree-head stamping at run end —
+wired into any LangChain agent or tool.
 """
 
 from __future__ import annotations
@@ -14,12 +27,14 @@ from typing import Any
 from sdk.client import HaldirClient
 
 from .callback import HaldirCallbackHandler
+from .session import HaldirSession
 from .tool import GovernedTool
 from .secrets import HaldirSecrets
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
+    "HaldirSession",
     "HaldirCallbackHandler",
     "GovernedTool",
     "HaldirSecrets",
