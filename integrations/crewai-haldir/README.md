@@ -1,8 +1,13 @@
 # crewai-haldir
 
-Governance layer for CrewAI agents — audit trails, spend caps, secrets vault, and instant revocation.
+Cryptographic-audit + governance for CrewAI agents. Two lines of code.
 
-Wrap any CrewAI tool in Haldir's enforcement proxy so every tool call is scope-checked, cost-tracked, and logged to a tamper-evident audit trail.
+- **Audit trail** — every tool call logged to a SHA-256 hash-chained + RFC 6962 Merkle-covered audit log
+- **Scope enforcement** — denied tools abort with `HaldirPermissionError`
+- **Secrets vault** — scope-checked credential retrieval as `SecretStr`
+- **Tree-head stamping** — attach the current Signed Tree Head to the crew's output; pin for offline verification later
+- **Instant revocation** — any process can revoke a session mid-run; next tool call aborts
+- **Auto-lifecycle** — session minted on `with` entry, revoked on exit even if the crew raises
 
 ## Install
 
@@ -10,54 +15,45 @@ Wrap any CrewAI tool in Haldir's enforcement proxy so every tool call is scope-c
 pip install crewai-haldir
 ```
 
-You'll need a Haldir API key. Create one free at [haldir.xyz](https://haldir.xyz).
+Free Haldir API key at [haldir.xyz](https://haldir.xyz).
 
-## 30-second quickstart
+## Two-line quickstart
 
 ```python
 from crewai import Agent, Task, Crew
 from crewai_tools import SerperDevTool
-from crewai_haldir import create_session, GovernedTool
+from crewai_haldir import HaldirSession, GovernedTool   # ← line 1
 
-# Create a scoped Haldir session with a $10 spend cap
-client, session_id = create_session(
-    api_key="hld_xxx",
-    agent_id="research-crew",
-    scopes=["read", "search", "spend"],
-    spend_limit=10.0,
-)
+with HaldirSession.for_agent("research-crew",           # ← line 2
+                              scopes=["read", "search"],
+                              spend_limit=10.0) as haldir:
+    search = GovernedTool.wrap(
+        SerperDevTool(),
+        client=haldir.client,
+        session_id=haldir.session_id,
+        required_scope="search",
+        cost_usd=0.01,
+    )
 
-# Wrap your tools so Haldir enforces permissions
-search = GovernedTool.wrap(
-    SerperDevTool(),
-    client=client,
-    session_id=session_id,
-    required_scope="search",
-    cost_usd=0.01,
-)
+    researcher = Agent(role="Researcher", goal="...", tools=[search])
+    task = Task(description="...", expected_output="...", agent=researcher)
+    crew = Crew(agents=[researcher], tasks=[task])
 
-# Build your crew as usual — governance happens transparently
-researcher = Agent(
-    role="Senior Research Analyst",
-    goal="Find the most recent news on a topic",
-    backstory="A diligent researcher with attention to sources.",
-    tools=[search],
-)
-
-task = Task(
-    description="Find the latest news about AI agent security incidents.",
-    expected_output="A bulleted list with sources.",
-    agent=researcher,
-)
-
-crew = Crew(agents=[researcher], tasks=[task])
-crew.kickoff()
+    result = haldir.stamp_sth(crew.kickoff())
+    # result["_haldir_sth"] or result._haldir_sth — pin it for
+    # offline verification any time later.
 ```
 
-Every tool call is now:
-- **Permission-checked** before execution (revoked or out-of-scope sessions raise `HaldirPermissionError`)
-- **Cost-tracked** against the session's `spend_limit`
-- **Logged** to Haldir's hash-chained audit trail with tool name, timestamp, and cost
+`HaldirSession.for_agent(...)` reads `HALDIR_API_KEY` + `HALDIR_BASE_URL` from the env. Session auto-revoked on scope exit, including on exception.
+
+## What you get
+
+| Step | Haldir action |
+|---|---|
+| Session enter | Mints a scoped session with the spend cap |
+| GovernedTool `_run` | Checks scope; logs call with input/output/cost |
+| `haldir.stamp_sth(result)` | Fetches current STH and attaches to the result |
+| Session exit (any path) | Revokes the session |
 
 ## Secrets without leaking them to the model
 

@@ -31,15 +31,27 @@ Quick start:
     agent.chat("What is 12 times 13?")
 """
 
-from .governed_tool import GovernedTool, govern_tool
+"""Exports. `GovernedTool` / `govern_tool` need the `llama_index`
+package installed; if the user hasn't installed it yet, `HaldirSession`
++ `HaldirSecrets` still work standalone. Lazy import keeps the package
+importable even before `pip install llama-index`."""
+
 from .secrets import HaldirSecrets
-from .session import create_session
+from .session import HaldirSession, create_session
 
 __all__ = [
+    "HaldirSession",
     "create_session",
     "govern_tool",
     "GovernedTool",
     "HaldirSecrets",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
+
+
+def __getattr__(name: str):
+    if name in ("GovernedTool", "govern_tool"):
+        from .governed_tool import GovernedTool, govern_tool
+        return {"GovernedTool": GovernedTool, "govern_tool": govern_tool}[name]
+    raise AttributeError(f"module 'llamaindex_haldir' has no attribute {name!r}")

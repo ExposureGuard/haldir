@@ -1,8 +1,13 @@
 # llamaindex-haldir
 
-Governance layer for [LlamaIndex](https://llamaindex.ai) tools and query engines — audit trails, spend caps, secrets vault, and instant revocation.
+Cryptographic-audit + governance for [LlamaIndex](https://llamaindex.ai) tools, agents, and query engines. Two lines of code.
 
-Wrap any LlamaIndex `BaseTool` (including `FunctionTool` and `QueryEngineTool`) in Haldir's enforcement proxy so every call is scope-checked, cost-tracked, and logged to a hash-chained tamper-evident audit trail.
+- **Audit trail** — every tool call logged to a SHA-256 hash-chained + RFC 6962 Merkle-covered audit log
+- **Scope enforcement** — denied tools abort with `HaldirPermissionError`
+- **Secrets vault** — scope-checked credential retrieval as `SecretStr`
+- **Tree-head stamping** — current Signed Tree Head attached to the agent's response; pin for offline verification later
+- **Instant revocation** — any process can revoke a session mid-run; next tool call aborts
+- **Auto-lifecycle** — session minted on `with` entry, revoked on exit even if the agent raises
 
 ## Install
 
@@ -10,42 +15,46 @@ Wrap any LlamaIndex `BaseTool` (including `FunctionTool` and `QueryEngineTool`) 
 pip install llamaindex-haldir
 ```
 
-You'll need a Haldir API key. Create one free at [haldir.xyz](https://haldir.xyz/quickstart).
+Free Haldir API key at [haldir.xyz](https://haldir.xyz/quickstart).
 
-## 30-second quickstart
+## Two-line quickstart
 
 ```python
-import os
-from llama_index.core.tools import FunctionTool
 from llama_index.core.agent import ReActAgent
+from llama_index.core.tools import FunctionTool
 from llama_index.llms.openai import OpenAI
+from llamaindex_haldir import HaldirSession, govern_tool   # ← line 1
 
-from llamaindex_haldir import create_session, govern_tool
-
-
-# Create a scoped Haldir session with a $5 spend cap
-client, session_id = create_session(
-    api_key=os.environ["HALDIR_API_KEY"],
-    agent_id="llamaindex-math-agent",
-    scopes=["read", "execute", "spend"],
-    spend_limit=5.0,
-)
-
-# Define a normal LlamaIndex tool
 def multiply(a: int, b: int) -> int:
-    """Multiply two integers."""
     return a * b
 
-raw = FunctionTool.from_defaults(fn=multiply)
+with HaldirSession.for_agent("li-math",                   # ← line 2
+                              scopes=["read", "execute"],
+                              spend_limit=5.0) as haldir:
+    governed = govern_tool(
+        FunctionTool.from_defaults(fn=multiply),
+        client=haldir.client,
+        session_id=haldir.session_id,
+        required_scope="execute",
+        cost_usd=0.001,
+    )
 
-# Wrap it — permissions + audit are now enforced on every call
-governed = govern_tool(
-    raw,
-    client=client,
-    session_id=session_id,
-    required_scope="execute",
-    cost_usd=0.001,
-)
+    agent = ReActAgent.from_tools([governed],
+                                   llm=OpenAI(model="gpt-4o-mini"))
+    resp = haldir.stamp_sth(agent.chat("What is 12 times 13?"))
+    # resp._haldir_sth — pin it for offline verification any time later.
+```
+
+`HaldirSession.for_agent(...)` reads `HALDIR_API_KEY` + `HALDIR_BASE_URL` from the env. Session auto-revoked on scope exit, including on exception.
+
+## What you get
+
+| Step | Haldir action |
+|---|---|
+| Session enter | Mints a scoped session with the spend cap |
+| `govern_tool` `_run` | Checks scope; logs call with input/output/cost |
+| `haldir.stamp_sth(resp)` | Fetches current STH and attaches to response |
+| Session exit (any path) | Revokes the session |
 
 # Use as a drop-in LlamaIndex tool
 agent = ReActAgent.from_tools([governed], llm=OpenAI(model="gpt-4o-mini"))
