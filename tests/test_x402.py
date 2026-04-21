@@ -261,6 +261,50 @@ def test_successful_payment_logs_to_audit(haldir_client) -> None:
 
 # ── Schema conformance (base64 + field coverage) ────────────────────
 
+def test_402_carries_bazaar_extension(haldir_client) -> None:
+    """The Coinbase Bazaar discovery extension MUST be present in the
+    PAYMENT-REQUIRED extensions block — that's how a bazaar-aware
+    facilitator (CDP default) auto-indexes us into the public Bazaar
+    + agentic.market on the first paid call. Without this metadata
+    we never get listed."""
+    r = haldir_client.get("/v1/x402/tree-head")
+    decoded = _decode(r.headers["PAYMENT-REQUIRED"])
+    bazaar = decoded.get("extensions", {}).get("bazaar")
+    assert bazaar, "tree-head must publish a bazaar discovery extension"
+    # Required Bazaar shape: {info: {input, output}, schema}
+    assert "info" in bazaar
+    assert "schema" in bazaar
+    assert bazaar["info"]["input"]["type"] == "http"
+    assert bazaar["info"]["input"]["method"] == "GET"
+    assert bazaar["schema"]["type"] == "object"
+
+
+def test_manifest_surfaces_bazaar_discovery_per_resource(haldir_client) -> None:
+    """Every paid resource on the manifest must surface its Bazaar
+    discovery block at the top level so non-Coinbase aggregators can
+    ingest the input/output schemas without parsing 402 responses."""
+    mf = haldir_client.get("/v1/x402/manifest").get_json()
+    # All three paid endpoints carry bazaar metadata.
+    by_resource = {r["resource"]: r for r in mf["resources"]}
+    for res in ("tree-head", "inclusion-proof", "evidence-pack"):
+        assert "discovery" in by_resource[res], (
+            f"{res!r} on the manifest is missing a discovery block"
+        )
+        d = by_resource[res]["discovery"]
+        assert "info" in d and "schema" in d
+
+
+def test_inclusion_proof_bazaar_advertises_path_param(haldir_client) -> None:
+    """A bazaar-aware client should be able to pull the inclusion-proof
+    metadata and learn that {entry_id} is a string path parameter
+    without reading our docs."""
+    mf = haldir_client.get("/v1/x402/manifest").get_json()
+    res = next(r for r in mf["resources"] if r["resource"] == "inclusion-proof")
+    path_params = res["discovery"]["info"]["input"].get("pathParams", {})
+    assert "entry_id" in path_params
+    assert path_params["entry_id"]["type"] == "string"
+
+
 def test_payment_required_schema_matches_coinbase_reference() -> None:
     """Hand-build a PaymentRequired via the module, round-trip through
     base64, and assert every field the spec calls 'Required' is present

@@ -3223,6 +3223,42 @@ X402_PRICE_EVIDENCE_PACK  = 100000  # $0.10  USDC
     amount_atomic=X402_PRICE_TREE_HEAD,
     description="Current RFC 6962 Signed Tree Head for the demo tenant's audit log — Ed25519-signed, verifiable against /.well-known/jwks.json.",
     resource_name="tree-head",
+    bazaar={
+        "info": {
+            "input": {
+                "type":   "http",
+                "method": "GET",
+            },
+            "output": {
+                "type":   "object",
+                "format": "application/json",
+                "example": {
+                    "tree_size":  5,
+                    "root_hash":  "6dfb5091757a6cf6103c6c5875515d7ddce2a2aba5b4733dc73e18432213c608",
+                    "signed_at":  1776641283,
+                    "signature":  "1554589611ad7dda…",
+                    "algorithm":  "Ed25519-over-canonical-sth",
+                    "key_id":     "8d409dbbd0525852",
+                    "tenant_id":  "demo-tamper-public",
+                },
+            },
+        },
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type":    "object",
+            "required": ["tree_size", "root_hash", "signature", "algorithm"],
+            "properties": {
+                "tree_size":  {"type": "integer", "minimum": 0},
+                "root_hash":  {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "signature":  {"type": "string"},
+                "signed_at":  {"type": "integer"},
+                "algorithm":  {"type": "string"},
+                "key_id":     {"type": "string"},
+                "public_key": {"type": "string"},
+                "tenant_id":  {"type": "string"},
+            },
+        },
+    },
 )
 def x402_tree_head():
     import haldir_audit_tree
@@ -3235,6 +3271,51 @@ def x402_tree_head():
     amount_atomic=X402_PRICE_INCLUSION,
     description="RFC 6962 inclusion proof for a single audit entry — bundled with the current STH, verifiable offline with the Haldir SDK or any RFC 6962 verifier.",
     resource_name="inclusion-proof",
+    bazaar={
+        "info": {
+            "input": {
+                "type":   "http",
+                "method": "GET",
+                "pathParams": {
+                    "entry_id": {
+                        "type":        "string",
+                        "description": "UUID of the audit entry to prove inclusion for",
+                    },
+                },
+            },
+            "output": {
+                "type":   "object",
+                "format": "application/json",
+                "example": {
+                    "algorithm":  "RFC6962-SHA256",
+                    "entry_id":   "demo-entry-003",
+                    "leaf_index": 2,
+                    "leaf_hash":  "56ef498fc1fbac7e1fbccc3749b3a820cd605526d4069bd230b24c6665e3f884",
+                    "tree_size":  5,
+                    "root_hash":  "6dfb5091757a6cf6103c6c5875515d7ddce2a2aba5b4733dc73e18432213c608",
+                    "audit_path": ["dab03c52…", "2671fb43…", "960b4b04…"],
+                    "sth": {"tree_size": 5, "root_hash": "6dfb5091…",
+                             "algorithm": "Ed25519-over-canonical-sth"},
+                },
+            },
+        },
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type":    "object",
+            "required": ["algorithm", "leaf_hash", "leaf_index",
+                          "tree_size", "root_hash", "audit_path", "sth"],
+            "properties": {
+                "algorithm":  {"const": "RFC6962-SHA256"},
+                "entry_id":   {"type": "string"},
+                "leaf_index": {"type": "integer", "minimum": 0},
+                "leaf_hash":  {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "tree_size":  {"type": "integer", "minimum": 1},
+                "root_hash":  {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "audit_path": {"type": "array", "items": {"type": "string"}},
+                "sth":        {"type": "object"},
+            },
+        },
+    },
 )
 def x402_inclusion_proof(entry_id: str):
     import haldir_audit_tree
@@ -3251,6 +3332,53 @@ def x402_inclusion_proof(entry_id: str):
     amount_atomic=X402_PRICE_EVIDENCE_PACK,
     description="Signed audit-prep evidence pack relevant to SOC2 CC5.2, CC6.1, CC6.7, CC7.2, CC7.3, CC8.1. JSON with eight sections + SHA-256 self-signature + embedded STH.",
     resource_name="evidence-pack",
+    bazaar={
+        "info": {
+            "input": {
+                "type":   "http",
+                "method": "GET",
+                "queryParams": {
+                    "since": {
+                        "type":        "string",
+                        "description": "Period start (ISO 8601 or unix seconds). Defaults to 90 days ago.",
+                    },
+                    "until": {
+                        "type":        "string",
+                        "description": "Period end (ISO 8601 or unix seconds). Defaults to now.",
+                    },
+                },
+            },
+            "output": {
+                "type":   "object",
+                "format": "application/json",
+                "example": {
+                    "format_version": "haldir-evidence-1",
+                    "tenant_id":      "demo-tamper-public",
+                    "period_start":   "2026-01-01T00:00:00+00:00",
+                    "period_end":     "2026-04-01T00:00:00+00:00",
+                    "controls":       {"...": "8 SOC2 control sections"},
+                    "tamper_evidence": {"algorithm": "RFC6962-SHA256",
+                                          "tree_size": 5, "root_hash": "..."},
+                    "signatures":     {"algorithm": "SHA-256",
+                                          "digest": "..."},
+                },
+            },
+        },
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type":    "object",
+            "required": ["tenant_id", "period_start", "period_end",
+                          "controls", "signatures"],
+            "properties": {
+                "tenant_id":       {"type": "string"},
+                "period_start":    {"type": "string"},
+                "period_end":      {"type": "string"},
+                "controls":        {"type": "object"},
+                "tamper_evidence": {"type": "object"},
+                "signatures":      {"type": "object"},
+            },
+        },
+    },
 )
 def x402_evidence_pack():
     import haldir_compliance

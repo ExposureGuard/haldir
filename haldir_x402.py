@@ -185,14 +185,21 @@ def make_payment_required(
     asset: str | None = None,
     pay_to: str | None = None,
     error_message: str = "PAYMENT-SIGNATURE header is required",
+    bazaar: dict | None = None,
 ) -> dict:
     """Build a v2 PaymentRequired payload ready for base64-encoding
     into the PAYMENT-REQUIRED header.
 
     `amount_atomic` is the raw USDC amount (6 decimals): $0.01 = 10000.
-    The spec examples use strings for on-the-wire — we coerce on output.
+
+    `bazaar`: optional Coinbase Bazaar discovery-extension block. Shape
+    is `{info: {input: {...}, output: {...}}, schema: {...}}`. A
+    bazaar-aware facilitator (the CDP default) catalogs this metadata
+    on the first successful settlement, which is how services land in
+    Coinbase's Bazaar + agentic.market — there's no separate manual
+    submission. See specs/extensions/bazaar/ in coinbase/x402.
     """
-    return {
+    doc = {
         "x402Version": X402_VERSION,
         "error":       error_message,
         "resource": {
@@ -216,6 +223,12 @@ def make_payment_required(
         ],
         "extensions": {},
     }
+    if bazaar:
+        # Bazaar extension lives under the "bazaar" key in the
+        # extensions map. Structure per coinbase/x402 types.py:
+        # QueryDiscoveryExtension = {info: {input, output}, schema}.
+        doc["extensions"]["bazaar"] = bazaar
+    return doc
 
 
 # ── Facilitator integration ─────────────────────────────────────────
@@ -344,9 +357,15 @@ def require_x402_payment(
     amount_atomic: int,
     description: str,
     resource_name: str,
+    bazaar: dict | None = None,
 ):
     """Decorator factory. Wrap a Flask handler to require an x402
     payment before running it.
+
+    `bazaar` is the optional discovery-extension block. Pass it to
+    auto-list this resource in Coinbase Bazaar + downstream directories
+    (agentic.market) on the first paid settlement through a
+    bazaar-aware facilitator.
 
     Flow on each request:
       1. If x402 is disabled globally (HALDIR_X402_ENABLED != "1"),
@@ -379,6 +398,7 @@ def require_x402_payment(
                 resource_url=full_url,
                 amount_atomic=amount_atomic,
                 description=description,
+                bazaar=bazaar,
             )
             required_header = _b64_json_encode(requirements_doc)
 
@@ -479,6 +499,7 @@ def require_x402_payment(
             "resource":      resource_name,
             "amount_atomic": amount_atomic,
             "description":   description,
+            "bazaar":        bazaar,
         }
         return wrapper
     return decorator
@@ -530,7 +551,7 @@ def build_manifest(app) -> dict:
         # don't have to read 6-decimal math.
         amt_atomic = int(meta["amount_atomic"])
         dollars = amt_atomic / 1_000_000
-        resources.append({
+        entry = {
             "path":          str(rule.rule),
             "methods":       sorted(m for m in rule.methods if m not in ("HEAD", "OPTIONS")),
             "resource":      meta["resource"],
@@ -541,7 +562,14 @@ def build_manifest(app) -> dict:
             "network":       _network(),
             "pay_to":        _pay_to(),
             "scheme":        DEFAULT_SCHEME,
-        })
+        }
+        if meta.get("bazaar"):
+            # Surface the Bazaar discovery block at the top level of
+            # the manifest entry so non-Coinbase crawlers (agentic
+            # aggregators, third-party MCP indexers) can ingest the
+            # input/output schemas without parsing a 402 response.
+            entry["discovery"] = meta["bazaar"]
+        resources.append(entry)
     return {
         "x402Version": X402_VERSION,
         "service":     "haldir",
