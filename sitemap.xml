@@ -132,5 +132,10 @@
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
+  <url>
+    <loc>https://haldir.xyz/blog/rfc-6962-merkle-trees-for-ai-agent-audit-logs</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
+  </url>
 
 </urlset>

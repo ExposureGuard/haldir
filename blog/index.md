@@ -6,6 +6,9 @@ Technical guides on AI agent governance, MCP security, and building production-r
 
 ## Posts
 
+### [RFC 6962 Merkle Trees for AI-Agent Audit Logs](./rfc-6962-merkle-trees-for-ai-agent-audit-logs.md)
+The Certificate Transparency playbook applied to AI-agent audit logs. Merkle-tree tamper evidence, Ed25519 Signed Tree Heads, anti-equivocation verifiers, Sigstore Rekor mirroring, and two lines of LangChain code that wire it all together. Same primitive that keeps 7 billion TLS certificates honest, now for AI agents.
+
 ### [Why AI Agents Need a Governance Layer (And How to Build One)](./why-ai-agents-need-governance.md)
 The problem of uncontrolled agents, what goes wrong without governance, and how to add identity, secrets management, and audit trails to your agent stack with Haldir.
 
