@@ -36,6 +36,12 @@ from haldir_merkle import (  # noqa: E402
     STH_ALGORITHM_ED25519,
 )
 
+# Rekor receipt verifier — validates a Sigstore Rekor inclusion proof
+# + SignedEntryTimestamp against Rekor's own published public key. Use
+# to independently confirm a mirror receipt Haldir persisted is
+# actually in Rekor's real log (not a fabrication from a lying mirror).
+from haldir_rekor_verify import verify_receipt as verify_rekor_receipt  # noqa: E402
+
 __all__ = [
     "HaldirClient",
     "HaldirAsyncClient",
@@ -48,6 +54,7 @@ __all__ = [
     "verify_inclusion_proof",
     "verify_consistency_proof",
     "verify_sth",
+    "verify_rekor_receipt",
     "STH_ALGORITHM_HMAC",
     "STH_ALGORITHM_ED25519",
 ]

@@ -330,7 +330,17 @@ Today, `sth_log` is single-DB. A coordinated DB-write attacker can rewrite both 
 
 **Status:** **SHIPPED** (`haldir_transparency_mirror.py`). Three backends implemented: `file:<path>`, `http://...`, `rekor[:url]`. Every STH is mirrored on publish; receipts live in `sth_mirror_receipts` + exposed at `GET /v1/audit/sth-log/mirror/receipts`. The Rekor backend sends a `hashedrekord` entry with the canonical-STH SHA-256 digest + Ed25519 public-key PEM + signature — exact shape Rekor accepts for arbitrary attestations. Opt-in via `HALDIR_TRANSPARENCY_MIRROR`; default is off so nothing changes for operators who don't configure it. A coordinated attacker now has to compromise Haldir's DB **plus** every mirror backend **plus** every auditor's saved receipt, simultaneously. That's an attack cost increase of multiple orders of magnitude.
 
-**Residual after v1:** we still trust that the mirror's HTTP response is genuine (no end-to-end signed receipt verification today). Follow-up: add Rekor inclusion-proof verification on the receipt, so a lying facilitator can't forge a UUID. Tracked as 10.3b.
+**10.3b — Rekor receipt verification** (SHIPPED, `haldir_rekor_verify.py`):
+
+The v1 mirror trusted that the facilitator's HTTP response was genuine. A lying facilitator could hand us a fabricated UUID + logIndex and we'd persist it. The verifier now cryptographically validates every stored Rekor receipt against Rekor's own published public key before trusting it:
+
+  1. **RFC 6962 inclusion proof.** We reconstruct the leaf hash from the entry body, walk the audit path, and check the resulting root matches the `rootHash` in the receipt. Delegates to `haldir_merkle.verify_inclusion` — the same property-tested verifier that validates Haldir's own tree (one less primitive the auditor has to trust).
+  2. **SignedEntryTimestamp (SET) signature.** Rekor signs over the canonical JSON of `{body, integratedTime, logID, logIndex}` with ECDSA-P-256. We fetch Rekor's public key live from `/api/v1/log/publicKey` and verify the signature.
+  3. **logID fingerprint.** Rekor's logID is `SHA-256(DER-encoded pubkey)`. If the receipt claims a different logID than the key we fetched, the receipt was issued by a different Rekor instance (or the mirror is lying about which log it used). Checked explicitly.
+
+Endpoint: `GET /v1/audit/sth-log/mirror/receipts/<receipt_id>/verify` returns `{verified, reason, checks, pubkey_fingerprint}`. SDK re-export: `haldir.verify_rekor_receipt(receipt)`. 25 tests cover 11 parametrized tree sizes + every tamper case (body, root, path hash, SET signature, pubkey substitution, logIndex mutation, missing inclusionProof, pubkey-fetch failure).
+
+After 10.3 + 10.3b: the attacker chain to silently rewrite history is now Haldir's DB + every mirror backend + Rekor's own signing key + every auditor's pinned receipt. Same resistance threshold CT achieves for the WebPKI.
 
 ### 10.4 Per-tenant Ed25519 BYOK signing keys
 Today, all tenants on a Haldir deployment share one Ed25519 STH-signing key. Future: per-tenant keys, with the public key pinned by the tenant out-of-band. Even Haldir-the-server cannot forge STHs for that tenant once the key is pinned.

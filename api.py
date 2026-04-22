@@ -1213,6 +1213,52 @@ def get_sth_mirror_receipts():
     })
 
 
+@app.route("/v1/audit/sth-log/mirror/receipts/<receipt_id>/verify", methods=["GET"])
+@require_api_key
+@require_scope("audit:read")
+def verify_sth_mirror_receipt(receipt_id: str):
+    """Cryptographically verify a single Rekor receipt against
+    Rekor's own publicly-published signing key.
+
+    An auditor uses this to independently confirm that the UUID the
+    mirror stored is actually in Rekor's real log — closing the
+    "lying mirror" residual (THREAT_MODEL §10.3b). Two cryptographic
+    proofs run here:
+
+      1. RFC 6962 inclusion proof: leaf_hash → sibling hashes →
+         claimed root. We delegate to haldir_merkle.verify_inclusion
+         so the SAME verifier that validates Haldir's own tree
+         validates Rekor's.
+      2. SignedEntryTimestamp: Rekor's ECDSA-P-256 signature over
+         the canonical {body, integratedTime, logID, logIndex}
+         envelope, verified against Rekor's public key fetched
+         live from the configured Rekor URL.
+
+    Both checks must pass for verified=true. Individual subcheck
+    results are returned so an operator dashboard can surface which
+    step failed.
+    """
+    import haldir_rekor_verify
+    import haldir_transparency_mirror
+    tenant = getattr(request, "tenant_id", "")
+    # Find the receipt. receipt_id is the Rekor UUID.
+    all_receipts = haldir_transparency_mirror.list_receipts(
+        DB_PATH, tenant, limit=10000,
+    )
+    receipt = next(
+        (r for r in all_receipts if r.get("receipt_id") == receipt_id),
+        None,
+    )
+    if receipt is None:
+        return _json_error(
+            "not_found",
+            "no Rekor receipt with that id for this tenant",
+            404,
+            receipt_id=receipt_id,
+        )
+    return jsonify(haldir_rekor_verify.verify_receipt(receipt))
+
+
 @app.route("/v1/audit/sth-log/verify", methods=["GET"])
 @require_api_key
 @require_scope("audit:read")
