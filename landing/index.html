@@ -91,6 +91,82 @@
     }
     </script>
 
+    <!-- FAQPage JSON-LD — agent-ingestible Q&A about Haldir. Google
+         + LLM crawlers extract this as structured answers to common
+         queries about the product. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is Haldir?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Haldir is the cryptographic governance layer for AI agents. It sits between an agent and the tools it calls, enforcing scoped sessions, spend limits, encrypted secrets retrieval, and an RFC 6962 Merkle-tree tamper-evident audit log with Ed25519 Signed Tree Heads mirrored to Sigstore Rekor. Same cryptographic primitive Certificate Transparency uses to keep seven billion TLS certificates honest, applied to AI-agent audit logs."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I add Haldir to a LangChain agent?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Two lines: 'from langchain_haldir import HaldirSession' then 'with HaldirSession.for_agent(\"bot\") as h: AgentExecutor(..., callbacks=[h.handler]).invoke({...})'. Every tool call and LLM call is audited, spend-capped, and the run's Signed Tree Head is stamped onto the output. Same pattern ships for CrewAI (crewai-haldir) and LlamaIndex (llamaindex-haldir)."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I install Haldir as an MCP server in Claude Desktop, Cursor, or Windsurf?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "pip install haldir, then paste this into the client's MCP config: {\"mcpServers\": {\"haldir\": {\"command\": \"haldir\", \"args\": [\"mcp\", \"serve\"], \"env\": {\"HALDIR_API_KEY\": \"hld_...\"}}}}. 18 tools appear immediately: create_session, get_inclusion_proof, build_evidence_pack, and the rest of Haldir's governance surface."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I verify an audit entry was logged and hasn't been tampered with?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Call GET /v1/audit/inclusion-proof/{entry_id}. The response includes the RFC 6962 audit path, the current Signed Tree Head, and Ed25519 signature. Verify offline with haldir.verify_inclusion_proof() and haldir.verify_sth() — no server trust required. For independent confirmation, Haldir mirrors each STH to Sigstore Rekor and exposes /v1/audit/sth-log/mirror/receipts/{uuid}/verify which cryptographically validates the receipt against Rekor's own published public key."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I try Haldir without signing up?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. haldir.xyz/demo/tamper is a live adversarial demo: click Tamper, watch the Merkle tree detect a real database mutation in real time. haldir.xyz/compliance?demo=1 shows a full audit-prep evidence pack. Both are free, no auth."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What compliance frameworks does Haldir cover?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Haldir generates signed audit-prep evidence packs relevant to SOC2 Trust Services Criteria CC5.2, CC6.1, CC6.7, CC7.2, CC7.3, and CC8.1. This is audit-prep evidence, not a SOC2 attestation itself — Haldir surfaces what an auditor asks for (controls, proofs, activity logs) so the tenant can answer quickly."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can AI agents buy individual audit proofs from Haldir?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, via x402 pay-per-request endpoints. Agents pay USDC on Base ($0.001 for a tree head, $0.01 for an inclusion proof, $0.10 for a full evidence pack). Manifest at /.well-known/x402.json and /v1/x402/manifest. Compatible with agentic.market and the Coinbase Bazaar discovery extension."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Where can agents discover Haldir's capabilities programmatically?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Single-entry manifest: https://haldir.xyz/.well-known/agent.json. Also: /.well-known/ai-plugin.json (OpenAI plugin format), /.well-known/mcp/mcp.json + server-card.json (MCP discovery), /.well-known/x402.json (x402 resources), /.well-known/jwks.json (Ed25519 verification key), /openapi.json (OpenAPI 3.1), /llms.txt + /llms-full.txt (LLM-native summaries), /AGENTS.md (conventions for coding agents working on this repo), /THREAT_MODEL.md (full STRIDE analysis)."
+          }
+        }
+      ]
+    }
+    </script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">

@@ -81,6 +81,111 @@ def test_ai_plugin_mentions_tamper_evidence(haldir_client) -> None:
     assert "RFC 6962" in desc or "Merkle" in desc or "tree-head" in desc.lower()
 
 
+def test_ai_plugin_advertises_integration_packages(haldir_client) -> None:
+    """Agents doing tool-discovery via ai-plugin.json should learn
+    about the 2-line adoption path without scraping the README."""
+    r = haldir_client.get("/.well-known/ai-plugin.json")
+    desc = json.loads(r.data)["description_for_model"]
+    for pkg in ("langchain-haldir", "crewai-haldir", "llamaindex-haldir"):
+        assert pkg in desc, f"ai-plugin.json doesn't advertise {pkg!r}"
+
+
+def test_ai_plugin_advertises_rekor_verifier(haldir_client) -> None:
+    """The §10.3b closer must be visible to agents picking Haldir
+    from a tool list — it's the differentiating trust claim."""
+    r = haldir_client.get("/.well-known/ai-plugin.json")
+    desc = json.loads(r.data)["description_for_model"]
+    assert "Rekor" in desc or "mirror" in desc.lower()
+
+
+# ── agent.json — single-entry-point manifest ────────────────────────
+
+def test_agent_json_served(haldir_client) -> None:
+    """The /.well-known/agent.json manifest is the canonical single-
+    fetch entry point for agents doing capability discovery. It
+    describes every transport (REST, MCP stdio, MCP HTTP, x402),
+    every integration package, every trust signal, and where
+    Haldir's already listed in the ecosystem."""
+    r = haldir_client.get("/.well-known/agent.json")
+    assert r.status_code == 200
+    assert r.headers["Content-Type"].startswith("application/json")
+    body = json.loads(r.data)
+    # Structural contract — these keys are what agent frameworks
+    # key off of when parsing the manifest.
+    for key in ("name", "display_name", "description", "entry_points",
+                 "capabilities", "integrations", "trust_signals"):
+        assert key in body, f"agent.json missing required top-level key: {key!r}"
+    # Entry points must cover the four transports.
+    entry_points = body["entry_points"]
+    for transport in ("rest_api", "mcp_stdio", "mcp_http", "x402"):
+        assert transport in entry_points, (
+            f"agent.json missing entry_points.{transport}"
+        )
+    # MCP stdio entry must carry the full Claude-Desktop-style config
+    # block so a user can copy-paste it into their client config.
+    stdio = entry_points["mcp_stdio"]
+    assert "claude_desktop_config" in stdio
+    assert stdio["claude_desktop_config"]["mcpServers"]["haldir"]["command"] == "haldir"
+
+
+def test_agent_json_lists_integration_packages(haldir_client) -> None:
+    body = json.loads(
+        haldir_client.get("/.well-known/agent.json").data,
+    )
+    for fw in ("langchain", "crewai", "llamaindex"):
+        assert fw in body["integrations"], (
+            f"agent.json integrations missing {fw!r}"
+        )
+        entry = body["integrations"][fw]
+        assert entry["package"].endswith("-haldir")
+        assert entry["version"].startswith("0.2")
+
+
+def test_agent_json_covers_rekor_verifier(haldir_client) -> None:
+    body = json.loads(
+        haldir_client.get("/.well-known/agent.json").data,
+    )
+    signals = body["trust_signals"]
+    assert "rekor_receipt_verifier" in signals
+    assert "ed25519_sth" in signals
+    assert "external_mirror" in signals
+
+
+# ── FAQPage JSON-LD on landing ──────────────────────────────────────
+
+def test_landing_has_faq_jsonld(haldir_client) -> None:
+    """Structured Q&A makes Haldir answerable by LLM-powered search
+    (Perplexity, Phind, Claude web search) without them having to
+    parse the landing page's free-form prose."""
+    body = haldir_client.get("/").data.decode()
+    assert '"@type": "FAQPage"' in body
+    # At minimum, these topics must be in the FAQ so agents see them:
+    for must_mention in ("LangChain", "MCP", "Rekor", "tamper", "x402"):
+        assert must_mention in body, (
+            f"FAQPage JSON-LD missing mention of {must_mention!r}"
+        )
+
+
+# ── Sitemap ─────────────────────────────────────────────────────────
+
+def test_sitemap_includes_todays_routes(haldir_client) -> None:
+    """Every route we shipped this week must be in the sitemap so
+    crawlers find it on the next pass. Rot check: if someone adds a
+    new endpoint and forgets to update the sitemap, this test
+    surfaces it."""
+    body = haldir_client.get("/sitemap.xml").data.decode()
+    for route in (
+        "/demo/tamper",
+        "/AGENTS.md",
+        "/THREAT_MODEL.md",
+        "/.well-known/jwks.json",
+        "/.well-known/x402.json",
+        "/.well-known/agent.json",
+        "/v1/x402/manifest",
+    ):
+        assert route in body, f"sitemap.xml missing {route!r}"
+
+
 def test_ai_txt_served(haldir_client) -> None:
     r = haldir_client.get("/.well-known/ai.txt")
     assert r.status_code == 200

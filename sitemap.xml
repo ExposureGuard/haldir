@@ -1,5 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Sitemap for haldir.xyz — optimised for agent / LLM crawlers.
+
+  Ordering priority = how important we want a crawler to rank this URL
+  relative to other Haldir pages. Priorities are RELATIVE, not absolute;
+  1.0 is the canonical landing page, everything else scales down from
+  there. `changefreq` is advisory to crawlers.
+
+  Every URL listed here must return 200. The agent-discovery test suite
+  (tests/test_agent_discovery.py) walks every entry; a rot check prevents
+  the sitemap from silently pointing at a dead route.
+-->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+
+  <!-- ── Landing + canonical entry points ─────────────────────── -->
   <url>
     <loc>https://haldir.xyz/</loc>
     <changefreq>weekly</changefreq>
@@ -8,12 +22,12 @@
   <url>
     <loc>https://haldir.xyz/docs</loc>
     <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
+    <priority>0.95</priority>
   </url>
   <url>
     <loc>https://haldir.xyz/quickstart</loc>
     <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
+    <priority>0.95</priority>
   </url>
   <url>
     <loc>https://haldir.xyz/demo</loc>
@@ -21,44 +35,92 @@
     <priority>0.95</priority>
   </url>
   <url>
-    <loc>https://haldir.xyz/pricing</loc>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://haldir.xyz/openapi.json</loc>
+    <loc>https://haldir.xyz/demo/tamper</loc>
     <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
+    <priority>0.95</priority>
   </url>
+
+  <!-- ── LLM-native content ────────────────────────────────────── -->
   <url>
     <loc>https://haldir.xyz/llms.txt</loc>
-    <changefreq>weekly</changefreq>
+    <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://haldir.xyz/llms-full.txt</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/AGENTS.md</loc>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://haldir.xyz/.well-known/mcp/mcp.json</loc>
+    <loc>https://haldir.xyz/THREAT_MODEL.md</loc>
     <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
+    <priority>0.85</priority>
   </url>
-  <url>
-    <loc>https://haldir.xyz/.well-known/mcp/server-card.json</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
+
+  <!-- ── Agent-discovery manifests ─────────────────────────────── -->
   <url>
     <loc>https://haldir.xyz/.well-known/ai-plugin.json</loc>
     <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
+    <priority>0.85</priority>
   </url>
   <url>
     <loc>https://haldir.xyz/.well-known/ai.txt</loc>
     <changefreq>weekly</changefreq>
     <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/.well-known/agent.json</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/.well-known/mcp/mcp.json</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/.well-known/mcp/server-card.json</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/.well-known/jwks.json</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/.well-known/x402.json</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/.well-known/security.txt</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+
+  <!-- ── API contract ───────────────────────────────────────────── -->
+  <url>
+    <loc>https://haldir.xyz/openapi.json</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/v1/x402/manifest</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- ── Business surface ──────────────────────────────────────── -->
+  <url>
+    <loc>https://haldir.xyz/pricing</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
   </url>
   <url>
     <loc>https://haldir.xyz/blog</loc>
@@ -70,4 +132,5 @@
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
+
 </urlset>

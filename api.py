@@ -4254,6 +4254,20 @@ def ai_plugin():
         return f.read(), 200, {"Content-Type": "application/json"}
 
 
+@app.route("/.well-known/agent.json")
+def agent_json():
+    """Single-entry-point manifest for agents doing capability
+    discovery. Describes every way to talk to Haldir (REST / MCP stdio
+    / MCP HTTP / x402), every integration package, every trust signal,
+    and where we're already listed in the ecosystem. One file, one
+    fetch, complete picture."""
+    p = os.path.join(
+        os.path.dirname(__file__), ".well-known", "agent.json",
+    )
+    with open(p) as f:
+        return f.read(), 200, {"Content-Type": "application/json"}
+
+
 @app.route("/.well-known/jwks.json")
 def jwks_json():
     """JSON Web Key Set — publishes the Ed25519 public key used to

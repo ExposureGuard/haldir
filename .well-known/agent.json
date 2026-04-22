@@ -1,0 +1,138 @@
+{
+  "$schema": "https://agents.well-known.dev/schemas/v1/agent.json",
+  "schema_version": "v1",
+  "name": "haldir",
+  "display_name": "Haldir — Governance for AI Agents",
+  "description": "Cryptographic governance layer for AI agents. Scoped sessions, encrypted vault, RFC 6962 Merkle-tree tamper-evident audit log with Ed25519 Signed Tree Heads, Sigstore Rekor mirror, anti-equivocation verifier, x402 pay-per-request surface, and 2-line adoption in LangChain, CrewAI, and LlamaIndex.",
+  "vendor": {
+    "name": "Haldir",
+    "url": "https://haldir.xyz",
+    "contact_email": "sterling@getexposureguard.com"
+  },
+  "license": "MIT",
+  "version": "0.3.0",
+  "homepage": "https://haldir.xyz",
+  "repository": "https://github.com/ExposureGuard/haldir",
+  "documentation": "https://haldir.xyz/docs",
+
+  "entry_points": {
+    "rest_api": {
+      "base_url": "https://haldir.xyz/v1",
+      "openapi": "https://haldir.xyz/openapi.json",
+      "authentication": {
+        "type": "bearer",
+        "header": "Authorization",
+        "key_prefix": "hld_",
+        "bootstrap": "POST /v1/keys (first key per tenant is free; subsequent keys require an existing admin key)"
+      }
+    },
+    "mcp_stdio": {
+      "install": "pip install haldir",
+      "command": "haldir mcp serve",
+      "claude_desktop_config": {
+        "mcpServers": {
+          "haldir": {
+            "command": "haldir",
+            "args": ["mcp", "serve"],
+            "env": {
+              "HALDIR_API_KEY": "hld_your_key_here",
+              "HALDIR_BASE_URL": "https://haldir.xyz"
+            }
+          }
+        }
+      },
+      "tool_count": 18
+    },
+    "mcp_http": {
+      "endpoint": "https://haldir.xyz/mcp",
+      "authentication": {"type": "bearer"}
+    },
+    "x402": {
+      "manifest": "https://haldir.xyz/.well-known/x402.json",
+      "network": "eip155:84532",
+      "description": "Agents buy individual audit proofs with USDC on Base Sepolia; three paid resources live today ($0.001–$0.10 per call)."
+    }
+  },
+
+  "capabilities": {
+    "identity_and_access": [
+      "Scoped agent sessions (POST /v1/sessions)",
+      "Spend limits enforced per session",
+      "TTL + instant revocation",
+      "Scope check endpoint for gating any tool call"
+    ],
+    "secrets": [
+      "AES-256-GCM encrypted vault with AAD tenant binding",
+      "Scope-gated retrieval (agents never see raw credentials when used correctly)"
+    ],
+    "audit": [
+      "SHA-256 hash-chained audit log",
+      "RFC 6962 Merkle tree over every entry",
+      "Ed25519 Signed Tree Heads; public key at /.well-known/jwks.json",
+      "Self-published STH log + anti-equivocation verifier",
+      "External transparency mirror (Sigstore Rekor / file / HTTP archiver)",
+      "Offline-verifiable inclusion + consistency proofs via the Python SDK"
+    ],
+    "compliance": [
+      "Signed audit-prep evidence packs relevant to SOC2 CC5.2, CC6.1, CC6.7, CC7.2, CC7.3, CC8.1",
+      "Live readiness score (0-100) with per-criterion remediation hints",
+      "Recurring evidence delivery (email + webhook)"
+    ],
+    "governance": [
+      "Human-in-the-loop approval requests + rules",
+      "Webhook alerts with HMAC-SHA256 signing + 24h secret rotation",
+      "Policy-enforcement proxy for MCP tool calls"
+    ]
+  },
+
+  "integrations": {
+    "python_sdk": "https://pypi.org/project/haldir",
+    "langchain": {
+      "package": "langchain-haldir",
+      "version": "0.2.0",
+      "adoption": "from langchain_haldir import HaldirSession"
+    },
+    "crewai": {
+      "package": "crewai-haldir",
+      "version": "0.2.0",
+      "adoption": "from crewai_haldir import HaldirSession, GovernedTool"
+    },
+    "llamaindex": {
+      "package": "llamaindex-haldir",
+      "version": "0.2.0",
+      "adoption": "from llamaindex_haldir import HaldirSession, govern_tool"
+    }
+  },
+
+  "trust_signals": {
+    "rfc_6962_merkle": true,
+    "ed25519_sth": true,
+    "jwks_endpoint": "/.well-known/jwks.json",
+    "anti_equivocation_log": "/v1/audit/sth-log",
+    "external_mirror": "Configurable via HALDIR_TRANSPARENCY_MIRROR; backends: file, http, rekor",
+    "rekor_receipt_verifier": "Every stored mirror receipt is cryptographically verifiable against Rekor's own published key. Endpoint: /v1/audit/sth-log/mirror/receipts/<id>/verify",
+    "threat_model": "/THREAT_MODEL.md",
+    "offline_sdk_verification": "haldir.verify_inclusion_proof / verify_consistency_proof / verify_sth / verify_rekor_receipt all run offline with no trust in Haldir",
+    "license": "MIT",
+    "open_source_repo": "https://github.com/ExposureGuard/haldir"
+  },
+
+  "live_demos": {
+    "tamper_evidence": "https://haldir.xyz/demo/tamper",
+    "compliance_pack": "https://haldir.xyz/compliance?demo=1"
+  },
+
+  "ecosystem": {
+    "listed_in": [
+      "https://github.com/bh-rat/EMERGING.md (Security & Governance section, merged via PR #55)",
+      "https://smithery.ai/server/haldir/haldir",
+      "https://pypi.org/project/haldir"
+    ],
+    "pending_listings": [
+      "https://github.com/coinbase/x402 (ecosystem PR #88 open)"
+    ]
+  },
+
+  "contact_for_partnerships": "sterling@getexposureguard.com",
+  "last_updated": "2026-04-21"
+}

@@ -1,11 +1,22 @@
 name: publish
 
 # Auto-publish to PyPI on tag push, plus a manual button so we can
-# republish a tag from the GitHub Actions UI without re-tagging.
+# republish from the GitHub Actions UI without re-tagging.
 #
-# Uses PyPI's "Trusted Publishing" via OIDC — no API tokens stored in
-# repo secrets. PyPI verifies the workflow identity directly. Setup:
+# Publishes FOUR packages:
+#   haldir                (root)
+#   langchain-haldir      (integrations/langchain-haldir)
+#   crewai-haldir         (integrations/crewai-haldir)
+#   llamaindex-haldir     (integrations/llamaindex-haldir)
+#
+# Uses PyPI Trusted Publishing via OIDC — no API tokens stored in repo
+# secrets. Each package needs its own Trusted Publisher entry on
+# PyPI (one-time setup per package). See
 # https://docs.pypi.org/trusted-publishers/
+#
+# Matrix strategy fans the build+publish steps across all four
+# packages in parallel. Each package's environment is named after
+# the package so PyPI can scope OIDC correctly.
 
 on:
   push:
@@ -19,15 +30,40 @@ on:
 
 jobs:
   publish:
-    name: Build + publish to PyPI
+    name: Build + publish ${{ matrix.package }}
     runs-on: ubuntu-latest
+    strategy:
+      # Don't abort the whole matrix if one package fails — a
+      # broken integration shouldn't block the root haldir release.
+      fail-fast: false
+      matrix:
+        include:
+          - package: haldir
+            path: .
+            url: https://pypi.org/p/haldir
+          - package: langchain-haldir
+            path: integrations/langchain-haldir
+            url: https://pypi.org/p/langchain-haldir
+          - package: crewai-haldir
+            path: integrations/crewai-haldir
+            url: https://pypi.org/p/crewai-haldir
+          - package: llamaindex-haldir
+            path: integrations/llamaindex-haldir
+            url: https://pypi.org/p/llamaindex-haldir
+
     environment:
-      name: pypi
-      url: https://pypi.org/p/haldir
+      # One environment per package — PyPI's Trusted Publishing
+      # expects the environment name to match the publisher config.
+      # Configure each environment once under the repo's Settings →
+      # Environments, matching the names: pypi, pypi-langchain-haldir,
+      # pypi-crewai-haldir, pypi-llamaindex-haldir.
+      name: ${{ matrix.package == 'haldir' && 'pypi' || format('pypi-{0}', matrix.package) }}
+      url: ${{ matrix.url }}
+
     permissions:
-      # Required for PyPI trusted publishing (OIDC).
+      # Required for PyPI Trusted Publishing (OIDC).
       id-token: write
-      # Required to attach the built sdist + wheel to the GH release.
+      # Required to attach artifacts to the GitHub Release.
       contents: write
 
     steps:
@@ -45,30 +81,31 @@ jobs:
       - name: Install build tooling
         run: |
           python -m pip install --upgrade pip
-          pip install build
+          pip install build twine
 
       - name: Build sdist + wheel
+        working-directory: ${{ matrix.path }}
         run: |
           rm -rf dist build *.egg-info
           python -m build
 
       - name: Verify artifacts
+        working-directory: ${{ matrix.path }}
         run: |
           ls -lh dist/
-          pip install --upgrade twine
           twine check dist/*
 
       - name: Publish to PyPI (trusted publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ${{ matrix.path }}/dist/
         # No `password` arg — OIDC handles auth.
 
       - name: Attach artifacts to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: matrix.package == 'haldir' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*.whl
             dist/*.tar.gz
           generate_release_notes: false
-          # If the release exists (we created it manually), this updates it.
-          # If not, it creates a new one with the tag's annotation as body.

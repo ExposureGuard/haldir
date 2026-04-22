@@ -55,7 +55,8 @@ POST /v1/keys {"name": "my-app"}
 - GET /v1/audit/consistency-proof?first=N&second=M — Prove later tree is an append-only extension of earlier one
 - GET /v1/audit/sth-log?since=N — Self-published append-only log of every STH ever signed for this tenant. Auditors pin any STH and demand the full history later to prove no rewriting.
 - GET /v1/audit/sth-log/verify?pinned_size=N&pinned_root=H — Anti-equivocation verifier: returns verified=true on match, verified=false reason=equivocation if a different root was ever recorded at that tree_size.
-- GET /v1/audit/sth-log/mirror/receipts — every receipt the external transparency mirror (Sigstore Rekor / file / webhook archiver) returned when Haldir anchored an STH outside its own DB. Closes THREAT_MODEL §10.3 — even Haldir's own DB compromise can't silently rewrite history.
+- GET /v1/audit/sth-log/mirror/receipts — every receipt the external transparency mirror (Sigstore Rekor / file / webhook archiver) returned when Haldir anchored an STH outside its own DB. Closes THREAT_MODEL §10.3.
+- GET /v1/audit/sth-log/mirror/receipts/{uuid}/verify — cryptographically verify a stored Rekor receipt against Rekor's own published ECDSA-P-256 public key: RFC 6962 inclusion proof, SignedEntryTimestamp, logID fingerprint. Independent confirmation that the entry is in Rekor's real log. Closes THREAT_MODEL §10.3b.
 - GET /.well-known/jwks.json — Ed25519 public key (RFC 7517 JWK). Auditors pin `kid` at enrollment, verify every later STH offline with zero trust in Haldir.
 
 ### Compliance (audit-prep, not a SOC2 attestation)
