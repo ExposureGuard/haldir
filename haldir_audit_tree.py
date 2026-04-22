@@ -148,6 +148,19 @@ def get_tree_head(db_path: str, tenant_id: str) -> dict[str, Any]:
         haldir_sth_log.record(db_path, tenant_id, sth)
     except Exception:
         pass
+    # Mirror to the external transparency log (Sigstore Rekor / file /
+    # HTTP archiver, configured via HALDIR_TRANSPARENCY_MIRROR). This
+    # is what closes THREAT_MODEL §10.3 — a coordinated DB-write
+    # attacker now also has to compromise the external log's
+    # operator. The primitive is non-blocking: if the external log is
+    # unreachable we log the failure and carry on. The STH response
+    # is NEVER blocked on mirror success — availability beats
+    # tampering-paranoia on the hot path.
+    try:
+        import haldir_transparency_mirror
+        haldir_transparency_mirror.mirror_and_record(db_path, tenant_id, sth)
+    except Exception:
+        pass
     return sth
 
 

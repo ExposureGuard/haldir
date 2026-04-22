@@ -113,6 +113,7 @@
     "x402_manifest":              "/.well-known/x402.json",
     "agentic_market_listed":      "https://agentic.market",
     "anti_equivocation":          "Self-published STH log at /v1/audit/sth-log; verify a pinned STH at /v1/audit/sth-log/verify",
+    "external_transparency_mirror": "Every STH optionally mirrored to Sigstore Rekor / file / HTTP archiver via HALDIR_TRANSPARENCY_MIRROR; receipts at /v1/audit/sth-log/mirror/receipts",
     "threat_model":               "/THREAT_MODEL.md (full STRIDE analysis + named adversaries + residual-risk declarations)"
   }
 }

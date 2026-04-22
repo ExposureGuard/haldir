@@ -326,9 +326,11 @@ Today, `vault_get_secret` checks scope at the API layer. A future change moves t
 Several endpoints (session lookup, secret lookup) are constant-time. Some admin endpoints aren't. A hardening pass + property-based timing tests is on the bench.
 
 ### 10.3 External transparency mirror
-Today, `sth_log` is single-DB. A coordinated DB-write attacker can rewrite both `audit_log` AND `sth_log` simultaneously. Mitigation: mirror every STH to (a) Sigstore Rekor as an attestation, or (b) on-chain via EAS attestations on Base. Either anchor makes silent rewriting infeasible — even DB compromise can't reach the external log.
+Today, `sth_log` is single-DB. A coordinated DB-write attacker can rewrite both `audit_log` AND `sth_log` simultaneously. Mitigation: mirror every STH to (a) Sigstore Rekor as an attestation, (b) a file the operator rotates to a WORM bucket, or (c) an HTTP archiver. Either anchor makes silent rewriting infeasible — even DB compromise can't reach the external log.
 
-**Status:** designed; not yet implemented. Would close the loop on §4.3 / S1 residual risk.
+**Status:** **SHIPPED** (`haldir_transparency_mirror.py`). Three backends implemented: `file:<path>`, `http://...`, `rekor[:url]`. Every STH is mirrored on publish; receipts live in `sth_mirror_receipts` + exposed at `GET /v1/audit/sth-log/mirror/receipts`. The Rekor backend sends a `hashedrekord` entry with the canonical-STH SHA-256 digest + Ed25519 public-key PEM + signature — exact shape Rekor accepts for arbitrary attestations. Opt-in via `HALDIR_TRANSPARENCY_MIRROR`; default is off so nothing changes for operators who don't configure it. A coordinated attacker now has to compromise Haldir's DB **plus** every mirror backend **plus** every auditor's saved receipt, simultaneously. That's an attack cost increase of multiple orders of magnitude.
+
+**Residual after v1:** we still trust that the mirror's HTTP response is genuine (no end-to-end signed receipt verification today). Follow-up: add Rekor inclusion-proof verification on the receipt, so a lying facilitator can't forge a UUID. Tracked as 10.3b.
 
 ### 10.4 Per-tenant Ed25519 BYOK signing keys
 Today, all tenants on a Haldir deployment share one Ed25519 STH-signing key. Future: per-tenant keys, with the public key pinned by the tenant out-of-band. Even Haldir-the-server cannot forge STHs for that tenant once the key is pinned.

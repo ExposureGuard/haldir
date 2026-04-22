@@ -1157,6 +1157,62 @@ def get_audit_sth_log():
     })
 
 
+@app.route("/v1/audit/sth-log/mirror/receipts", methods=["GET"])
+@require_api_key
+@require_scope("audit:read")
+def get_sth_mirror_receipts():
+    """Every external-transparency-log receipt Haldir recorded for
+    this tenant.
+
+    Haldir mirrors each STH to an external, append-only log — Sigstore
+    Rekor, a file the operator archives, a webhook to a customer's
+    own immutable store — and records the RECEIPT each backend returns
+    here. An auditor cross-references Haldir's internal sth_log with
+    the receipts + the external log itself to detect coordinated
+    rewrites of Haldir's DB (see THREAT_MODEL.md §10.3).
+
+    Query params:
+      tree_size (int, optional) — narrow to receipts for one specific
+                                   STH (e.g. diagnosing a divergence
+                                   at that tree height)
+      limit (int, default 100, max 1000)
+
+    Returns:
+      {tenant_id, count, receipts: [
+         {tree_size, backend, receipt_id, log_index, mirrored_at,
+          success, receipt_json, error_message},
+         ...
+      ]}
+    """
+    import haldir_transparency_mirror
+    tenant = getattr(request, "tenant_id", "")
+    tree_size_arg = request.args.get("tree_size")
+    tree_size: int | None = None
+    if tree_size_arg is not None:
+        try:
+            tree_size = int(tree_size_arg)
+        except ValueError:
+            return _json_error(
+                "invalid_argument",
+                "tree_size must be an integer",
+                400,
+            )
+    try:
+        limit = min(int(request.args.get("limit", "100")), 1000)
+    except ValueError:
+        return _json_error(
+            "invalid_argument", "limit must be an integer", 400,
+        )
+    receipts = haldir_transparency_mirror.list_receipts(
+        DB_PATH, tenant, tree_size=tree_size, limit=limit,
+    )
+    return jsonify({
+        "tenant_id": tenant,
+        "count":     len(receipts),
+        "receipts":  receipts,
+    })
+
+
 @app.route("/v1/audit/sth-log/verify", methods=["GET"])
 @require_api_key
 @require_scope("audit:read")
