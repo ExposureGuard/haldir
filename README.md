@@ -12,9 +12,15 @@
 [![GitHub Stars](https://img.shields.io/github/stars/ExposureGuard/haldir?style=social)](https://github.com/ExposureGuard/haldir)
 [![SafeSkill 89/100](https://img.shields.io/badge/SafeSkill-89%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/exposureguard-haldir)
 
-**The open-source governance layer for AI agents.** Identity, secrets, audit, and policy enforcement — MIT licensed, self-host or use our cloud.
+**Your AI agent can call any API, spend any amount of money, and access any secret — with zero oversight. Haldir sits between your agent and its tools to enforce scoped sessions, encrypted secrets, spend caps, and a tamper-evident audit trail.** Identity, secrets, audit, and policy enforcement — MIT licensed, self-host or use our cloud.
 
-Haldir enforces governance on every AI agent tool call: scoped sessions with spend caps, encrypted secrets the model never sees, hash-chained tamper-evident audit trail, human-in-the-loop approvals, and a proxy that intercepts every MCP call before it reaches your tools. Native SDKs for LangChain, CrewAI, AutoGen, and Vercel AI SDK.
+Haldir sits between your agent and its tools to enforce:
+- Scoped sessions with spend caps
+- Encrypted secrets the model never sees
+- Tamper-evident, hash-chained audit trail
+- Human-in-the-loop approvals
+
+For developers and teams shipping AI agents to production.
 
 <p align="center">
   <img src="demo/quickstart.svg" alt="Haldir quickstart: install, create a scoped session, check permission, log the action to the hash-chained audit trail" width="780">
