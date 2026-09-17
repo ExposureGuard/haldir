@@ -351,7 +351,9 @@ def _cli_up(db_path: str) -> int:
     print(f"applied:      {summary['applied']}")
     print(f"skipped:      {len(summary['skipped'])} already-applied")
     if summary["drift"]:
-        print(f"drift:        {summary['drift']}  ← re-review these files")
+        log.warning("migration drift detected", extra={
+            "versions": summary["drift"],
+        })
     return 0
 
 
@@ -370,14 +372,18 @@ def _cli_status(db_path: str) -> int:
     else:
         print("pending: (none)")
     if s["drift"]:
-        print(f"drift:    {s['drift']}  ← files edited after apply")
+        log.warning("migration drift detected", extra={
+            "versions": s["drift"],
+        })
     return 0
 
 
 def _cli_verify(db_path: str) -> int:
     s = status(db_path)
     if s["drift"]:
-        print(f"DRIFT DETECTED: versions {s['drift']}")
+        log.warning("migration drift detected", extra={
+            "versions": s["drift"],
+        })
         return 2
     print("ok — all applied migrations match their files on disk")
     return 0
