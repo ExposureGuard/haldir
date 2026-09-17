@@ -37,6 +37,10 @@ import os
 import re
 import sqlite3
 
+from haldir_logging import get_logger
+
+logger = get_logger(__name__)
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 DEFAULT_DB_PATH = os.environ.get("HALDIR_DB_PATH", "/data/haldir.db" if os.path.isdir("/data") else "haldir.db")
 
@@ -479,7 +483,7 @@ def _init_pg():
         except Exception as e:
             conn.rollback()
             if "already exists" not in str(e):
-                print(f"[!] DB init warning: {e}")
+                logger.warning("DB init warning: %s", e)
 
     # Idempotent column-add for legacy api_keys tables that pre-date
     # the scopes feature. Postgres supports ADD COLUMN IF NOT EXISTS
@@ -493,7 +497,7 @@ def _init_pg():
         conn.commit()
     except Exception as e:
         conn.rollback()
-        print(f"[!] api_keys.scopes ALTER skipped: {e}")
+        logger.warning("api_keys.scopes ALTER skipped: %s", e)
 
     # Migration 002 (webhook_deliveries table) is normally applied by
     # haldir_migrate at boot. Belt-and-suspenders: emit it here too so
@@ -521,7 +525,7 @@ def _init_pg():
         conn.commit()
     except Exception as e:
         conn.rollback()
-        print(f"[!] webhook_deliveries init warning: {e}")
+        logger.warning("webhook_deliveries init warning: %s", e)
 
     # Migration 004 (compliance_schedules) — same belt-and-suspenders
     # pattern. Lets the scheduler thread persist its state on Postgres
@@ -548,6 +552,6 @@ def _init_pg():
         conn.commit()
     except Exception as e:
         conn.rollback()
-        print(f"[!] compliance_schedules init warning: {e}")
+        logger.warning("compliance_schedules init warning: %s", e)
 
     conn.close()

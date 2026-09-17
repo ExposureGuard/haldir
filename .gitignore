@@ -53,3 +53,4 @@ yc_demo.sh
 node_modules/
 dist/
 *.tgz
+.aider*
