@@ -4767,3 +4767,412 @@ def landing():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
+# ── Cloud dashboard SPA pages ────────────────────────────────────────────
+
+@app.route("/cloud/login")
+def cloud_login_page():
+    """Minimal sign-in for the cloud dashboard. Mirrors the style of
+    /admin/overview but is the explicit entry point for the cloud UI.
+    Accepts ?key=<hld_...> and ?demo=1.
+    """
+    import html as _h
+
+    error = request.args.get("error", "")
+    key = request.args.get("key", "")
+    show_key_field = not key
+
+    # If a key was supplied, try to resolve it; if valid, redirect to
+    # /cloud/overview with the key in the querystring so the SPA can
+    # pick it up.
+    if key:
+        key_hash = _hash_key(key)
+        conn = get_db(DB_PATH)
+        row = conn.execute(
+            "SELECT tenant_id FROM api_keys WHERE key_hash = ? AND revoked = 0",
+            (key_hash,),
+        ).fetchone()
+        conn.close()
+        if row:
+            return redirect(f"/cloud/overview?key={_h.escape(key)}")
+        error = "Invalid or revoked key."
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Haldir Cloud · Sign in</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+  *{{margin:0;padding:0;box-sizing:border-box}}
+  body{{background:#050505;color:#e0ddd5;font-family:'Inter',sans-serif;
+        min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem}}
+  .card{{max-width:440px;width:100%;border:1px solid rgba(224,221,213,0.08);
+        border-radius:8px;padding:2.5rem 2rem;background:rgba(255,255,255,0.015)}}
+  h1{{font-weight:300;font-size:1.5rem;letter-spacing:-0.5px;margin-bottom:0.5rem}}
+  .lede{{font-size:0.85rem;color:rgba(224,221,213,0.5);margin-bottom:2rem;line-height:1.6}}
+  label{{display:block;font-family:'IBM Plex Mono',monospace;font-size:0.6rem;
+        letter-spacing:2px;text-transform:uppercase;color:rgba(224,221,213,0.5);margin-bottom:0.5rem}}
+  input{{width:100%;background:#0a0a0a;border:1px solid rgba(224,221,213,0.2);
+        border-radius:4px;padding:0.75rem 1rem;color:#e0ddd5;font-family:'IBM Plex Mono',monospace;
+        font-size:0.85rem}}
+  input:focus{{outline:none;border-color:#b8973a}}
+  .row{{display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-top:1.5rem}}
+  button,a.btn{{display:block;width:100%;padding:0.85rem;border:none;border-radius:4px;
+        font-family:'IBM Plex Mono',monospace;font-size:0.65rem;letter-spacing:2px;
+        text-transform:uppercase;cursor:pointer;text-align:center;text-decoration:none}}
+  .btn-w{{background:#e0ddd5;color:#050505}}
+  .btn-g{{background:transparent;color:rgba(224,221,213,0.5);
+         border:1px solid rgba(224,221,213,0.2)}}
+  .btn-w:hover{{background:rgba(224,221,213,0.8)}}
+  .btn-g:hover{{color:#e0ddd5;border-color:rgba(224,221,213,0.5)}}
+  .err{{color:#d05a5a;font-size:0.8rem;margin-bottom:1rem}}
+  .footer{{text-align:center;font-size:0.7rem;color:rgba(224,221,213,0.3);
+          margin-top:1.5rem;font-family:'IBM Plex Mono',monospace}}
+  .footer a{{color:rgba(224,221,213,0.5);text-decoration:none}}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Haldir Cloud</h1>
+  <p class="lede">Sign in with your API key to open the cloud dashboard.</p>
+  {f'<p class="err">{error}</p>' if error else ''}
+  <form method="get" action="/cloud/overview">
+    <label for="key">API key</label>
+    <input type="text" id="key" name="key"
+           placeholder="hld_..."
+           value="{_h.escape(key)}"
+           {"autofocus" if show_key_field else ""}>
+    <div class="row">
+      <button type="submit" class="btn-w">Sign in</button>
+      <a class="btn btn-g" href="/cloud/overview?demo=1">Sandbox demo</a>
+    </div>
+  </form>
+  <p class="footer">
+    <a href="/cloud">back</a> ·
+    <a href="/quickstart">get a key</a> · <a href="/">haldir.xyz</a>
+  </p>
+</div>
+</body>
+</html>"""
+
+
+@app.route("/cloud/overview")
+def cloud_overview_page():
+    """Server-rendered shell for the cloud dashboard. The page owns the
+    SPA shell (sidebar, stat cards, session table, audit table) and the
+    client script (dashboard.js) hydrates it from /admin/overview JSON.
+    Auth: ?key=<hld_...> → resolved against api_keys. On invalid key we
+    redirect back to /cloud/login with an error.
+    """
+    import html as _h
+
+    key = request.args.get("key", "")
+    if not key:
+        return redirect("/cloud/login")
+
+    key_hash = _hash_key(key)
+    conn = get_db(DB_PATH)
+    row = conn.execute(
+        "SELECT tenant_id FROM api_keys WHERE key_hash = ? AND revoked = 0",
+        (key_hash,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return redirect("/cloud/login?error=1")
+
+    key_short = (_h.escape(key[:8]) + "..." + _h.escape(key[-4:])) \
+        if len(key) > 12 else _h.escape(key)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Haldir Cloud · Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+  *{{margin:0;padding:0;box-sizing:border-box}}
+  :root{{
+    --bg:#050505;--card:#0a0a0f;--border:rgba(224,221,213,0.08);
+    --w:#e0ddd5;--w80:rgba(224,221,213,0.8);--w50:rgba(224,221,213,0.5);
+    --w20:rgba(224,221,213,0.2);--w08:rgba(224,221,213,0.04);
+    --gold:#b8973a;--green:#6bbd6b;--red:#e87b7b;--blue:#7ba8e8;
+    --mono:'IBM Plex Mono',monospace;--sans:'Inter',sans-serif;
+  }}
+  body{{background:var(--bg);color:var(--w);font-family:var(--sans);min-height:100vh}}
+
+  .topbar{{display:flex;justify-content:space-between;align-items:center;
+           padding:1rem 2rem;border-bottom:1px solid var(--border);background:var(--card)}}
+  .brand{{font-family:var(--mono);font-size:0.7rem;letter-spacing:3px;
+          text-transform:uppercase;color:var(--gold)}}
+  .topbar-right{{font-family:var(--mono);font-size:0.65rem;color:var(--w50);text-align:right}}
+  .topbar-right a{{color:var(--w80);text-decoration:none;margin-left:1rem}}
+  .topbar-right a:hover{{color:var(--w)}}
+
+  .layout{{display:flex}}
+
+  .sidebar{{width:200px;border-right:1px solid var(--border);
+            background:var(--card);padding:1.5rem 0;flex-shrink:0}}
+  .sidebar a{{display:block;padding:0.6rem 1.25rem;font-family:var(--mono);
+              font-size:0.7rem;color:var(--w50);text-decoration:none;
+              letter-spacing:1px;border-left:2px solid transparent;transition:all 0.15s}}
+  .sidebar a:hover,.sidebar a.active{{color:var(--w);background:rgba(224,221,213,0.04);
+              border-left-color:var(--gold)}}
+
+  .main{{flex:1;padding:2rem;overflow:auto}}
+  .page-title{{font-weight:200;font-size:1.4rem;margin-bottom:1.5rem;letter-spacing:-0.5px}}
+
+  .stat-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
+              background:var(--border);border:1px solid var(--border);border-radius:6px;overflow:hidden;margin-bottom:2rem}}
+  .stat{{background:var(--bg);padding:1.25rem;text-align:center}}
+  .stat-val{{font-family:var(--mono);font-size:1.4rem;font-weight:300;color:var(--w)}}
+  .stat-label{{font-family:var(--mono);font-size:0.55rem;color:var(--w20);
+               letter-spacing:2px;text-transform:uppercase;margin-top:0.3rem}}
+  .stat-bar{{margin-top:0.5rem;height:6px;background:var(--w08);border-radius:3px;overflow:hidden}}
+  .stat-bar-fill{{height:100%;background:var(--green);width:0%;transition:width 0.3s,background 0.3s}}
+  .stat-sub{{font-family:var(--mono);font-size:0.6rem;color:var(--w20);margin-top:0.2rem}}
+
+  .panel{{background:var(--card);border:1px solid var(--border);border-radius:6px;
+          padding:1.25rem;margin-bottom:2rem}}
+  .panel h2{{font-weight:300;font-size:0.9rem;letter-spacing:1px;text-transform:uppercase;
+             color:var(--w50);margin-bottom:1rem;font-family:var(--mono)}}
+
+  table.wrap{{width:100%;border-collapse:collapse;font-size:0.72rem}}
+  table.wrap th{{font-family:var(--mono);font-size:0.58rem;color:var(--w20);
+                  letter-spacing:1px;text-transform:uppercase;text-align:left;
+                  padding:0.6rem 0.75rem;border-bottom:1px solid var(--border)}}
+  table.wrap td{{padding:0.5rem 0.75rem;border-bottom:1px solid var(--w08);
+                  color:var(--w50);font-family:var(--mono);font-size:0.7rem}}
+  table.wrap tr:hover td{{color:var(--w)}}
+  td.num{{text-align:right;font-variant-numeric:tabular-nums}}
+  .muted{{color:var(--w20);font-size:0.65rem}}
+  .flag{{color:var(--red)}}
+  .ok{{color:var(--green)}}
+
+  .filter-bar{{display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem}}
+  .filter-bar input,.filter-bar select{{background:#0a0a0a;border:1px solid var(--w08);
+        border-radius:4px;padding:0.4rem 0.6rem;color:var(--w);font-family:var(--mono);
+        font-size:0.7rem;width:100%}}
+  .filter-bar input:focus{{outline:none;border-color:var(--gold)}}
+  .filter-bar label{{font-family:var(--mono);font-size:0.6rem;color:var(--w20);
+                     letter-spacing:1px;text-transform:uppercase;margin-right:0.5rem}}
+  .btn{{padding:0.4rem 0.8rem;border:none;border-radius:4px;cursor:pointer;
+        font-family:var(--mono);font-size:0.65rem;letter-spacing:1px;text-transform:uppercase}}
+  .btn-w{{background:var(--w);color:var(--bg)}}
+  .btn-w:hover{{background:var(--w80)}}
+  .btn-g{{background:transparent;color:var(--w);border:1px solid var(--w08)}}
+  .btn-g:hover{{border-color:var(--w50)}}
+  .btn-red{{background:var(--red);color:#fff}}
+  .btn-sm{{padding:0.25rem 0.6rem;font-size:0.6rem}}
+
+  .empty{{text-align:center;color:var(--w20);padding:2rem;font-family:var(--mono);font-size:0.7rem}}
+
+  .key-pill{{display:inline-flex;align-items:center;gap:0.4rem;
+             font-family:var(--mono);font-size:0.65rem;color:var(--w50);
+             background:var(--w08);padding:0.2rem 0.5rem;border-radius:3px}}
+  .key-pill b{{color:var(--w);font-weight:400}}
+
+  .flash{{position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);
+         background:rgba(224,221,213,0.08);border:1px solid rgba(224,221,213,0.2);
+         color:var(--w);padding:0.5rem 1rem;border-radius:4px;font-family:var(--mono);
+         font-size:0.7rem;z-index:9999;opacity:0;transition:opacity 0.3s;pointer-events:none}}
+
+  footer{{font-family:var(--mono);font-size:0.6rem;color:var(--w20);
+          text-align:center;padding:1rem;margin-top:2rem}}
+  footer a{{color:var(--w50);text-decoration:none;margin:0 0.5rem}}
+  footer a:hover{{color:var(--w)}}
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="brand">Haldir Cloud</div>
+    <div class="topbar-right">
+      <span class="key-pill">key <b>{key_short}</b></span>
+      <a href="/cloud/overview?key={_h.escape(key)}">refresh</a>
+      <a href="/cloud/login">sign out</a>
+    </div>
+  </div>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <a href="#/account">Account</a>
+      <a href="#/quotas">Quotas</a>
+      <a href="#/sessions">Sessions</a>
+      <a href="#/audit">Audit trail</a>
+      <a href="#/webhooks">Webhooks</a>
+      <a href="#/approvals">Approvals</a>
+      <a href="#/compliance">Compliance</a>
+      <a href="#/settings">Settings</a>
+    </nav>
+
+    <main class="main">
+
+      <!-- ACCOUNT -->
+      <section class="page" id="page-account">
+        <div class="page-title">Account</div>
+        <div class="stat-grid" id="stat-grid-account">
+          <div class="stat"><div class="stat-val" id="stat-tenant">—</div>
+            <div class="stat-label">Tenant ID</div></div>
+          <div class="stat"><div class="stat-val" id="stat-tier">—</div>
+            <div class="stat-label">Tier</div></div>
+          <div class="stat"><div class="stat-val" id="stat-agents">—</div>
+            <div class="stat-label">Agents active</div></div>
+          <div class="stat"><div class="stat-val" id="stat-api-keys">—</div>
+            <div class="stat-label">API keys</div></div>
+        </div>
+        <div class="panel">
+          <h2>API keys</h2>
+          <table class="wrap">
+            <thead><tr>
+              <th>Prefix</th><th>Name</th><th>Tier</th>
+              <th>Scopes</th><th>Status</th><th>Created</th>
+            </tr></thead>
+            <tbody id="account-keys"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- QUOTAS -->
+      <section class="page" id="page-quotas">
+        <div class="page-title">Quotas</div>
+        <div class="stat-grid" id="stat-grid-quotas">
+          <div class="stat">
+            <div class="stat-val" id="stat-actions">—</div>
+            <div class="stat-bar"><div class="stat-bar-fill" id="stat-actions-fill"></div></div>
+            <div class="stat-sub" id="stat-actions-sub">—</div>
+          </div>
+          <div class="stat"><div class="stat-val" id="stat-spend">—</div>
+            <div class="stat-label">Spend this month</div></div>
+          <div class="stat"><div class="stat-val" id="stat-sessions">—</div>
+            <div class="stat-label">Active sessions</div></div>
+          <div class="stat"><div class="stat-val" id="stat-secrets">—</div>
+            <div class="stat-label">Secrets</div></div>
+        </div>
+      </section>
+
+      <!-- SESSIONS -->
+      <section class="page" id="page-sessions">
+        <div class="page-title">Sessions</div>
+        <div class="panel">
+          <table class="wrap">
+            <thead><tr>
+              <th>Session ID</th><th>Agent</th><th>Scopes</th>
+              <th>Spent</th><th>Last active</th>
+            </tr></thead>
+            <tbody id="sessions-body"><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- AUDIT TRAIL -->
+      <section class="page" id="page-audit">
+        <div class="page-title">Audit trail</div>
+        <div class="filter-bar">
+          <label>Session</label>
+          <input type="text" id="audit-session" placeholder="session id">
+          <label>Agent</label>
+          <input type="text" id="audit-agent" placeholder="agent id">
+          <label>Tool</label>
+          <input type="text" id="audit-tool" placeholder="tool name">
+          <label>Flagged</label>
+          <input type="checkbox" id="audit-flagged">
+          <label>Limit</label>
+          <input type="number" id="audit-limit" value="100" min="1" max="500">
+          <button class="btn btn-w" id="audit-search">Search</button>
+          <button class="btn btn-g" id="audit-clear">Clear</button>
+        </div>
+        <div class="panel">
+          <table class="wrap">
+            <thead><tr>
+              <th>Timestamp</th><th>Session ID</th><th>Agent</th>
+              <th>Tool</th><th>Action</th><th>Cost</th><th>Status</th>
+            </tr></thead>
+            <tbody id="audit-body"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- WEBHOOKS -->
+      <section class="page" id="page-webhooks">
+        <div class="page-title">Webhooks</div>
+        <div class="panel">
+          <table class="wrap">
+            <thead><tr>
+              <th>ID</th><th>URL</th><th>Event</th>
+              <th>Deliveries</th><th>Success rate</th>
+            </tr></thead>
+            <tbody id="webhooks-body"><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- APPROVALS -->
+      <section class="page" id="page-approvals">
+        <div class="page-title">Approvals</div>
+        <div class="panel">
+          <table class="wrap">
+            <thead><tr>
+              <th>ID</th><th>Session</th><th>Requested by</th>
+              <th>Reason</th><th>Requested at</th><th>Actions</th>
+            </tr></thead>
+            <tbody id="approvals-body"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- COMPLIANCE -->
+      <section class="page" id="page-compliance">
+        <div class="page-title">Compliance</div>
+        <div class="stat-grid">
+          <div class="stat"><div class="stat-val" id="stat-compliance-schedules">—</div>
+            <div class="stat-label">Recurring schedules</div></div>
+          <div class="stat"><div class="stat-val" id="stat-compliance-next">—</div>
+            <div class="stat-label">Next pack due</div></div>
+        </div>
+        <div class="panel">
+          <h2>Evidence export</h2>
+          <p style="font-family:var(--mono);font-size:0.7rem;color:var(--w50);line-height:1.6">
+            Generate an auditor-ready compliance evidence pack from the CLI:
+          </p>
+          <p style="font-family:var(--mono);font-size:0.7rem;color:var(--gold);
+                    background:rgba(224,221,213,0.04);padding:0.75rem;border-radius:4px;
+                    margin-top:0.5rem;overflow-x:auto">
+            haldir compliance evidence --since 2026-01-01 --out evidence-q1-2026.md
+          </p>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="page" id="page-settings">
+        <div class="page-title">Settings</div>
+        <div class="panel">
+          <p style="font-family:var(--mono);font-size:0.7rem;color:var(--w50);line-height:1.6">
+            Cloud dashboard settings are managed through the API and CLI.
+            This page is a placeholder for future cloud-only configuration
+            (SSO, team members, alert routing, billing).
+          </p>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <div class="flash" id="flash"></div>
+
+  <script src="/dashboard.js"></script>
+</body>
+</html>"""
+
+
+@app.route("/cloud")
+def cloud_root():
+    """Cloud landing: redirect to login if no key, to overview if a key
+    is present in the querystring, otherwise to the login page.
+    """
+    key = request.args.get("key", "")
+    if key:
+        return redirect("/cloud/overview?key=" + _h.escape(key))
+    return redirect("/cloud/login")
