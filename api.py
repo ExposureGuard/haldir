@@ -31,6 +31,10 @@ import uuid
 import secrets
 import hashlib
 from functools import wraps
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import haldir_export
 
 from flask import Flask, request, jsonify, abort, redirect, g, send_from_directory
 from flask_cors import CORS
@@ -955,6 +959,125 @@ def get_spend():
         agent_id=request.args.get("agent_id"),
         tenant_id=tenant,
     ))
+
+
+@app.route("/v1/audit/stats", methods=["GET"])
+@require_api_key
+@require_scope("audit:read")
+def get_audit_stats():
+    """Lightweight aggregate overview of the tenant's audit trail and system state.
+
+    Returns a single JSON object suitable for the ``haldir audit stats`` CLI
+    command and dashboard summaries. All queries are tenant-scoped.
+
+    Query params:
+      session_id  narrow to one session
+      agent_id    narrow to one agent
+      since       lower bound (ISO 8601 or unix seconds)
+      until       upper bound (ISO 8601 or unix seconds)
+    """
+    tenant = getattr(request, "tenant_id", "")
+
+    # Build the WHERE clause from the optional filters. Values are
+    # parameterized; only the clause shape is assembled from literals.
+    where = ["tenant_id = ?"]
+    params: list[Any] = [tenant]
+    session_id = request.args.get("session_id")
+    if session_id:
+        where.append("session_id = ?")
+        params.append(session_id)
+    agent_id = request.args.get("agent_id")
+    if agent_id:
+        where.append("agent_id = ?")
+        params.append(agent_id)
+    since = _parse_iso_or_unix(request.args.get("since"))
+    if since is not None:
+        where.append("timestamp >= ?")
+        params.append(since)
+    until = _parse_iso_or_unix(request.args.get("until"))
+    if until is not None:
+        where.append("timestamp <= ?")
+        params.append(until)
+    where_sql = " AND ".join(where)
+
+    conn = get_db(DB_PATH)
+    try:
+        cur = conn.execute(
+            "SELECT "
+            "  COUNT(*) AS total, "
+            "  COALESCE(SUM(cost_usd), 0) AS spend, "
+            "  COALESCE(SUM(CASE WHEN flagged = 1 THEN 1 ELSE 0 END), 0) AS flagged, "
+            "  COUNT(DISTINCT session_id) AS sessions, "
+            "  COUNT(DISTINCT agent_id) AS agents "
+            f"FROM audit_log WHERE {where_sql}",
+            params,
+        ).fetchone()
+        total = cur["total"] or 0
+        spend = cur["spend"] or 0.0
+        flagged = cur["flagged"] or 0
+        session_count = cur["sessions"] or 0
+        agent_count = cur["agents"] or 0
+
+        by_tool = {
+            r["tool"] or "": r["cnt"]
+            for r in conn.execute(
+                f"SELECT tool, COUNT(*) AS cnt FROM audit_log "
+                f"WHERE {where_sql} GROUP BY tool ORDER BY cnt DESC",
+                params,
+            ).fetchall()
+        }
+        by_action = {
+            r["action"] or "": r["cnt"]
+            for r in conn.execute(
+                f"SELECT action, COUNT(*) AS cnt FROM audit_log "
+                f"WHERE {where_sql} GROUP BY action ORDER BY cnt DESC",
+                params,
+            ).fetchall()
+        }
+
+        # Monthly action cap comes from the billing tier, not a DB
+        # table — TIER_LIMITS is the single source of truth.
+        tier = _get_tenant_tier(tenant)
+        cap = TIER_LIMITS.get(tier, TIER_LIMITS["free"])["actions_per_month"]
+
+        # Chain integrity is verified by Watch, not by counting rows.
+        chain_ok = bool(watch.verify_chain(tenant_id=tenant).get("valid"))
+
+        # expires_at is a unix timestamp (0 == never expires), matching
+        # the rest of the codebase — not a datetime string.
+        active = conn.execute(
+            "SELECT COUNT(*) AS c FROM sessions "
+            "WHERE tenant_id = ? AND revoked = 0 "
+            "AND (expires_at = 0 OR expires_at > ?)",
+            [tenant, time.time()],
+        ).fetchone()["c"] or 0
+
+        secrets = conn.execute(
+            "SELECT COUNT(*) AS c FROM secrets WHERE tenant_id = ?",
+            [tenant],
+        ).fetchone()["c"] or 0
+    finally:
+        conn.close()
+
+    pct = (total / cap) if cap else 0.0
+    return jsonify({
+        "actions_this_month": total,
+        "actions_limit": cap,
+        "actions_pct_used": round(pct, 4),
+        "spend_usd_this_month": round(spend, 2),
+        "total_entries": total,
+        "flagged_7d": flagged,
+        "chain_verified": chain_ok,
+        "active_sessions": active,
+        "vault_secrets": secrets,
+        # Fields consumed by `haldir audit stats`.
+        "flagged_count": flagged,
+        "session_count": session_count,
+        "agent_count": agent_count,
+        "total_usd": round(spend, 2),
+        "by_tool": by_tool,
+        "by_action": by_action,
+    })
 
 
 @app.route("/v1/audit/verify", methods=["GET"])

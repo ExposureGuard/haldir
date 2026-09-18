@@ -543,6 +543,48 @@ def cmd_audit_trail(args: argparse.Namespace) -> None:
               f"{flag_marker}")
 
 
+def cmd_audit_stats(args: argparse.Namespace) -> None:
+    """Show aggregate statistics for the audit trail."""
+    client = APIClient()
+    params: dict[str, Any] = {}
+    if args.session:
+        params["session_id"] = args.session
+    if args.agent:
+        params["agent_id"] = args.agent
+    if args.since:
+        params["since"] = args.since
+    if args.until:
+        params["until"] = args.until
+
+    result = client.get("/v1/audit/stats", params=params)
+
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+        return
+
+    print(f"{Color.BOLD}Audit Stats{Color.RESET}")
+    print()
+    label("Total entries", result.get("total_entries", 0))
+    label("Flagged", result.get("flagged_count", 0))
+    label("Sessions", result.get("session_count", 0))
+    label("Agents", result.get("agent_count", 0))
+    label("Total spend", f"${result.get('total_usd', 0):.2f}")
+
+    by_tool = result.get("by_tool", {})
+    if by_tool:
+        print()
+        print(f"  {Color.DIM}By tool:{Color.RESET}")
+        for tool, count in by_tool.items():
+            print(f"    {Color.MAGENTA}{tool}{Color.RESET}: {count}")
+
+    by_action = result.get("by_action", {})
+    if by_action:
+        print()
+        print(f"  {Color.DIM}By action:{Color.RESET}")
+        for action, count in by_action.items():
+            print(f"    {Color.MAGENTA}{action}{Color.RESET}: {count}")
+
+
 def cmd_audit_spend(args: argparse.Namespace) -> None:
     """Get spend summary."""
     client = APIClient()
@@ -1498,6 +1540,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit_trail.add_argument("--flagged", action="store_true", help="Show only flagged entries")
     p_audit_trail.add_argument("--limit", type=int, default=20, help="Max entries (default: 20)")
     p_audit_trail.set_defaults(func=cmd_audit_trail)
+
+    p_audit_stats = audit_sub.add_parser("stats", help="Aggregate audit-trail statistics")
+    p_audit_stats.add_argument("--session", help="Filter by session ID")
+    p_audit_stats.add_argument("--agent", help="Filter by agent ID")
+    p_audit_stats.add_argument("--since", help="Lower bound (ISO 8601 or unix seconds)")
+    p_audit_stats.add_argument("--until", help="Upper bound (ISO 8601 or unix seconds)")
+    p_audit_stats.add_argument("--json", action="store_true")
+    p_audit_stats.set_defaults(func=cmd_audit_stats)
 
     p_audit_spend = audit_sub.add_parser("spend", help="Get spend summary")
     p_audit_spend.add_argument("--session", help="Filter by session ID")
