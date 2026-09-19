@@ -3757,8 +3757,8 @@ def demo_tamper_reset():
 
 @app.route("/pricing")
 def pricing_page():
-    """Pricing page — temporarily hidden while iterating on tiers."""
-    return redirect("/", code=302)
+    """Pricing page — usage-based tiers for AI agent security."""
+    return _pricing_page_html()
 
 
 def _pricing_page_html():
