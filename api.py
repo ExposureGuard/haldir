@@ -3507,6 +3507,23 @@ def demo_page():
     return redirect("/docs")
 
 
+@app.route("/gallery")
+def demo_gallery_page():
+    """Every product screenshot on one page — the visual tour without the
+    README's prose.
+
+    demo_gallery.html was written for this and then never routed, so it sat
+    in the repository unreachable: GitHub serves .html files as source, and
+    nothing else pointed at it. Its relative image paths resolve against
+    /demo/screenshots/..., which the /demo/<path> route above already serves.
+    """
+    gallery_path = os.path.join(os.path.dirname(__file__), "demo_gallery.html")
+    if os.path.exists(gallery_path):
+        with open(gallery_path) as f:
+            return f.read(), 200, {"Content-Type": "text/html; charset=utf-8"}
+    return redirect("/demo")
+
+
 @app.route("/demo/<path:filename>")
 def demo_assets(filename):
     """Serve the animated SVG (and any future demo-page assets) from

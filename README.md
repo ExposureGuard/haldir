@@ -61,9 +61,13 @@ The sidebar on the left takes you anywhere. The numbered markers point at the pa
 
 ### Play with it yourself
 
-There's a live demo you can poke at right now — no signup, runs in your browser:
+Three things run live, no signup, straight from these links:
 
-→ **[Try the tamper demo →](/demo)** — it runs a hash-chained audit log in your browser and lets you try to tamper with it yourself. You'll see for yourself that the chain breaks when anyone edits a past entry.
+→ **[The tamper demo](/demo/tamper)** — the one in the GIF above. Rewrite a real log row and watch the inclusion proof stop matching the Merkle root. Nothing is simulated; it is the same Merkle code the API ships.
+
+→ **[The playground](/demo)** — walks you through minting a key, opening a scoped session, checking a permission and writing to the audit trail, against a sandbox tenant of your own.
+
+→ **[The gallery](/gallery)** — every screenshot on this page in one place, if you'd rather look than read.
 
 ### The rest of the site
 

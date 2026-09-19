@@ -67,8 +67,14 @@ PAGES: list[dict[str, str]] = [
     {"name": "01_landing", "url": "/", "hash": ""},
     {"name": "02_docs", "url": "/docs", "hash": ""},
     {"name": "03_openapi", "url": "/openapi.json", "hash": ""},
+    # The dashboard's default view IS the Account page — dashboard.js has no
+    # "overview" page, so requesting /cloud/overview with no fragment lands on
+    # account. Capturing both produced two byte-identical files and a gallery
+    # showing the same screenshot twice under different captions.
     {"name": "04_cloud_overview", "url": "/cloud/overview", "hash": ""},
-    {"name": "05_cloud_account", "url": "/cloud/overview", "hash": "#/account"},
+    # The tamper demo is a separate surface (and the product's core claim), so
+    # it takes the slot — captured in its untampered state.
+    {"name": "05_tamper_demo", "url": "/demo/tamper", "hash": ""},
     {"name": "06_cloud_audit", "url": "/cloud/overview", "hash": "#/audit"},
     {"name": "07_cloud_compliance", "url": "/cloud/overview", "hash": "#/compliance"},
     {"name": "08_cloud_settings", "url": "/cloud/overview", "hash": "#/settings"},
