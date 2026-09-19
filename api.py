@@ -4766,7 +4766,7 @@ def landing():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=True, use_reloader=False)
 
 # ── Cloud dashboard SPA pages ────────────────────────────────────────────
 
@@ -5165,6 +5165,16 @@ def cloud_overview_page():
   <script src="/dashboard.js"></script>
 </body>
 </html>"""
+
+
+@app.route("/dashboard.js")
+def serve_dashboard_js():
+    """Serve the cloud dashboard client script. The dashboard shell at
+    /cloud/overview loads this with <script src=\"/dashboard.js\">, so it
+    must be reachable at the exact path the HTML references."""
+    js_path = os.path.join(os.path.dirname(__file__), "dashboard.js")
+    return send_from_directory(os.path.dirname(__file__), "dashboard.js",
+                               mimetype="application/javascript")
 
 
 @app.route("/cloud")
