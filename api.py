@@ -4764,10 +4764,6 @@ def landing():
     return jsonify({"service": "haldir", "version": "0.1.0"}), 200
 
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port, debug=True, use_reloader=False)
-
 # ── Cloud dashboard SPA pages ────────────────────────────────────────────
 
 @app.route("/cloud/login")
@@ -5186,3 +5182,8 @@ def cloud_root():
     if key:
         return redirect("/cloud/overview?key=" + _h.escape(key))
     return redirect("/cloud/login")
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port, debug=True, use_reloader=False)
