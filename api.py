@@ -40,7 +40,7 @@ from flask import Flask, request, jsonify, abort, redirect, g, send_from_directo
 from flask_cors import CORS
 
 from haldir_db import init_db, get_db
-from haldir_gate.gate import Gate
+from haldir_gate.gate import Gate, DelegationError, MAX_DELEGATION_DEPTH
 from haldir_vault.vault import Vault
 from haldir_watch.watch import Watch
 import haldir_idempotency
@@ -443,10 +443,15 @@ def _get_tenant_tier(tenant_id):
 
 
 def _get_tenant_agent_count(tenant_id):
-    """Count distinct agents with active sessions for a tenant."""
+    """Count distinct agents with active sessions for a tenant.
+
+    Delegation roots only. A subagent session is spawned by an agent that is
+    already counted, so counting descendants would let a single orchestrator
+    exhaust the tier cap just by delegating.
+    """
     conn = get_db(DB_PATH)
     count = conn.execute(
-        "SELECT COUNT(DISTINCT agent_id) FROM sessions WHERE tenant_id = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?)",
+        "SELECT COUNT(DISTINCT agent_id) FROM sessions WHERE tenant_id = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?) AND parent_session_id = ''",
         (tenant_id, time.time())
     ).fetchone()[0]
     conn.close()
@@ -654,13 +659,55 @@ def create_demo_key():
 
 # ── Gate: Sessions ──
 
+def _log_session_spawn(parent_session_id, child_session, tenant_id):
+    """Record a delegation in the audit hash chain.
+
+    The parent link also lives on the child's `sessions` row, but that column
+    is unauthenticated — it can be rewritten without breaking any hash, any
+    Merkle proof, or any signed tree head. This entry places the same
+    relationship inside `details`, which `AuditEntry.compute_hash` covers, so
+    the delegation record is tamper-evident. If the two ever disagree, this
+    entry is authoritative.
+    """
+    parent = gate.get_session(parent_session_id, tenant_id=tenant_id)
+    if not parent:
+        return
+    try:
+        watch.log_action(
+            parent,
+            tool="",
+            action="session.spawn",
+            details={
+                "parent_session_id": parent_session_id,
+                "child_session_id": child_session.session_id,
+                "child_agent_id": child_session.agent_id,
+                "depth": gate.delegation_depth(
+                    child_session.session_id, tenant_id=tenant_id
+                ),
+            },
+            cost_usd=0.0,
+            tenant_id=tenant_id,
+        )
+    except Exception:
+        # An unrecorded delegation is exactly the gap the chain exists to
+        # prevent, so a child that cannot be written into it must not survive.
+        # Roll it back rather than leave an ungoverned session running.
+        gate.revoke_session(child_session.session_id, tenant_id=tenant_id)
+        log.exception(
+            "session.spawn audit write failed; revoked child %s",
+            child_session.session_id,
+        )
+        raise
+
+
 @app.route("/v1/sessions", methods=["POST"])
 @require_api_key
 @validate_body({
-    "agent_id":    {"type": str,   "required": True, "maxlen": 128},
-    "scopes":      {"type": list,  "default": ["read", "browse"]},
-    "ttl":         {"type": int,   "default": 3600, "min": 0, "max": 86400 * 30},
-    "spend_limit": {"type": float, "default": None, "min": 0},
+    "agent_id":          {"type": str,   "required": True, "maxlen": 128},
+    "scopes":            {"type": list,  "default": ["read", "browse"]},
+    "ttl":               {"type": int,   "default": 3600, "min": 0, "max": 86400 * 30},
+    "spend_limit":       {"type": float, "default": None, "min": 0},
+    "parent_session_id": {"type": str,   "default": "", "maxlen": 128},
 })
 def create_session():
     data = request.validated
@@ -668,6 +715,7 @@ def create_session():
     scopes = data["scopes"]
     ttl = data["ttl"]
     spend_limit = data["spend_limit"]
+    parent_session_id = data["parent_session_id"]
 
     tenant = getattr(request, "tenant_id", "")
     cached = _idempotency_lookup("/v1/sessions", data, tenant)
@@ -679,24 +727,37 @@ def create_session():
     limits = TIER_LIMITS.get(tier, TIER_LIMITS["free"])
     current_agents = _get_tenant_agent_count(tenant)
 
-    # Only count as new agent if this agent_id doesn't already have an active session
-    conn = get_db(DB_PATH)
-    existing = conn.execute(
-        "SELECT COUNT(*) FROM sessions WHERE tenant_id = ? AND agent_id = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?)",
-        (tenant, agent_id, time.time())
-    ).fetchone()[0]
-    conn.close()
-    if existing == 0 and current_agents >= limits["agents"]:
-        return jsonify({
-            "error": "Agent limit reached for your tier",
-            "tier": tier,
-            "limit": limits["agents"],
-            "current": current_agents,
-            "upgrade": "https://haldir.xyz/pricing",
-        }), 403
+    # The tier cap governs how many top-level agents a tenant runs. A subagent
+    # is part of an agent that is already counted, so children are exempt —
+    # otherwise one orchestrator could never build a tree on a small tier.
+    if not parent_session_id:
+        # Only count as new agent if this agent_id doesn't already have an active session
+        conn = get_db(DB_PATH)
+        existing = conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE tenant_id = ? AND agent_id = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?)",
+            (tenant, agent_id, time.time())
+        ).fetchone()[0]
+        conn.close()
+        if existing == 0 and current_agents >= limits["agents"]:
+            return jsonify({
+                "error": "Agent limit reached for your tier",
+                "tier": tier,
+                "limit": limits["agents"],
+                "current": current_agents,
+                "upgrade": "https://haldir.xyz/pricing",
+            }), 403
 
     gate.register_agent(agent_id, default_scopes=scopes, tenant_id=tenant)
-    session = gate.create_session(agent_id, scopes=scopes, ttl=ttl, spend_limit=spend_limit, tenant_id=tenant)
+    try:
+        session = gate.create_session(
+            agent_id, scopes=scopes, ttl=ttl, spend_limit=spend_limit,
+            tenant_id=tenant, parent_session_id=parent_session_id,
+        )
+    except DelegationError as e:
+        return jsonify({"error": str(e)}), 400
+
+    if parent_session_id:
+        _log_session_spawn(parent_session_id, session, tenant)
 
     response = {
         "session_id": session.session_id,
@@ -705,6 +766,8 @@ def create_session():
         "spend_limit": session.spend_limit,
         "expires_at": session.expires_at,
         "ttl": ttl,
+        "parent_session_id": session.parent_session_id,
+        "delegation_depth": gate.delegation_depth(session.session_id, tenant_id=tenant),
     }
     _idempotency_store("/v1/sessions", data, tenant, response, 201)
     return jsonify(response), 201
@@ -729,6 +792,116 @@ def get_session(session_id):
         "is_valid": session.is_valid,
         "created_at": session.created_at,
         "expires_at": session.expires_at,
+        "parent_session_id": session.parent_session_id,
+        "delegation_depth": gate.delegation_depth(session_id, tenant_id=tenant),
+    })
+
+
+@app.route("/v1/sessions", methods=["GET"])
+@require_api_key
+@require_scope("sessions:read")
+def list_sessions():
+    """List sessions for the caller's tenant.
+
+    `roots_only=true` returns just the tops of delegation chains — the run
+    list a monitoring view wants.
+    """
+    tenant = getattr(request, "tenant_id", "")
+    agent_id = request.args.get("agent_id") or None
+    roots_only = request.args.get("roots_only") == "true"
+    include_revoked = request.args.get("include_revoked") == "true"
+    try:
+        limit = int(request.args.get("limit", 100))
+    except ValueError:
+        return jsonify({"error": "limit must be an integer"}), 400
+    limit = max(1, min(limit, 500))
+
+    sessions = gate.list_sessions(
+        agent_id=agent_id, tenant_id=tenant,
+        roots_only=roots_only, include_revoked=include_revoked,
+    )
+    sessions.sort(key=lambda s: s.created_at, reverse=True)
+
+    return jsonify({
+        "count": len(sessions[:limit]),
+        "sessions": [
+            {
+                "session_id": s.session_id,
+                "agent_id": s.agent_id,
+                "parent_session_id": s.parent_session_id,
+                "scopes": s.scopes,
+                "spent": s.spent,
+                "spend_limit": s.spend_limit,
+                "revoked": s.revoked,
+                "created_at": s.created_at,
+                "expires_at": s.expires_at,
+            }
+            for s in sessions[:limit]
+        ],
+    })
+
+
+@app.route("/v1/sessions/<session_id>/descendants", methods=["GET"])
+@require_api_key
+@require_scope("sessions:read")
+def get_session_descendants(session_id):
+    """The delegation subtree beneath a session, nested, with cost rolled up.
+
+    Named `descendants` rather than `tree` on purpose: in this codebase "tree"
+    already and unambiguously means the RFC 6962 Merkle tree over the audit
+    log (see `haldir_audit_tree`, `/v1/audit/tree-head`).
+    """
+    tenant = getattr(request, "tenant_id", "")
+    root = gate.get_session(session_id, tenant_id=tenant)
+    if not root:
+        return jsonify({"error": "Session not found or expired"}), 404
+
+    include_revoked = request.args.get("include_revoked") == "true"
+    descendants = gate.get_descendants(
+        session_id, tenant_id=tenant, include_revoked=include_revoked
+    )
+
+    nodes = {}
+    for s in [root] + descendants:
+        nodes[s.session_id] = {
+            "session_id": s.session_id,
+            "agent_id": s.agent_id,
+            "parent_session_id": s.parent_session_id,
+            "revoked": s.revoked,
+            "is_valid": s.is_valid,
+            "spent": s.spent,
+            "spend_limit": s.spend_limit,
+            "created_at": s.created_at,
+            "expires_at": s.expires_at,
+            "children": [],
+        }
+    for s in descendants:
+        parent_node = nodes.get(s.parent_session_id)
+        if parent_node:
+            parent_node["children"].append(nodes[s.session_id])
+
+    def _rollup(node):
+        """Fold cost and session counts up from the leaves.
+
+        Recursion is bounded by MAX_DELEGATION_DEPTH, so this cannot overflow
+        on any tree the Gate would have allowed to exist.
+        """
+        total = node["spent"]
+        count = 0
+        for child in node["children"]:
+            child_total, child_count = _rollup(child)
+            total += child_total
+            count += child_count + 1
+        node["subtree_spent"] = round(total, 6)
+        node["subtree_sessions"] = count
+        return total, count
+
+    _rollup(nodes[root.session_id])
+
+    return jsonify({
+        "root": nodes[root.session_id],
+        "descendant_count": len(descendants),
+        "max_delegation_depth": MAX_DELEGATION_DEPTH,
     })
 
 
@@ -740,7 +913,16 @@ def revoke_session(session_id):
     revoked = gate.revoke_session(session_id, tenant_id=tenant)
     if not revoked:
         return jsonify({"error": "Session not found"}), 404
-    return jsonify({"revoked": True, "session_id": session_id})
+
+    response = {"revoked": True, "session_id": session_id}
+    if request.args.get("cascade") == "true":
+        # Killing an orchestrator without its children leaves subagents
+        # holding live credentials for work nobody is supervising.
+        children = gate.get_descendants(session_id, tenant_id=tenant)
+        for child in children:
+            gate.revoke_session(child.session_id, tenant_id=tenant)
+        response["cascade_revoked"] = [c.session_id for c in children]
+    return jsonify(response)
 
 
 @app.route("/v1/sessions/<session_id>/check", methods=["POST"])

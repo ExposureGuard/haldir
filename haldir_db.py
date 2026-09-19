@@ -291,11 +291,16 @@ _SCHEMA = """
         created_at REAL NOT NULL,
         expires_at REAL NOT NULL DEFAULT 0.0,
         revoked INTEGER NOT NULL DEFAULT 0,
-        metadata TEXT NOT NULL DEFAULT '{}'
+        metadata TEXT NOT NULL DEFAULT '{}',
+        parent_session_id TEXT NOT NULL DEFAULT ''
     );
 
     CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON sessions(tenant_id);
+    -- idx_sessions_parent is deliberately NOT created here. This script runs
+    -- before the ADD COLUMN that gives legacy databases parent_session_id, and
+    -- SQLite aborts the whole script on a reference to an unknown column.
+    -- Both init paths create it after their ALTER TABLE instead.
 
     CREATE TABLE IF NOT EXISTS secrets (
         name TEXT NOT NULL,
@@ -443,6 +448,23 @@ def _init_sqlite(db_path: str):
         )
     except Exception:
         pass  # column already exists; fine
+    # Agent delegation hierarchy. `CREATE TABLE IF NOT EXISTS` above only
+    # shapes fresh databases, so pre-existing installs need the column added
+    # in place. SQLite has no `ADD COLUMN IF NOT EXISTS`, hence try/except.
+    try:
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT NOT NULL DEFAULT ''"
+        )
+    except Exception:
+        pass  # column already exists; fine
+    # Must follow the ALTER above — the column has to exist before it can be
+    # indexed, and `CREATE INDEX IF NOT EXISTS` is not forgiving about that.
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)"
+        )
+    except Exception:
+        pass  # index already exists; fine
     # Compliance scheduler table (migration 004). Belt-and-suspenders
     # for environments that don't run HALDIR_AUTO_MIGRATE.
     try:
@@ -498,6 +520,32 @@ def _init_pg():
     except Exception as e:
         conn.rollback()
         logger.warning("api_keys.scopes ALTER skipped: %s", e)
+
+    # Idempotent column-add for agent delegation hierarchy, mirroring the
+    # api_keys.scopes block above. The CREATE TABLE in _SCHEMA only shapes
+    # fresh databases, so existing deployments need the column added here.
+    try:
+        cursor.execute(
+            "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS parent_session_id "
+            "TEXT NOT NULL DEFAULT ''"
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.warning("sessions.parent_session_id ALTER skipped: %s", e)
+
+    # Index for the hierarchy column. Postgres tolerates the out-of-order
+    # CREATE INDEX in _SCHEMA (the statement just warns and is skipped), but
+    # that would leave the index absent for the life of the process, so it is
+    # created explicitly here, after the ALTER above.
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)"
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.warning("idx_sessions_parent CREATE skipped: %s", e)
 
     # Migration 002 (webhook_deliveries table) is normally applied by
     # haldir_migrate at boot. Belt-and-suspenders: emit it here too so
