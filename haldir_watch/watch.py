@@ -49,6 +49,19 @@ class AuditEntry:
         return hashlib.sha256(payload.encode()).hexdigest()
 
 
+@dataclass
+class _AdminPrincipal:
+    """The stand-in "session" for an admin action.
+
+    log_action expects something with session_id and agent_id, and an audit
+    entry has to carry both. An admin action belongs to no agent session, so
+    session_id is empty and the agent_id names the acting key instead —
+    which is also what makes admin entries findable in the trail.
+    """
+    session_id: str
+    agent_id: str
+
+
 class Watch:
     """Audit and compliance engine with persistent storage."""
 
@@ -125,6 +138,40 @@ class Watch:
             conn.close()
 
         return entry
+
+    def log_admin_action(self, actor: str, action: str,
+                         details: Optional[dict[str, Any]] = None,
+                         tenant_id: str = "") -> AuditEntry:
+        """Record an administrative action in the same chain as agent actions.
+
+        Haldir audits what agents do. Until now it did not audit what is done
+        *to* it: creating and revoking API keys left no trace, so "who revoked
+        production's key, and when?" had no answer — in a product whose claim
+        is that every action is logged. For anyone reviewing whether the audit
+        trail is complete, that is the first question, and a gap where the
+        credential lifecycle should be is worse than no audit trail at all.
+
+        `actor` is the API key prefix that performed the action: already shown
+        in the dashboard, useless for authentication since only the hash is
+        stored.
+
+        Goes through log_action so these entries land in the same hash chain,
+        carry the same prev_hash linkage, and are covered by the same Merkle
+        tree and signed tree heads. An admin action recorded somewhere else
+        would be exactly the kind of thing an attacker would edit.
+        """
+        principal = _AdminPrincipal(
+            session_id="",
+            agent_id=f"admin:{actor}" if actor else "admin",
+        )
+        return self.log_action(
+            principal,
+            tool="haldir",
+            action=f"admin.{action}",
+            details={**(details or {}), "actor": actor or "unknown"},
+            cost_usd=0.0,
+            tenant_id=tenant_id,
+        )
 
     def get_audit_trail(self, session_id: str | None = None,
                         agent_id: str | None = None,
