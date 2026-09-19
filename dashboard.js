@@ -179,27 +179,38 @@
   function loadAccount() {
     var $t = $("#account-keys");
     if (!$t || !key) { return; }
-    api("/admin/overview").then(function (o) {
-      var tenant = o.tenant || {};
-      $("#stat-tenant").textContent = tenant.tenant_id || "—";
-      $("#stat-tier").textContent = tenant.tier || "—";
-      $("#stat-agents").textContent = fmt.int(tenant.agents_active || 0);
-      $("#stat-api-keys").textContent = fmt.int(tenant.api_keys || 0);
+    // The overview payload is flat — tenant_id and tier are top-level, and the
+    // agent count lives under `sessions`. There is no nested `tenant` object,
+    // and it never had one, so reading o.tenant used to yield {} unconditionally
+    // and leave every stat card showing "—".
+    //
+    // The key list is not part of the overview either; /v1/keys is its own
+    // endpoint, so both are fetched together.
+    Promise.all([
+      api("/v1/admin/overview"),
+      api("/v1/keys"),
+    ]).then(function (res) {
+      var o = res[0] || {};
+      var k = res[1] || {};
+      $("#stat-tenant").textContent = o.tenant_id || "—";
+      $("#stat-tier").textContent = o.tier || "—";
+      $("#stat-agents").textContent = fmt.int((o.sessions || {}).agents_active || 0);
+      $("#stat-api-keys").textContent = fmt.int(k.count || 0);
 
-      var keys = tenant.api_keys_list || [];
+      var keys = k.keys || [];
       if (!keys.length) {
         $t.innerHTML = '<tr><td colspan="7" class="empty">No API keys</td></tr>';
         return;
       }
       $t.innerHTML = keys.map(function (k) {
         return '<tr>' +
-          '<td class="mono">' + esc(k.key_prefix || "") + '</td>' +
+          '<td class="mono">' + esc(k.prefix || "") + '</td>' +
           '<td>' + esc(k.name || "") + '</td>' +
           '<td>' + esc(k.tier || "") + '</td>' +
           '<td>' + esc(String(k.scopes || "—")) + '</td>' +
           '<td>' + (k.revoked ? '<span class="flag">revoked</span>' : '<span class="ok">active</span>') + '</td>' +
           '<td>' + fmt.time(k.created_at) + '</td>' +
-          '<td>' + (!k.revoked ? '<button class="btn btn-red btn-sm" data-act="revoke" data-prefix="' + esc(k.key_prefix) + '">Revoke</button>' : '') + '</td>' +
+          '<td>' + (!k.revoked ? '<button class="btn btn-red btn-sm" data-act="revoke" data-prefix="' + esc(k.prefix) + '">Revoke</button>' : '') + '</td>' +
           '</tr>';
       }).join("");
     }).catch(function (e) {
@@ -298,7 +309,7 @@
   // ── Quotas page ─────────────────────────────────────────────────────
   function loadQuotas() {
     if (!key) { return; }
-    api("/admin/overview").then(function (o) {
+    api("/v1/admin/overview").then(function (o) {
       var usage = o.usage || {};
       var sessions = o.sessions || {};
       var vault = o.vault || {};
@@ -322,25 +333,32 @@
   function loadSessions() {
     var $t = $("#sessions-body");
     if (!$t || !key) { return; }
-    api("/admin/overview").then(function (o) {
+    api("/v1/admin/overview").then(function (o) {
       var sessions = o.sessions || {};
       var rows = sessions.sessions || [];
       if (!rows.length) {
-        $t.innerHTML = '<tr><td colspan="5" class="empty">No active sessions</td></tr>';
+        $t.innerHTML = '<tr><td colspan="7" class="empty">No active sessions</td></tr>';
         return;
       }
       rows.sort(function (a, b) { return (b.last_active || 0) - (a.last_active || 0); });
       $t.innerHTML = rows.map(function (r) {
+        // Seven cells, matching the <thead>: Session ID, Agent, Scopes, Spent,
+        // Limit, Remaining, Last Active. The body previously emitted five, so
+        // everything from Limit onward sat under the wrong heading.
+        var limit = Number(r.spend_limit) || 0;
+        var spent = Number(r.spent) || 0;
         return '<tr>' +
           '<td class="mono">' + esc(r.session_id || "") + '</td>' +
           '<td>' + esc(r.agent_id || "") + '</td>' +
           '<td>' + esc(String(r.scopes || "—")) + '</td>' +
-          '<td class="num">' + fmt.usd(r.spent || 0) + '</td>' +
+          '<td class="num">' + fmt.usd(spent) + '</td>' +
+          '<td class="num">' + (limit ? fmt.usd(limit) : "unlimited") + '</td>' +
+          '<td class="num">' + (limit ? fmt.usd(Math.max(0, limit - spent)) : "—") + '</td>' +
           '<td class="num">' + fmt.time(r.last_active) + '</td>' +
           '</tr>';
       }).join("");
     }).catch(function (e) {
-      $t.innerHTML = '<tr><td colspan="5" class="empty">load failed</td></tr>';
+      $t.innerHTML = '<tr><td colspan="7" class="empty">load failed</td></tr>';
       flash("sessions load failed: " + e.message);
     });
   }
@@ -490,11 +508,11 @@
   function loadWebhooks() {
     var $t = $("#webhooks-body");
     if (!$t || !key) { return; }
-    api("/admin/overview").then(function (o) {
+    api("/v1/admin/overview").then(function (o) {
       var wh = o.webhooks || {};
       var rows = wh.webhooks || [];
       if (!rows.length) {
-        $t.innerHTML = '<tr><td colspan="5" class="empty">No webhooks registered</td></tr>';
+        $t.innerHTML = '<tr><td colspan="6" class="empty">No webhooks registered</td></tr>';
         return;
       }
       $t.innerHTML = rows.map(function (w) {
@@ -519,7 +537,7 @@
         });
       });
     }).catch(function (e) {
-      $t.innerHTML = '<tr><td colspan="5" class="empty">load failed</td></tr>';
+      $t.innerHTML = '<tr><td colspan="6" class="empty">load failed</td></tr>';
       flash("webhooks load failed: " + e.message);
     });
   }
@@ -629,12 +647,12 @@
 
   function loadSettings() {
     if (!key) { return; }
-    api("/admin/overview").then(function(o) {
-      var t = o.tenant || {};
+    api("/v1/admin/overview").then(function(o) {
+      // Flat payload: tier and tenant_id are top-level, not under `tenant`.
       var tierEl = $("#stat-settings-tier");
-      if (tierEl) tierEl.textContent = t.tier || "—";
+      if (tierEl) tierEl.textContent = o.tier || "—";
       var tenantEl = $("#stat-settings-tenant");
-      if (tenantEl) tenantEl.textContent = t.tenant_id || "—";
+      if (tenantEl) tenantEl.textContent = o.tenant_id || "—";
       var keyEl = $("#stat-settings-key");
       if (keyEl) keyEl.textContent = key;
     }).catch(function(e) {

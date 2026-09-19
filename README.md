@@ -1,37 +1,33 @@
 <!-- mcp-name: io.github.ExposureGuard/haldir -->
-# Haldir — Governance for AI Agents
+# Haldir
+
+**Scoped permissions, spend caps, an encrypted vault, and an audit log that can prove it wasn't edited — for AI agents that call tools, move money, and read secrets.**
 
 [![tests](https://github.com/ExposureGuard/haldir/actions/workflows/test.yml/badge.svg)](https://github.com/ExposureGuard/haldir/actions/workflows/test.yml)
-[![codecov](https://codecov.io/gh/ExposureGuard/haldir/branch/main/graph/badge.svg)](https://codecov.io/gh/ExposureGuard/haldir)
-[![type-checked: mypy](https://img.shields.io/badge/type--checked-mypy-1f5082)](https://github.com/ExposureGuard/haldir/blob/main/mypy.ini)
-[![Smithery](https://smithery.ai/badge/haldir)](https://smithery.ai/server/haldir/haldir)
 [![PyPI](https://img.shields.io/pypi/v/haldir)](https://pypi.org/project/haldir/)
-[![PyPI Downloads](https://img.shields.io/pypi/dm/haldir)](https://pypi.org/project/haldir/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Security: SECURITY.md](https://img.shields.io/badge/security-policy-brightgreen)](SECURITY.md)
 [![GitHub Stars](https://img.shields.io/github/stars/ExposureGuard/haldir?style=social)](https://github.com/ExposureGuard/haldir)
-[![SafeSkill 89/100](https://img.shields.io/badge/SafeSkill-89%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/exposureguard-haldir)
-
-Your AI agent can call any API, spend any amount of money, and access any secret — with zero oversight.
-
-**Haldir** sits between your agent and its tools to enforce:
-
-- **Scoped sessions** with permissions and spend caps
-- **Encrypted secrets** the model never sees directly
-- **Immutable, hash-chained audit trail** (RFC 6962 Merkle tamper-evidence)
-- **Human-in-the-loop approvals** with webhook notifications
-
-For developers and teams shipping AI agents (Claude Code, Cursor, LangChain, CrewAI, AutoGen, Vercel AI SDK) to production and wanting guardrails without building them from scratch.
-
-MIT licensed. Self-host or use our cloud.
 
 <p align="center">
-  <img src="demo/quickstart.svg" alt="Haldir quickstart: install, create a scoped session, check permission, log the action to the hash-chained audit trail" width="780">
+  <img src="demo/hero_tamper.gif" alt="A live Haldir audit log being tampered with: a past entry is rewritten, the inclusion proof stops matching the live Merkle root, and the verdict flips to 'Tamper detected'" width="880">
 </p>
 
-<p align="center">
-  <img src="docs/architecture.svg" alt="Haldir architecture: Agent → Proxy → (Gate/Vault/Watch/Policy) → Upstream APIs" width="820">
-</p>
+That loop is the whole idea, running live. Someone rewrites a row in the audit log — silently, straight in the database. The entry's inclusion proof no longer matches the live Merkle root, and the verdict flips. Not caught by monitoring, not caught by a diff: caught by arithmetic, because the root is a hash of what the log actually contains and the earlier Signed Tree Head is already pinned somewhere you don't control.
+
+→ **[Try it yourself — no install, runs in your browser](/demo)**
+
+## What you get
+
+- **Scoped sessions** — permissions and spend caps per agent, revocable the moment something looks wrong.
+- **Encrypted vault** — AES-256-GCM. Your agent asks for a secret; the model never sees it.
+- **Tamper-evident audit** — every call logged into an RFC 6962 Merkle tree with signed tree heads, so history can be proven, not just trusted.
+- **Human approvals** — pause a run on a spend threshold and get a webhook.
+
+```bash
+pip install haldir && haldir overview
+```
+
+Works with Claude Code, Cursor, LangChain, CrewAI, AutoGen and the Vercel AI SDK — anything that can make an HTTP call or speak MCP. MIT licensed: self-host it, or point at [haldir.xyz](https://haldir.xyz) (free tier, no signup).
 
 ## See it in action
 
@@ -51,7 +47,7 @@ Here's the three things you'd see as a new visitor, in order:
 
 1. **Landing page** — dark mode, live terminal animation at the top, four product cards (Gate, Vault, Watch, Proxy), a self-host vs cloud comparison, and a call to claim a design partner spot. One page, everything a first-time visitor needs.
 
-2. **Cloud dashboard** — this is what you see after signing in. A sidebar on the left, your tenant and key stats up top, and tables below for sessions and audit entries. One click takes you to any page — account, quotas, sessions, audit, webhooks, approvals, compliance, or settings.
+2. **Cloud dashboard** — this is what you see after signing in. A sidebar on the left takes you to any page — account, quotas, sessions, audit, webhooks, approvals, compliance, or settings. The account view shows your tenant, tier, live counts, and API keys by prefix (the full key is never shown again after it's minted, and revoking one never involves a database shell).
 
 3. **Audit trail** — the killer feature. Filter by session, agent, or tool. Click any row to see the full MCP call details: what tool was called, what upstream API it hit, how long it took, what arguments it sent, and what it returned. This is the one thing that makes the whole product click — you can see exactly what every agent did, when, and with what.
 
@@ -61,37 +57,37 @@ Here's the dashboard with the important parts labeled:
   <img src="demo/annotated_dashboard.png" alt="Cloud dashboard with annotations: sidebar, stat cards, sessions table, audit table" width="860">
 </p>
 
-The sidebar on the left takes you anywhere. The gold labels show the overview (tenant, tier, stats at a glance). The red labels show the two things you'll actually use every day: active sessions (with spend and revoke) and the audit trail (every tool call, filterable, expandable).
+The sidebar on the left takes you anywhere. The numbered markers point at the parts you'll actually use: your tenant and tier, the live counts, and your API keys by prefix — with the revoke button right there, so ending an agent's access never means opening a database shell.
 
 ### Play with it yourself
 
-There's a live demo you can poke at right now — no signup, runs in your browser:
+Three things run live, no signup, straight from these links:
 
-→ **[Try the tamper demo →](/demo)** — it runs a hash-chained audit log in your browser and lets you try to tamper with it yourself. You'll see for yourself that the chain breaks when anyone edits a past entry.
+→ **[The tamper demo](/demo/tamper)** — the one in the GIF above. Rewrite a real log row and watch the inclusion proof stop matching the Merkle root. Nothing is simulated; it is the same Merkle code the API ships.
+
+→ **[The playground](/demo)** — walks you through minting a key, opening a scoped session, checking a permission and writing to the audit trail, against a sandbox tenant of your own.
+
+→ **[The gallery](/gallery)** — every screenshot on this page in one place, if you'd rather look than read.
 
 ### The rest of the site
 
-The docs, pricing page, quickstart, compliance evidence pack, and every other page are linked from the nav bar on every page. The README has the full API reference, Python quickstart, performance numbers, and compliance mapping.
+The docs, pricing page, quickstart, compliance evidence pack, and every other page are linked from the nav bar on every page. Below: the full API reference, Python quickstart, performance numbers, and compliance mapping.
 
 Try the real thing at **[haldir.xyz](https://haldir.xyz)** — free tier, no signup, point at it from any agent and go.
 
 ---
 
-## Try it in 2 minutes
+## Two ways to run
 
-```bash
-pip install haldir
-haldir overview
-```
-
-Want the cloud version with a free tier?
-→ **[haldir.xyz](https://haldir.xyz)** — now accepting design partners (30 days free, full access, direct line to the founder).## Two ways to run
+Same product either way.
 
 |                  | Self-host                  | Cloud ([haldir.xyz](https://haldir.xyz))   |
 | ---------------- | ------------------------- | ------------------------------------------- |
 | Price            | Free forever              | Free tier + paid plans                      |
 | You run          | API + Postgres            | Nothing                                     |
 | Best for         | Regulated, air-gapped, "must own data" | "Just make it work"            |
+
+The cloud tier is free to start and needs no signup. We're taking **5 design partners** — 30 days, full access, direct line to the founder: [sterling@haldir.xyz](mailto:sterling@haldir.xyz?subject=Haldir%20Design%20Partner).
 
 ### Self-host in 5 minutes
 
@@ -102,7 +98,7 @@ cp .env.example .env
 python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
 # paste the output into .env as HALDIR_ENCRYPTION_KEY, then:
 docker compose up -d
-curl http://localhost:8000/health
+curl http://localhost:8000/healthz
 ```
 
 Full self-hosting guide: [SELF_HOSTING.md](SELF_HOSTING.md)
@@ -167,6 +163,12 @@ AI agents are calling APIs, spending money, and accessing credentials with zero 
 | No human oversight          | Approval workflows with webhooks   |
 | Agent talks to tools directly| Proxy intercepts + enforces        |
 
+Everything on the right is one process in front of your tools. Your agent keeps its existing tool calls; Haldir answers first:
+
+<p align="center">
+  <img src="docs/architecture.svg" alt="Haldir architecture: Agent → Proxy → (Gate/Vault/Watch/Policy) → Upstream APIs" width="820">
+</p>
+
 ---
 
 ## Quick Start (Python)
@@ -194,6 +196,12 @@ h.log_action(session["session_id"], tool="stripe", action="charge", cost_usd=29.
 # Revoke when done
 h.revoke_session(session["session_id"])
 ```
+
+Under the hood that's four HTTP calls — mint a key, open a session, check a permission, write to the audit chain:
+
+<p align="center">
+  <img src="demo/quickstart.svg" alt="Haldir quickstart: install, create a scoped session, check permission, log the action to the hash-chained audit trail" width="780">
+</p>
 
 ---
 
@@ -259,7 +267,7 @@ curl -X POST https://haldir.xyz/v1/approvals/rules \
 
 ## MCP Server
 
-Haldir is available as an MCP server with 10 tools for Claude, Cursor, Windsurf, and any MCP-compatible AI:
+Haldir is available as an MCP server with 9 tools for Claude, Cursor, Windsurf, and any MCP-compatible AI:
 
 ```json
 {
@@ -274,7 +282,9 @@ Haldir is available as an MCP server with 10 tools for Claude, Cursor, Windsurf,
 }
 ```
 
-**MCP Tools:** `createSession`, `getSession`, `revokeSession`, `checkPermission`, `storeSecret`, `getSecret`, `authorizePayment`, `logAction`, `getAuditTrail`, `getSpend`
+**MCP Tools:** `createSession`, `revokeSession`, `checkPermission`, `storeSecret`, `getSecret`, `authorizePayment`, `logAction`, `getAuditTrail`, `getSpend`
+
+These are the tools `haldir-mcp` registers (`mcp_server.py`) — the process the config above launches. `haldir_mcp_server.py` registers a different, larger set under `haldir_*` names, and the hosted `POST /mcp` endpoint answers with a third; see the note in that module. If you are wiring a client by hand, copy the names from the server you actually start.
 
 **MCP HTTP Endpoint:** `POST https://haldir.xyz/mcp`
 

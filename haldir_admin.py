@@ -63,6 +63,7 @@ lists for counting. Adds one cheap query per pillar, never N+1.
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -174,12 +175,56 @@ def _sessions(db_path: str, tenant_id: str, tier_caps: dict[str, int]) -> dict[s
             "AND (expires_at = 0 OR expires_at > ?)",
             (tenant_id, now),
         ).fetchone()
+        # The rows, not just the counts. The cloud dashboard's sessions table
+        # needs the sessions themselves, and there is no GET /v1/sessions to
+        # ask — this helper already queries the table, so it returns what it
+        # counted instead of making the dashboard call an endpoint that does
+        # not exist.
+        rows = conn.execute(
+            "SELECT session_id, agent_id, scopes, spent, spend_limit, "
+            "created_at, expires_at "
+            "FROM sessions "
+            "WHERE tenant_id = ? AND revoked = 0 "
+            "AND (expires_at = 0 OR expires_at > ?) "
+            "ORDER BY created_at DESC LIMIT 100",
+            (tenant_id, now),
+        ).fetchall()
+        # "Last active" is the newest audit entry for the session, so a quiet
+        # session does not read as freshly busy. A session that has not acted
+        # yet falls back to when it was created.
+        last_active: dict[str, float] = {}
+        if rows:
+            ids = [r["session_id"] for r in rows]
+            marks = ",".join("?" * len(ids))
+            for sid, ts in conn.execute(
+                "SELECT session_id, MAX(timestamp) FROM audit_log "
+                f"WHERE tenant_id = ? AND session_id IN ({marks}) "
+                "GROUP BY session_id",
+                [tenant_id] + ids,
+            ).fetchall():
+                last_active[sid] = float(ts or 0.0)
     finally:
         conn.close()
+
+    def _session_row(r: Any) -> dict[str, Any]:
+        sid = r["session_id"]
+        created = float(r["created_at"] or 0.0)
+        return {
+            "session_id":  sid,
+            "agent_id":    r["agent_id"],
+            "scopes":      json.loads(r["scopes"]) if r["scopes"] else [],
+            "spent":       float(r["spent"] or 0.0),
+            "spend_limit": float(r["spend_limit"] or 0.0),
+            "created_at":  created,
+            "expires_at":  float(r["expires_at"] or 0.0),
+            "last_active": last_active.get(sid) or created,
+        }
+
     return {
         "active_count":  int(active_row[0]) if active_row else 0,
         "agents_active": int(agents_row[0]) if agents_row else 0,
         "agents_limit":  int(tier_caps.get("agents", 0)),
+        "sessions":      [_session_row(r) for r in rows],
     }
 
 
