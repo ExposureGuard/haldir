@@ -25,6 +25,18 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Run pending migrations when api is imported, so the test database has the
+# full schema before any test module touches it.
+#
+# api.py only migrates when HALDIR_AUTO_MIGRATE=1 (off by default, so that a
+# deploy can run migrations as a separate step before traffic arrives), and
+# init_db() covers only the base schema. Migration-created tables — sth_log
+# and the transparency tables — were therefore missing from a fresh checkout,
+# which made the tests that read them fail on a first run and pass on a
+# second, once an earlier test had created them as a side effect. Whether a
+# developer saw green depended on whether they had run the suite before.
+os.environ.setdefault("HALDIR_AUTO_MIGRATE", "1")
+
 
 @pytest.fixture(scope="session")
 def haldir_client():

@@ -71,7 +71,7 @@ _tracer: Any = None
 
 if _ENABLED:
     try:
-        from opentelemetry import trace as _ot_trace  # type: ignore[import-not-found]
+        from opentelemetry import trace as _ot_trace
         _tracer = _ot_trace.get_tracer("haldir", "0.3.0")
     except ImportError:
         # OTel requested but not installed — silently fall back to no-op
@@ -112,7 +112,7 @@ def traced(name: str, **attributes: Any) -> Iterator[Any]:
             try:
                 span.record_exception(e)
                 # StatusCode.ERROR = 2 in OTel's enum
-                from opentelemetry.trace import Status, StatusCode  # type: ignore[import-not-found]
+                from opentelemetry.trace import Status, StatusCode
                 span.set_status(Status(StatusCode.ERROR, str(e)))
             except Exception:
                 pass

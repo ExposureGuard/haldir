@@ -57,7 +57,11 @@ jobs:
           pip install -r requirements.txt
 
       - name: Install test dependencies
-        run: pip install pytest pytest-cov hypothesis
+        # pytest-asyncio is required by the async MCP-server tests
+        # (@pytest.mark.asyncio). Without it those tests fail at collection
+        # with "async def functions are not natively supported" — the plugin
+        # was present in developer environments but never installed here.
+        run: pip install pytest pytest-cov pytest-asyncio hypothesis
 
       - name: Run tests with coverage
         run: |
