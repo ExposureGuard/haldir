@@ -370,19 +370,72 @@
         $t.innerHTML = '<tr><td colspan="7" class="empty">No audit entries match the current filters</td></tr>';
         return;
       }
+      var showAllDetails = window.__auditShowAll || false;
       $t.innerHTML = entries.map(function (e) {
-        return '<tr class="' + (e.flagged ? "flagged" : "") + '">' +
+        var detail_html = "";
+        if (e.details) {
+          var d = e.details;
+          var parts = [];
+          if (d.tool) parts.push('<div style="margin-bottom:0.3rem"><span style="color:var(--w20)">tool:</span> <span style="color:var(--w);font-family:var(--mono)">' + esc(String(d.tool)) + '</span></div>');
+          if (d.upstream) parts.push('<div style="margin-bottom:0.3rem"><span style="color:var(--w20)">upstream:</span> <span style="color:var(--w);font-family:var(--mono)">' + esc(String(d.upstream)) + '</span></div>');
+          if (d.latency_ms != null) parts.push('<div style="margin-bottom:0.3rem"><span style="color:var(--w20)">latency:</span> ' + esc(String(d.latency_ms)) + ' ms</div>');
+          if (d.error != null) parts.push('<div style="margin-bottom:0.3rem"><span style="color:var(--w20)">error:</span> ' + (d.error ? '<span style="color:var(--red)">yes</span>' : '<span style="color:var(--green)">no</span>') + '</div>');
+          if (d.arguments) parts.push('<div style="margin-bottom:0.3rem"><span style="color:var(--w20)">arguments:</span> <pre style="font-family:var(--mono);font-size:0.6rem;background:var(--w08);padding:0.4rem;border-radius:3px;overflow:auto;margin:0;max-height:120px">' + esc(JSON.stringify(d.arguments, null, 2)) + '</pre></div>');
+          if (d.result) parts.push('<div style="margin-bottom:0.3rem"><span style="color:var(--w20)">result:</span> <pre style="font-family:var(--mono);font-size:0.6rem;background:var(--w08);padding:0.4rem;border-radius:3px;overflow:auto;margin:0;max-height:120px">' + esc(JSON.stringify(d.result, null, 2)) + '</pre></div>');
+          if (d.reason) parts.push('<div style="margin-bottom:0.3rem"><span style="color:var(--w20)">reason:</span> <span style="color:var(--w);font-family:var(--mono)">' + esc(String(d.reason)) + '</span></div>');
+          if (d.flag_reason) parts.push('<div style="margin-bottom:0.3rem"><span style="color:var(--w20)">flag_reason:</span> <span style="color:var(--gold);font-family:var(--mono)">' + esc(String(d.flag_reason)) + '</span></div>');
+          if (d.request_id) parts.push('<div style="margin-bottom:0.3rem"><span style="color:var(--w20)">request_id:</span> <span style="color:var(--w);font-family:var(--mono)">' + esc(String(d.request_id)) + '</span></div>');
+          detail_html = parts.join("");
+        }
+        var status_html = e.flagged
+          ? '<span class="flag" title="' + esc(e.flag_reason || "flagged") + '">flagged</span>'
+          : '<span class="ok">ok</span>';
+        var row_class = e.flagged ? "flagged" : "";
+        var _eid = esc(String(e.entry_id || ""));
+        var row = '' +
+          '<tr class="' + row_class + '" data-entry-id="' + _eid + '" data-has-detail="' + (detail_html ? "1" : "0") + '">' +
           '<td>' + fmt.time(e.timestamp) + '</td>' +
           '<td class="mono">' + esc(e.session_id || "") + '</td>' +
           '<td>' + esc(e.agent_id || "") + '</td>' +
           '<td>' + esc(e.tool || "") + '</td>' +
           '<td>' + esc(e.action || "") + '</td>' +
           '<td class="num">' + fmt.usd(e.cost_usd) + '</td>' +
-          '<td>' + (e.flagged
-            ? '<span class="flag" title="' + esc(e.flag_reason || "flagged") + '">flagged</span>'
-            : '<span class="ok">ok</span>') + '</td>' +
+          '<td>' + status_html + '</td>' +
           '</tr>';
+        if (detail_html) {
+          row += '' +
+            '<tr class="detail-row" data-entry-id="' + _eid + '" style="display:' + (showAllDetails ? "" : "none") + '">' +
+            '<td colspan="7" style="padding:0.75rem 1rem;background:var(--w08);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">' +
+            detail_html +
+            '</td></tr>';
+        }
+        return row;
       }).join("");
+
+      // Wire detail toggle button
+      var toggleBtn = $("#audit-toggle-details");
+      if (toggleBtn) {
+        toggleBtn.addEventListener("click", function () {
+          window.__auditShowAll = !window.__auditShowAll;
+          toggleBtn.textContent = window.__auditShowAll ? "Hide details" : "Show details";
+          var drows = $t.querySelectorAll(".detail-row");
+          for (var i = 0; i < drows.length; i++) {
+            drows[i].style.display = window.__auditShowAll ? "" : "none";
+          }
+        });
+      }
+      // Wire individual row click
+      var allRows = $t.querySelectorAll("tr[data-entry-id]");
+      for (var i = 0; i < allRows.length; i++) {
+        allRows[i].addEventListener("click", function (ev) {
+          if (ev.target.tagName === "INPUT" || ev.target.tagName === "BUTTON" || ev.target.closest && ev.target.closest("input, button")) return;
+          var id = this.getAttribute("data-entry-id");
+          var detail = this.nextElementSibling;
+          if (detail && detail.classList && detail.classList.contains("detail-row")) {
+            detail.style.display = detail.style.display === "none" ? "" : "none";
+          }
+        });
+      }
     }).catch(function (e) {
       $t.innerHTML = '<tr><td colspan="7" class="empty">audit load failed</td></tr>';
       flash("audit load failed: " + e.message);

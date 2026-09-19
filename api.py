@@ -5060,9 +5060,9 @@ def cloud_overview_page():
           <table class="wrap">
             <thead><tr>
               <th>Session ID</th><th>Agent</th><th>Scopes</th>
-              <th>Spent</th><th>Last active</th>
+              <th>Spent</th><th>Limit</th><th>Remaining</th><th>Last active</th>
             </tr></thead>
-            <tbody id="sessions-body"><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
+            <tbody id="sessions-body"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
           </table>
         </div>
       </section>
@@ -5071,20 +5071,24 @@ def cloud_overview_page():
       <section class="page" id="page-audit">
         <div class="page-title">Audit trail</div>
         <div class="filter-bar">
-          <label>Session</label>
-          <input type="text" id="audit-session" placeholder="session id">
+          <label style="flex:1">Session</label>
+          <input type="text" id="audit-session" placeholder="session id" style="flex:1">
           <label>Agent</label>
-          <input type="text" id="audit-agent" placeholder="agent id">
+          <input type="text" id="audit-agent" placeholder="agent id" style="flex:1">
           <label>Tool</label>
-          <input type="text" id="audit-tool" placeholder="tool name">
-          <label>Flagged</label>
-          <input type="checkbox" id="audit-flagged">
+          <input type="text" id="audit-tool" placeholder="tool name" style="flex:1">
+          <label style="display:flex;align-items:center;gap:0.3rem"><input type="checkbox" id="audit-flagged">Flagged</label>
           <label>Limit</label>
-          <input type="number" id="audit-limit" value="100" min="1" max="500">
-          <button class="btn btn-w" id="audit-search">Search</button>
-          <button class="btn btn-g" id="audit-clear">Clear</button>
+          <input type="number" id="audit-limit" value="100" min="1" max="500" style="width:60px">
+          <button class="btn btn-w" id="audit-search" style="white-space:nowrap">Search</button>
+          <button class="btn btn-g" id="audit-clear" style="white-space:nowrap">Clear</button>
+          <button class="btn btn-w" id="audit-export" style="white-space:nowrap;background:var(--green);color:#050505">Export CSV</button>
         </div>
         <div class="panel">
+          <div style="display:flex;gap:0.5rem;margin-bottom:1rem;align-items:center">
+            <button class="btn btn-w btn-sm" id="audit-toggle-details" style="white-space:nowrap">Show details</button>
+            <span style="font-family:var(--mono);font-size:0.6rem;color:var(--w20)">Click a row to see the MCP tool call details</span>
+          </div>
           <table class="wrap">
             <thead><tr>
               <th>Timestamp</th><th>Session ID</th><th>Agent</th>
