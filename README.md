@@ -51,7 +51,7 @@ Here's the three things you'd see as a new visitor, in order:
 
 1. **Landing page** — dark mode, live terminal animation at the top, four product cards (Gate, Vault, Watch, Proxy), a self-host vs cloud comparison, and a call to claim a design partner spot. One page, everything a first-time visitor needs.
 
-2. **Cloud dashboard** — this is what you see after signing in. A sidebar on the left, your tenant and key stats up top, and tables below for sessions and audit entries. One click takes you to any page — account, quotas, sessions, audit, webhooks, approvals, compliance, or settings.
+2. **Cloud dashboard** — this is what you see after signing in. A sidebar on the left takes you to any page — account, quotas, sessions, audit, webhooks, approvals, compliance, or settings. The account view shows your tenant, tier, live counts, and API keys by prefix (the full key is never shown again after it's minted, and revoking one never involves a database shell).
 
 3. **Audit trail** — the killer feature. Filter by session, agent, or tool. Click any row to see the full MCP call details: what tool was called, what upstream API it hit, how long it took, what arguments it sent, and what it returned. This is the one thing that makes the whole product click — you can see exactly what every agent did, when, and with what.
 
@@ -61,7 +61,7 @@ Here's the dashboard with the important parts labeled:
   <img src="demo/annotated_dashboard.png" alt="Cloud dashboard with annotations: sidebar, stat cards, sessions table, audit table" width="860">
 </p>
 
-The sidebar on the left takes you anywhere. The gold labels show the overview (tenant, tier, stats at a glance). The red labels show the two things you'll actually use every day: active sessions (with spend and revoke) and the audit trail (every tool call, filterable, expandable).
+The sidebar on the left takes you anywhere. The numbered markers point at the parts you'll actually use: your tenant and tier, the live counts, and your API keys by prefix — with the revoke button right there, so ending an agent's access never means opening a database shell.
 
 ### Play with it yourself
 
