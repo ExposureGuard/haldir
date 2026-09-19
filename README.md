@@ -35,69 +35,66 @@ MIT licensed. Self-host or use our cloud.
 
 ## See it in action
 
+Here's what Haldir actually looks like — no diagrams, no spec sheets, just screenshots of the real thing.
+
 <p align="center">
-  <img src="demo/hero_montage.png" alt="Haldir in action: landing page, cloud dashboard, tamper demo" width="720">
+  <img src="demo/hero_montage.png" alt="Haldir: landing page, cloud dashboard, tamper demo" width="860">
 </p>
 
-<details>
-<summary><strong>Cloud dashboard — click to expand all screenshots</strong></summary>
+That montage shows the three things you'd see as a new visitor: the landing page, the cloud dashboard, and the live tamper-evidence demo. Here's each piece up close.
 
-| Page | What you see |
-|------|-------------|
-| [Landing page](demo/screenshots/01_landing.png) | Dark-mode hero, live terminal animation, 4 product cards, self-host vs cloud comparison, design partner CTA |
-| [Cloud dashboard](demo/screenshots/04_cloud_overview.png) | Full SPA: sidebar nav, tenant overview, stat cards, session & audit tables |
-| [Account — API keys](demo/screenshots/05_cloud_account.png) | Create/revoke API keys with scopes, see key prefix, name, tier, status, created date |
-| [Audit trail](demo/screenshots/06_cloud_audit.png) | Filter by session/agent/tool/flagged, expand rows for full MCP call details (tool, upstream, latency, error, arguments, result, flag_reason) |
-| [Compliance](demo/screenshots/07_cloud_compliance.png) | Live readiness score, recurring evidence schedules, export evidence pack button (downloads Markdown) |
-| [Settings](demo/screenshots/08_cloud_settings.png) | Tenant ID, plan tier, current API key displayed |
-| [Approvals](demo/screenshots/09_cloud_approvals.png) | Pending human-in-the-loop requests, approve/deny from the dashboard |
-| [Webhooks](demo/screenshots/10_cloud_webhooks.png) | Register and delete webhook endpoints, see deliveries and success rate |
-| [Sessions](demo/screenshots/11_cloud_sessions.png) | Active agent sessions with spend limits, remaining budget, revoke button |
-| [Quotas](demo/screenshots/12_cloud_quotas.png) | Usage this month: actions (with bar), spend, active sessions, vault secrets |
-| [Tamper demo](demo/screenshots/13_tamper_demo.png) | Interactive live demo proving hash-chained audit trail cannot be tampered with |
+### The landing page
 
-</details>
+<p align="center">
+  <img src="demo/screenshots/01_landing.png" alt="Haldir landing page" width="760">
+</p>
 
-<details>
-<summary><strong>Demo gallery (full-page screenshots)</strong></summary>
+Dark mode, live terminal animation at the top, four product cards (Gate, Vault, Watch, Proxy), a self-host vs cloud comparison, and a call to claim a design partner spot. That's it. One page, everything a first-time visitor needs.
 
-<div align="center">
-  <img src="demo/screenshots/01_landing.png" alt="Landing page" width="720"><br>
-  <i>Landing page — live terminal, products, self-host vs cloud</i>
-</div>
+### The cloud dashboard
 
-<br>
+<p align="center">
+  <img src="demo/screenshots/04_cloud_overview.png" alt="Cloud dashboard overview" width="760">
+</p>
 
-<div align="center">
-  <img src="demo/screenshots/04_cloud_overview.png" alt="Cloud dashboard overview" width="720"><br>
-  <i>Cloud dashboard — overview with tenant summary and stat cards</i>
-</div>
+This is what you see after signing in. A sidebar on the left, your tenant and key stats up top, and tables below for sessions and audit entries. One click takes you to any page — account, quotas, sessions, audit, webhooks, approvals, compliance, or settings.
 
-<br>
+The dashboard is one HTML page + one JavaScript file. No framework, no build step, no npm install. It works offline as a static file.
 
-<div align="center">
-  <img src="demo/screenshots/06_cloud_audit.png" alt="Audit trail with expandable MCP call details" width="720"><br>
-  <i>Audit trail — expand any row to see full MCP tool call details</i>
-</div>
+### What you can do inside
 
-<br>
+Each dashboard page does something real. Here's the short version:
 
-<div align="center">
-  <img src="demo/screenshots/07_cloud_compliance.png" alt="Compliance page with live score and evidence export" width="720"><br>
-  <i>Compliance — live readiness score, schedules, one-click evidence pack export</i>
-</div>
+<p align="center">
+  <img src="demo/screenshots/05_cloud_account.png" alt="Account page — create and revoke API keys" width="640">
+  &nbsp;&nbsp;&nbsp;
+  <img src="demo/screenshots/06_cloud_audit.png" alt="Audit trail — expand rows for MCP call details" width="640">
+</p>
 
-<br>
+<p align="center">
+  <img src="demo/screenshots/07_cloud_compliance.png" alt="Compliance page — live score and evidence export" width="640">
+  &nbsp;&nbsp;&nbsp;
+  <img src="demo/screenshots/13_tamper_demo.png" alt="Tamper-evidence live demo" width="640">
+</p>
 
-<div align="center">
-  <img src="demo/screenshots/13_tamper_demo.png" alt="Tamper-evidence live demo" width="720"><br>
-  <i>Live tamper-evidence demo — prove the audit log was not tampered with</i>
-</div>
+| What you see | What it means |
+|---|---|
+| **Account** — create and revoke API keys with scopes | Control who has access, what they can do, when it expires |
+| **Audit trail** — filter by session, agent, or tool; click any row to see the full MCP call details | Know exactly what every agent did, when, and with what arguments |
+| **Compliance** — live readiness score, recurring evidence schedules, one-click export | Hand an auditor a signed Markdown pack in one click, not a three-week manual exercise |
+| **Approvals** — pending requests, approve or deny | Pause an agent's action and let a human decide |
+| **Webhooks** — register endpoints, see delivery success rate | Get Slack/Discord/HTTP alerts when something unusual happens |
+| **Sessions** — active agents, spend limits, revoke | Kill a runaway agent in one click |
+| **Quotas** — actions used, spend, sessions, secrets this month | Know where you stand before you hit a limit |
+| **Tamper demo** — play with the live hash chain yourself | See for yourself that the audit log can't be edited without breaking the chain |
 
-</details>
+### The rest of the site
 
-## Try it in 2 minutes
+The docs, pricing page, quickstart, compliance evidence pack, and demo pages all exist too — they're linked from the nav bar on every page. The README has the full API reference, Python quickstart, performance numbers, and compliance mapping.
 
+Try it yourself at **[haldir.xyz](https://haldir.xyz)** — free tier, no signup, point at it from any agent and go.
+
+---
 ```bash
 pip install haldir
 haldir overview
