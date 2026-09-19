@@ -13,15 +13,18 @@ import sys
 import asyncio
 import pytest
 
-# Set up paths and test DB before any Haldir imports
+# Set up paths before any Haldir imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-TEST_DB = "/tmp/haldir_sdk_test.db"
-os.environ["HALDIR_DB_PATH"] = TEST_DB
-
-# Clean slate
-if os.path.exists(TEST_DB):
-    os.remove(TEST_DB)
+# This module used to point HALDIR_DB_PATH at a private database here, at
+# import time, and delete it in teardown_module(). Both were leftovers from
+# before the fixtures below moved onto conftest's shared bootstrap key, and
+# both were actively harmful: pytest imports every test module before running
+# any test, so the env var pinned api.DB_PATH for every module imported after
+# this one, and the teardown then deleted the database out from under them.
+# The visible symptom was any module collected after this one failing with
+# "no such table: api_keys". The fixtures below say why the wipe had to go —
+# it invalidates conftest.bootstrap_key for the whole session.
 
 import httpx
 from api import app as flask_app
@@ -323,8 +326,5 @@ class TestAsyncClient:
         asyncio.run(run())
 
 
-# ── Cleanup ──
-
-def teardown_module():
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
+# No teardown: this module shares conftest's session database, so there is
+# nothing of its own to clean up. See the note at the top of the file.

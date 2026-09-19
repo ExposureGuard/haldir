@@ -11,6 +11,17 @@ from enum import Enum
 from haldir_tracing import traced_span
 
 
+# Ceiling on agent→subagent nesting. A runaway fan-out (an agent that spawns
+# an agent that spawns an agent…) is indistinguishable from a fork bomb at the
+# governance layer, so the chain is bounded here rather than left to the caller.
+# Set generously: legitimate orchestrators nest a handful of levels, not eight.
+MAX_DELEGATION_DEPTH = 8
+
+
+class DelegationError(ValueError):
+    """A parent/child session link would be invalid (missing, cross-tenant, too deep)."""
+
+
 class Permission(Enum):
     READ = "read"
     WRITE = "write"
@@ -34,6 +45,9 @@ class Session:
     revoked: bool = False
     metadata: dict = field(default_factory=dict)
     tenant_id: str = ""
+    # Empty string means this session is a delegation root. Kept as '' rather
+    # than None to match the column sentinel used across the schema.
+    parent_session_id: str = ""
 
     @property
     def is_valid(self) -> bool:
@@ -101,10 +115,86 @@ class Gate:
             conn.commit()
             conn.close()
 
+    @staticmethod
+    def _row_to_session(row) -> Session:
+        """Map a sessions row to a Session.
+
+        Columns introduced after the initial schema are absent on databases
+        that predate them, so optionally-added fields are read defensively.
+        """
+        keys = row.keys()
+        return Session(
+            session_id=row["session_id"],
+            agent_id=row["agent_id"],
+            scopes=json.loads(row["scopes"]),
+            spend_limit=row["spend_limit"],
+            spent=row["spent"],
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+            revoked=bool(int(row["revoked"])),
+            tenant_id=row["tenant_id"],
+            parent_session_id=(row["parent_session_id"] or "")
+            if "parent_session_id" in keys else "",
+        )
+
+    def _raw_parent(self, session_id: str, tenant_id: str) -> str | None:
+        """Parent link for a session, ignoring revoked/expired state.
+
+        Ancestry walks must stay stable even once an ancestor has lapsed, so
+        this deliberately bypasses get_session's validity filter. Returns None
+        when the session is not visible in this tenant.
+        """
+        conn = self._get_db()
+        if conn:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE session_id = ? AND tenant_id = ?",
+                (session_id, tenant_id)
+            ).fetchone()
+            conn.close()
+            if not row:
+                return None
+            # Tolerate a database that predates the hierarchy column.
+            if "parent_session_id" not in row.keys():
+                return ""
+            return row["parent_session_id"] or ""
+        session = self._sessions.get(session_id)
+        if session and session.tenant_id == tenant_id:
+            return session.parent_session_id
+        return None
+
+    def delegation_depth(self, session_id: str, tenant_id: str = "") -> int:
+        """Depth of a session in the delegation chain. Roots are depth 0."""
+        depth = 0
+        seen = {session_id}
+        current = session_id
+        while True:
+            parent = self._raw_parent(current, tenant_id)
+            if not parent or parent in seen:
+                # No parent, or stored data describing a cycle — stop rather
+                # than spin. Either way the reported chain is bounded.
+                return depth
+            seen.add(parent)
+            depth += 1
+            current = parent
+
     @traced_span("haldir.gate.create_session")
     def create_session(self, agent_id: str, scopes: list[str] | None = None,
                        ttl: int = 3600, spend_limit: float | None = None,
-                       tenant_id: str = "") -> Session:
+                       tenant_id: str = "", parent_session_id: str = "") -> Session:
+        # Validate the delegation link before minting anything, so a rejected
+        # spawn leaves no partial state behind.
+        if parent_session_id:
+            parent = self.get_session(parent_session_id, tenant_id=tenant_id)
+            if not parent:
+                raise DelegationError(
+                    f"parent session {parent_session_id!r} does not exist in this tenant"
+                )
+            depth = self.delegation_depth(parent_session_id, tenant_id=tenant_id) + 1
+            if depth > MAX_DELEGATION_DEPTH:
+                raise DelegationError(
+                    f"delegation depth {depth} exceeds the maximum of {MAX_DELEGATION_DEPTH}"
+                )
+
         policy = self._agent_policies.get(f"{tenant_id}:{agent_id}", {})
         effective_scopes = scopes or policy.get("default_scopes", ["read"])
 
@@ -126,16 +216,18 @@ class Gate:
             spend_limit=effective_spend,
             expires_at=time.time() + ttl if ttl > 0 else 0,
             tenant_id=tenant_id,
+            parent_session_id=parent_session_id,
         )
         self._sessions[session.session_id] = session
 
         conn = self._get_db()
         if conn:
             conn.execute(
-                "INSERT INTO sessions (session_id, tenant_id, agent_id, scopes, spend_limit, spent, created_at, expires_at, revoked) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO sessions (session_id, tenant_id, agent_id, scopes, spend_limit, spent, created_at, expires_at, revoked, parent_session_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (session.session_id, tenant_id, session.agent_id, json.dumps(session.scopes),
-                 session.spend_limit, 0.0, session.created_at, session.expires_at, 0)
+                 session.spend_limit, 0.0, session.created_at, session.expires_at, 0,
+                 parent_session_id)
             )
             conn.commit()
             conn.close()
@@ -153,17 +245,7 @@ class Gate:
             if not row or int(row["revoked"]):
                 self._sessions.pop(session_id, None)
                 return None
-            session = Session(
-                session_id=row["session_id"],
-                agent_id=row["agent_id"],
-                scopes=json.loads(row["scopes"]),
-                spend_limit=row["spend_limit"],
-                spent=row["spent"],
-                created_at=row["created_at"],
-                expires_at=row["expires_at"],
-                revoked=bool(int(row["revoked"])),
-                tenant_id=row["tenant_id"],
-            )
+            session = self._row_to_session(row)
             if session.is_valid:
                 self._sessions[session_id] = session
                 return session
@@ -218,31 +300,78 @@ class Gate:
             return affected > 0
         return session is not None
 
-    def list_sessions(self, agent_id: str | None = None, tenant_id: str = "") -> list[Session]:
+    def list_sessions(self, agent_id: str | None = None, tenant_id: str = "",
+                      roots_only: bool = False,
+                      parent_session_id: str | None = None,
+                      include_revoked: bool = False) -> list[Session]:
+        """List sessions for a tenant.
+
+        `roots_only` returns just the tops of delegation chains — the natural
+        entry point for a run tree. `parent_session_id` returns the direct
+        children of one session. `include_revoked` admits finished sessions,
+        which a monitoring view needs but the agent-cap count must not see.
+        Defaults reproduce the original behaviour.
+        """
         conn = self._get_db()
         if conn:
+            query = "SELECT * FROM sessions WHERE tenant_id = ?"
+            params = [tenant_id]
+            if not include_revoked:
+                query += " AND revoked = 0"
             if agent_id:
-                rows = conn.execute(
-                    "SELECT * FROM sessions WHERE tenant_id = ? AND agent_id = ? AND revoked = 0",
-                    (tenant_id, agent_id)
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM sessions WHERE tenant_id = ? AND revoked = 0",
-                    (tenant_id,)
-                ).fetchall()
+                query += " AND agent_id = ?"
+                params.append(agent_id)
+            if roots_only:
+                query += " AND parent_session_id = ''"
+            if parent_session_id is not None:
+                query += " AND parent_session_id = ?"
+                params.append(parent_session_id)
+            rows = conn.execute(query, params).fetchall()
             conn.close()
-            return [
-                Session(
-                    session_id=r["session_id"], agent_id=r["agent_id"],
-                    scopes=json.loads(r["scopes"]), spend_limit=r["spend_limit"],
-                    spent=r["spent"], created_at=r["created_at"],
-                    expires_at=r["expires_at"], revoked=bool(int(r["revoked"])),
-                    tenant_id=r["tenant_id"],
-                )
-                for r in rows
-            ]
-        sessions = [s for s in self._sessions.values() if s.is_valid and s.tenant_id == tenant_id]
+            return [self._row_to_session(r) for r in rows]
+
+        sessions = [s for s in self._sessions.values() if s.tenant_id == tenant_id]
+        if not include_revoked:
+            sessions = [s for s in sessions if s.is_valid]
         if agent_id:
             sessions = [s for s in sessions if s.agent_id == agent_id]
+        if roots_only:
+            sessions = [s for s in sessions if not s.parent_session_id]
+        if parent_session_id is not None:
+            sessions = [s for s in sessions if s.parent_session_id == parent_session_id]
         return sessions
+
+    def get_children(self, session_id: str, tenant_id: str = "",
+                     include_revoked: bool = False) -> list[Session]:
+        """Direct children of a session in the delegation chain."""
+        return self.list_sessions(
+            tenant_id=tenant_id,
+            parent_session_id=session_id,
+            include_revoked=include_revoked,
+        )
+
+    def get_descendants(self, session_id: str, tenant_id: str = "",
+                        include_revoked: bool = False) -> list[Session]:
+        """Every session beneath `session_id`, breadth-first.
+
+        Bounded by MAX_DELEGATION_DEPTH, so a corrupted set of links cannot
+        make this walk unbounded.
+        """
+        descendants: list[Session] = []
+        seen = {session_id}
+        frontier = [session_id]
+        depth = 0
+        while frontier and depth < MAX_DELEGATION_DEPTH:
+            depth += 1
+            next_frontier: list[str] = []
+            for current in frontier:
+                for child in self.get_children(
+                    current, tenant_id=tenant_id, include_revoked=include_revoked
+                ):
+                    if child.session_id in seen:
+                        continue
+                    seen.add(child.session_id)
+                    descendants.append(child)
+                    next_frontier.append(child.session_id)
+            frontier = next_frontier
+        return descendants
