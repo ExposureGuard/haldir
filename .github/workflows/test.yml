@@ -61,40 +61,12 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          pytest \
-            tests/test_gate.py \
-            tests/test_vault.py \
-            tests/test_watch.py \
-            tests/test_proxy.py \
-            tests/test_webhooks.py \
-            tests/test_idempotency.py \
-            tests/test_tracing.py \
-            tests/test_middleware.py \
-            tests/test_logging.py \
-            tests/test_metrics.py \
-            tests/test_validation.py \
-            tests/test_openapi.py \
-            tests/test_status.py \
-            tests/test_db.py \
-            tests/test_rate_limit_headers.py \
-            tests/test_audit_export.py \
-            tests/test_migrate.py \
-            tests/test_webhook_delivery.py \
-            tests/test_admin.py \
-            tests/test_health.py \
-            tests/test_cli_commands.py \
-            tests/test_admin_html.py \
-            tests/test_scopes.py \
-            tests/test_compliance.py \
-            tests/test_compliance_html.py \
-            tests/test_dockerfile.py \
-            tests/test_compliance_scheduler.py \
-            tests/test_email_delivery.py \
-            tests/test_keys_admin.py \
-            tests/test_webhook_rotation.py \
-            tests/test_compliance_score.py \
-            tests/test_vault_properties.py \
-            tests/test_watch_properties.py \
+          # Run the whole suite rather than a hand-maintained file list. The
+          # previous list had silently drifted: 14 files were never run here,
+          # including every merkle / STH / transparency test — the modules
+          # behind the audit-integrity claim. A new test file is now gated the
+          # moment it lands, instead of when someone remembers to add it.
+          pytest tests/ \
             --cov=haldir_gate \
             --cov=haldir_vault \
             --cov=haldir_watch \
