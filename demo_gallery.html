@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Haldir Demo Gallery</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #050505; color: #e0ddd5; font-family: 'Inter', sans-serif; padding: 2rem; }
+  h1 { font-weight: 200; font-size: 2rem; margin-bottom: 2rem; letter-spacing: -0.5px; }
+  h2 { font-weight: 300; font-size: 1.1rem; margin: 2rem 0 1rem; color: #b8973a; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+  .card { background: #0a0a0f; border: 1px solid rgba(224,221,213,0.08); border-radius: 8px; overflow: hidden; }
+  .card img { width: 100%; height: 180px; object-fit: cover; display: block; }
+  .card .label { padding: 0.75rem 1rem; font-size: 0.8rem; color: #e0ddd5; }
+  .card .label small { display: block; color: #6b6963; font-size: 0.7rem; margin-top: 0.25rem; }
+  a { color: #b8973a; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  footer { margin-top: 3rem; text-align: center; color: #6b6963; font-size: 0.8rem; }
+  .hero-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: rgba(224,221,213,0.08); border: 1px solid rgba(224,221,213,0.08); max-width: 1200px; margin: 0 auto; }
+  .hero-card { background: #0a0a0f; padding: 1.5rem; }
+  .hero-card img { width: 100%; height: 200px; object-fit: cover; border-radius: 4px; margin-bottom: 0.75rem; }
+  .hero-card h3 { font-size: 0.9rem; font-weight: 400; margin-bottom: 0.25rem; }
+  .hero-card p { font-size: 0.75rem; color: #8a8780; line-height: 1.5; }
+  @media (max-width: 768px) { .hero-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<h1>Haldir — Demo Gallery</h1>
+
+<div class="hero-grid">
+  <div class="hero-card">
+    <img src="demo/screenshots/01_landing.png" alt="Landing page">
+    <h3>Landing Page</h3>
+    <p>Dark-mode hero with live terminal, product cards, self-host vs cloud comparison, and design partner CTA.</p>
+  </div>
+  <div class="hero-card">
+    <img src="demo/screenshots/04_cloud_overview.png" alt="Cloud dashboard overview">
+    <h3>Cloud Dashboard</h3>
+    <p>Full SPA dashboard: overview, account, quotas, sessions, audit, webhooks, approvals, compliance, settings.</p>
+  </div>
+  <div class="hero-card">
+    <img src="demo/screenshots/13_tamper_demo.png" alt="Tamper evidence demo">
+    <h3>Tamper-Evidence Demo</h3>
+    <p>Live interactive demo showing hash-chained audit trail — prove nothing was tampered with.</p>
+  </div>
+</div>
+
+<h2>Dashboard Pages</h2>
+<div class="gallery">
+  <div class="card">
+    <img src="demo/screenshots/04_cloud_overview.png" alt="Overview">
+    <div class="label">Overview <small>Tenant summary, tier, key stats</small></div>
+  </div>
+  <div class="card">
+    <img src="demo/screenshots/05_cloud_account.png" alt="Account">
+    <div class="label">Account <small>API key management — create, revoke, view</small></div>
+  </div>
+  <div class="card">
+    <img src="demo/screenshots/06_cloud_audit.png" alt="Audit Trail">
+    <div class="label">Audit Trail <small>Filterable hash-chained log with expandable MCP call details</small></div>
+  </div>
+  <div class="card">
+    <img src="demo/screenshots/07_cloud_compliance.png" alt="Compliance">
+    <div class="label">Compliance <small>Live score, recurring schedules, evidence pack export</small></div>
+  </div>
+  <div class="card">
+    <img src="demo/screenshots/08_cloud_settings.png" alt="Settings">
+    <div class="label">Settings <small>Tenant info, plan tier, current API key</small></div>
+  </div>
+  <div class="card">
+    <img src="demo/screenshots/09_cloud_approvals.png" alt="Approvals">
+    <div class="label">Approvals <small>Human-in-the-loop: pending requests, approve/deny</small></div>
+  </div>
+  <div class="card">
+    <img src="demo/screenshots/10_cloud_webhooks.png" alt="Webhooks">
+    <div class="label">Webhooks <small>Register, list, delete webhook endpoints</small></div>
+  </div>
+  <div class="card">
+    <img src="demo/screenshots/11_cloud_sessions.png" alt="Sessions">
+    <div class="label">Sessions <small>Active agent sessions with spend limits and revoke</small></div>
+  </div>
+  <div class="card">
+    <img src="demo/screenshots/12_cloud_quotas.png" alt="Quotas">
+    <div class="label">Quotas <small>Usage this month: actions, spend, sessions, secrets</small></div>
+  </div>
+</div>
+
+<footer>
+  Haldir — Governance for AI Agents · MIT Licensed · <a href="https://github.com/ExposureGuard/haldir">github.com/ExposureGuard/haldir</a>
+</footer>
+</body>
+</html>

@@ -33,6 +33,69 @@ MIT licensed. Self-host or use our cloud.
   <img src="docs/architecture.svg" alt="Haldir architecture: Agent → Proxy → (Gate/Vault/Watch/Policy) → Upstream APIs" width="820">
 </p>
 
+## See it in action
+
+<p align="center">
+  <img src="demo/hero_montage.png" alt="Haldir in action: landing page, cloud dashboard, tamper demo" width="720">
+</p>
+
+<details>
+<summary><strong>Cloud dashboard — click to expand all screenshots</strong></summary>
+
+| Page | What you see |
+|------|-------------|
+| [Landing page](demo/screenshots/01_landing.png) | Dark-mode hero, live terminal animation, 4 product cards, self-host vs cloud comparison, design partner CTA |
+| [Cloud dashboard](demo/screenshots/04_cloud_overview.png) | Full SPA: sidebar nav, tenant overview, stat cards, session & audit tables |
+| [Account — API keys](demo/screenshots/05_cloud_account.png) | Create/revoke API keys with scopes, see key prefix, name, tier, status, created date |
+| [Audit trail](demo/screenshots/06_cloud_audit.png) | Filter by session/agent/tool/flagged, expand rows for full MCP call details (tool, upstream, latency, error, arguments, result, flag_reason) |
+| [Compliance](demo/screenshots/07_cloud_compliance.png) | Live readiness score, recurring evidence schedules, export evidence pack button (downloads Markdown) |
+| [Settings](demo/screenshots/08_cloud_settings.png) | Tenant ID, plan tier, current API key displayed |
+| [Approvals](demo/screenshots/09_cloud_approvals.png) | Pending human-in-the-loop requests, approve/deny from the dashboard |
+| [Webhooks](demo/screenshots/10_cloud_webhooks.png) | Register and delete webhook endpoints, see deliveries and success rate |
+| [Sessions](demo/screenshots/11_cloud_sessions.png) | Active agent sessions with spend limits, remaining budget, revoke button |
+| [Quotas](demo/screenshots/12_cloud_quotas.png) | Usage this month: actions (with bar), spend, active sessions, vault secrets |
+| [Tamper demo](demo/screenshots/13_tamper_demo.png) | Interactive live demo proving hash-chained audit trail cannot be tampered with |
+
+</details>
+
+<details>
+<summary><strong>Demo gallery (full-page screenshots)</strong></summary>
+
+<div align="center">
+  <img src="demo/screenshots/01_landing.png" alt="Landing page" width="720"><br>
+  <i>Landing page — live terminal, products, self-host vs cloud</i>
+</div>
+
+<br>
+
+<div align="center">
+  <img src="demo/screenshots/04_cloud_overview.png" alt="Cloud dashboard overview" width="720"><br>
+  <i>Cloud dashboard — overview with tenant summary and stat cards</i>
+</div>
+
+<br>
+
+<div align="center">
+  <img src="demo/screenshots/06_cloud_audit.png" alt="Audit trail with expandable MCP call details" width="720"><br>
+  <i>Audit trail — expand any row to see full MCP tool call details</i>
+</div>
+
+<br>
+
+<div align="center">
+  <img src="demo/screenshots/07_cloud_compliance.png" alt="Compliance page with live score and evidence export" width="720"><br>
+  <i>Compliance — live readiness score, schedules, one-click evidence pack export</i>
+</div>
+
+<br>
+
+<div align="center">
+  <img src="demo/screenshots/13_tamper_demo.png" alt="Tamper-evidence live demo" width="720"><br>
+  <i>Live tamper-evidence demo — prove the audit log was not tampered with</i>
+</div>
+
+</details>
+
 ## Try it in 2 minutes
 
 ```bash
