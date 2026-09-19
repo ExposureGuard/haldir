@@ -71,7 +71,7 @@ There's a live demo you can poke at right now — no signup, runs in your browse
 
 ### The rest of the site
 
-The docs, pricing page, quickstart, compliance evidence pack, and every other page are linked from the nav bar on every page. The README has the full API reference, Python quickstart, performance numbers, and compliance mapping.
+The docs, pricing page, quickstart, compliance evidence pack, and every other page are linked from the nav bar on every page. Below: the full API reference, Python quickstart, performance numbers, and compliance mapping.
 
 Try the real thing at **[haldir.xyz](https://haldir.xyz)** — free tier, no signup, point at it from any agent and go.
 
@@ -85,7 +85,11 @@ haldir overview
 ```
 
 Want the cloud version with a free tier?
-→ **[haldir.xyz](https://haldir.xyz)** — now accepting design partners (30 days free, full access, direct line to the founder).## Two ways to run
+→ **[haldir.xyz](https://haldir.xyz)** — now accepting design partners (30 days free, full access, direct line to the founder).
+
+---
+
+## Two ways to run
 
 |                  | Self-host                  | Cloud ([haldir.xyz](https://haldir.xyz))   |
 | ---------------- | ------------------------- | ------------------------------------------- |
