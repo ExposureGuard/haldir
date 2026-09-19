@@ -25,10 +25,12 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install runtime + mypy
+      - name: Install dependencies
+        # requirements-dev.txt pulls in requirements.txt via `-r`, so the
+        # type checker runs against the same runtime versions users get.
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt mypy
+          pip install -r requirements-dev.txt
 
       - name: Type-check
         run: mypy --config-file mypy.ini
@@ -51,17 +53,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install runtime dependencies
+      - name: Install dependencies
+        # Single source of truth for dev/CI packages. Previously the test
+        # packages were named inline here and pytest-asyncio was simply
+        # forgotten — the async MCP-server tests passed on developer
+        # machines and failed in CI for exactly that reason.
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Install test dependencies
-        # pytest-asyncio is required by the async MCP-server tests
-        # (@pytest.mark.asyncio). Without it those tests fail at collection
-        # with "async def functions are not natively supported" — the plugin
-        # was present in developer environments but never installed here.
-        run: pip install pytest pytest-cov pytest-asyncio hypothesis
+          pip install -r requirements-dev.txt
 
       - name: Run tests with coverage
         run: |

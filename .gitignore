@@ -6,6 +6,11 @@ dist/
 build/
 *.egg-info/
 .pytest_cache/
+# Coverage + type-check artifacts. Same failure mode as the tracked .pyc
+# files: unignored generated output that ends up committed by accident.
+.coverage
+coverage.xml
+.mypy_cache/
 *.db
 .env
 *.whl
