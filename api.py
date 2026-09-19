@@ -5021,12 +5021,16 @@ def cloud_overview_page():
         </div>
         <div class="panel">
           <h2>API keys</h2>
+          <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
+            <input type="text" id="key-name" placeholder="Key name (e.g. production)" style="flex:1;background:#0a0a0a;border:1px solid var(--w08);border-radius:4px;padding:0.5rem 0.75rem;color:var(--w);font-family:var(--mono);font-size:0.7rem">
+            <button class="btn btn-w" id="key-create" style="white-space:nowrap">+ Create key</button>
+          </div>
           <table class="wrap">
             <thead><tr>
               <th>Prefix</th><th>Name</th><th>Tier</th>
-              <th>Scopes</th><th>Status</th><th>Created</th>
+              <th>Scopes</th><th>Status</th><th>Created</th><th></th>
             </tr></thead>
-            <tbody id="account-keys"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
+            <tbody id="account-keys"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
           </table>
         </div>
       </section>

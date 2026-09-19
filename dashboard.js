@@ -188,7 +188,7 @@
 
       var keys = tenant.api_keys_list || [];
       if (!keys.length) {
-        $t.innerHTML = '<tr><td colspan="6" class="empty">No API keys</td></tr>';
+        $t.innerHTML = '<tr><td colspan="7" class="empty">No API keys</td></tr>';
         return;
       }
       $t.innerHTML = keys.map(function (k) {
@@ -199,12 +199,60 @@
           '<td>' + esc(String(k.scopes || "—")) + '</td>' +
           '<td>' + (k.revoked ? '<span class="flag">revoked</span>' : '<span class="ok">active</span>') + '</td>' +
           '<td>' + fmt.time(k.created_at) + '</td>' +
+          '<td>' + (!k.revoked ? '<button class="btn btn-red btn-sm" data-act="revoke" data-prefix="' + esc(k.key_prefix) + '">Revoke</button>' : '') + '</td>' +
           '</tr>';
       }).join("");
     }).catch(function (e) {
-      $t.innerHTML = '<tr><td colspan="6" class="empty">load failed</td></tr>';
+      $t.innerHTML = '<tr><td colspan="7" class="empty">load failed</td></tr>';
       flash("account load failed: " + e.message);
     });
+    // Wire revoke buttons
+    $$("[data-act='revoke']", $t).forEach(function (b) {
+      b.addEventListener("click", function () {
+        var prefix = b.getAttribute("data-prefix");
+        if (confirm("Revoke key " + esc(prefix) + "? This cannot be undone.")) {
+          api("/v1/keys/" + encodeURIComponent(prefix), { method: "DELETE" })
+            .then(function () { flash("Key revoked: " + esc(prefix)); loadAccount(); })
+            .catch(function (e) { flash("Revoke failed: " + (e.message || "")); });
+        }
+      });
+    });
+  }
+
+  // ── Key management ────────────────────────────────────────────────────
+  function createKey() {
+    var nameInput = $("#key-name");
+    var name = (nameInput && nameInput.value.trim()) || "default";
+    if (!name) { flash("Enter a key name"); return; }
+    api("/v1/keys", {
+      method: "POST",
+      body: { name: name },
+    }).then(function (r) {
+      flash("Key created: " + esc(r.key));
+      var banner = document.createElement("div");
+      banner.style.cssText = [
+        "position:fixed", "top:1rem", "right:1rem", "z-index:9999",
+        "background:rgba(107,189,107,0.12)", "border:1px solid var(--green)",
+        "border-radius:6px", "padding:1rem 1.25rem", "max-width:380px",
+        "font-family:var(--mono)", "font-size:0.7rem", "color:var(--w)",
+        "box-shadow:0 4px 20px rgba(0,0,0,0.5)"
+      ].join(";");
+      banner.innerHTML =
+        '<div style="font-weight:600;color:var(--green);margin-bottom:0.4rem;font-size:0.75rem;letter-spacing:1px;text-transform:uppercase">New API key created</div>' +
+        '<div style="word-break:break-all;font-size:0.85rem;margin-bottom:0.5rem">' + esc(r.key) + '</div>' +
+        '<div style="color:var(--w20);font-size:0.65rem">Copy this now — the full key is never shown again.</div>' +
+        '<button onclick="this.parentElement.remove()" style="margin-top:0.5rem;background:transparent;border:none;color:var(--w50);cursor:pointer;font-size:0.6rem"> dismiss</button>';
+      document.body.appendChild(banner);
+      if (nameInput) { nameInput.value = ""; }
+      loadAccount();
+    }).catch(function (e) {
+      flash("Create key failed: " + (e.message || ""));
+    });
+  }
+
+  var createBtn = $("#key-create");
+  if (createBtn) {
+    createBtn.addEventListener("click", createKey);
   }
 
   // ── Quotas page ─────────────────────────────────────────────────────
@@ -403,7 +451,7 @@
         b.addEventListener("click", function () { actApproval(b.getAttribute("data-id"), "deny"); });
       });
     }).catch(function (e) {
-      $t.innerHTML = '<tr><td colspan="6" class="empty">load failed</td></tr>';
+      $t.innerHTML = '<tr><td colspan="7" class="empty">load failed</td></tr>';
       flash("approvals load failed: " + e.message);
     });
   }
