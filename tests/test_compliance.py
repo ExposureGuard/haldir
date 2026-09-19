@@ -204,6 +204,49 @@ def test_manifest_endpoint_matches_embedded_signature(haldir_client, bootstrap_k
     assert manifest["tenant_id"] == full["tenant_id"]
 
 
+def test_digest_is_stable_across_a_change_in_last_used(haldir_client, bootstrap_key) -> None:
+    """The digest must not depend on when a key was last used.
+
+    require_api_key stamps `last_used` on every authenticated request —
+    including the request asking for this evidence pack — so a digest that
+    covered it changed simply because someone read the pack. Two consecutive
+    requests disagreed, and an auditor re-verifying an archived pack later
+    would get a divergent digest and read it as tampering, which is the exact
+    failure the digest exists to rule out.
+
+    Builds the pack directly rather than over HTTP. Going through the API
+    cannot test this: the request that fetches the pack re-stamps last_used
+    on the way in, so the altered value never survives to be hashed — a test
+    written that way passes whether or not the bug is present.
+    """
+    from datetime import datetime, timezone
+
+    from haldir_db import get_db
+
+    since = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp()
+    until = datetime(2026, 4, 1, tzinfo=timezone.utc).timestamp()
+
+    # One call for the tenant id; its digest is not what we are comparing.
+    h = {"Authorization": f"Bearer {bootstrap_key}"}
+    tenant = haldir_client.get(
+        "/v1/compliance/evidence?since=2026-01-01T00:00:00Z&until=2026-04-01T00:00:00Z",
+        headers=h,
+    ).get_json()["identity"]["tenant_id"]
+
+    first = haldir_compliance.build_evidence_pack(
+        api.DB_PATH, tenant, since=since, until=until)
+
+    conn = get_db(api.DB_PATH)
+    conn.execute("UPDATE api_keys SET last_used = last_used + 100000")
+    conn.commit()
+    conn.close()
+
+    second = haldir_compliance.build_evidence_pack(
+        api.DB_PATH, tenant, since=since, until=until)
+
+    assert first["signatures"]["digest"] == second["signatures"]["digest"]
+
+
 def test_evidence_requires_admin_read_scope(haldir_client, bootstrap_key) -> None:
     """Mint a key without admin:read → endpoint returns 403."""
     r = haldir_client.post(
