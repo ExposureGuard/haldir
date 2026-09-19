@@ -5102,9 +5102,9 @@ def cloud_overview_page():
           <table class="wrap">
             <thead><tr>
               <th>ID</th><th>URL</th><th>Event</th>
-              <th>Deliveries</th><th>Success rate</th>
+              <th>Deliveries</th><th>Success rate</th><th></th>
             </tr></thead>
-            <tbody id="webhooks-body"><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
+            <tbody id="webhooks-body"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
           </table>
         </div>
       </section>

@@ -255,6 +255,46 @@
     createBtn.addEventListener("click", createKey);
   }
 
+  // ── Webhook management ──────────────────────────────────────────────
+  function createWebhook() {
+    var urlInput = $("#wh-url");
+    var nameInput = $("#wh-name");
+    var url = (urlInput && urlInput.value.trim()) || "";
+    var name = (nameInput && nameInput.value.trim()) || "";
+    if (!url) { flash("Enter a webhook URL"); return; }
+    api("/v1/webhooks", {
+      method: "POST",
+      body: { url: url, name: name },
+    }).then(function (r) {
+      flash("Webhook created: " + esc(r.webhook_id));
+      var banner = document.createElement("div");
+      banner.style.cssText = [
+        "position:fixed", "top:1rem", "right:1rem", "z-index:9999",
+        "background:rgba(107,189,107,0.12)", "border:1px solid var(--green)",
+        "border-radius:6px", "padding:1rem 1.25rem", "max-width:380px",
+        "font-family:var(--mono)", "font-size:0.7rem", "color:var(--w)",
+        "box-shadow:0 4px 20px rgba(0,0,0,0.5)"
+      ].join(";");
+      banner.innerHTML =
+        '<div style="font-weight:600;color:var(--green);margin-bottom:0.4rem;font-size:0.75rem;letter-spacing:1px;text-transform:uppercase">Webhook registered</div>' +
+        '<div style="word-break:break-all;font-size:0.85rem;margin-bottom:0.5rem">' + esc(r.url) + '</div>' +
+        '<div style="color:var(--w20);font-size:0.65rem">Webhook ID: ' + esc(String(r.webhook_id)) + '</div>' +
+        (r.secret ? '<div style="color:var(--gold);word-break:break-all;margin-top:0.3rem">Secret: ' + esc(r.secret) + ' (save now - never shown again)</div>' : '') +
+        '<button onclick="this.parentElement.remove()" style="margin-top:0.5rem;background:transparent;border:none;color:var(--w50);cursor:pointer;font-size:0.6rem"> dismiss</button>';
+      document.body.appendChild(banner);
+      if (urlInput) urlInput.value = "";
+      if (nameInput) nameInput.value = "";
+      loadWebhooks();
+    }).catch(function (e) {
+      flash("Create webhook failed: " + (e.message || ""));
+    });
+  }
+
+  var whCreateBtn = $("#wh-create");
+  if (whCreateBtn) {
+    whCreateBtn.addEventListener("click", createWebhook);
+  }
+
   // ── Quotas page ─────────────────────────────────────────────────────
   function loadQuotas() {
     if (!key) { return; }
@@ -411,8 +451,20 @@
           '<td>' + esc(w.event || "—") + '</td>' +
           '<td class="num">' + esc(String(w.deliveries ?? 0)) + '</td>' +
           '<td class="num">' + esc(String(w.success_rate ?? "—")) + '</td>' +
+          '<td>' + '<button class="btn btn-red btn-sm" data-act="revoke-wh" data-id="' + esc(String(w.id || "")) + '" style="font-size:0.6rem;padding:0.2rem 0.5rem">Delete</button>' + '</td>' +
           '</tr>';
       }).join("");
+      // Wire delete buttons
+      $$("[data-act='revoke-wh']", $t).forEach(function (b) {
+        b.addEventListener("click", function () {
+          var wid = b.getAttribute("data-id");
+          if (confirm("Delete webhook " + esc(wid) + "?")) {
+            api("/v1/webhooks/" + encodeURIComponent(wid), { method: "DELETE" })
+              .then(function () { flash("Webhook deleted: " + esc(wid)); loadWebhooks(); })
+              .catch(function (e) { flash("Delete failed: " + (e.message || "")); });
+          }
+        });
+      });
     }).catch(function (e) {
       $t.innerHTML = '<tr><td colspan="5" class="empty">load failed</td></tr>';
       flash("webhooks load failed: " + e.message);
