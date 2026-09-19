@@ -4918,6 +4918,11 @@ def cloud_overview_page():
               border-left-color:var(--gold)}}
 
   .main{{flex:1;padding:2rem;overflow:auto}}
+  /* Only the routed page shows. dashboard.js toggles `.active` on these
+     sections, but without these two rules the class had no visual effect and
+     every page rendered as all eight sections stacked. */
+  .page{{display:none}}
+  .page.active{{display:block}}
   .page-title{{font-weight:200;font-size:1.4rem;margin-bottom:1.5rem;letter-spacing:-0.5px}}
 
   .stat-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
