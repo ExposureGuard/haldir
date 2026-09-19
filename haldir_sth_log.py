@@ -56,6 +56,7 @@ References:
 
 from __future__ import annotations
 
+import builtins
 import time
 from typing import Any
 
@@ -114,7 +115,7 @@ def record(db_path: str, tenant_id: str, sth: dict[str, Any]) -> bool:
         conn.commit()
         # Some DB drivers report rowcount == -1 on ON CONFLICT no-ops;
         # treat that as "not new" so callers don't double-count.
-        new = cur.rowcount == 1
+        new = bool(cur.rowcount == 1)
         return new
     except Exception:
         # Best-effort. Never crash get_tree_head over an STH-log error.
@@ -125,12 +126,15 @@ def record(db_path: str, tenant_id: str, sth: dict[str, Any]) -> bool:
 
 # ── Reading ────────────────────────────────────────────────────────
 
+# Annotated `builtins.list` rather than bare `list`: this function shadows the
+# builtin at module scope, so a bare annotation would resolve to the function
+# itself rather than the type.
 def list(  # noqa: A001  (shadowing builtin is deliberate, scoped to the module)
     db_path: str,
     tenant_id: str,
     since_tree_size: int = 0,
     limit: int = 1000,
-) -> list[dict[str, Any]]:
+) -> builtins.list[dict[str, Any]]:
     """Return STHs for a tenant in ascending tree_size order.
 
     `since_tree_size`: exclusive lower bound. Pass the last tree_size
@@ -256,7 +260,10 @@ def verify_against_pinned(
         # ahead of our current state?
         latest_sth = latest(db_path, tenant_id)
         earliest_sth = earliest(db_path, tenant_id)
-        if latest_sth is None:
+        # Both are read from the same table, so in practice they are None
+        # together; testing both makes that invariant explicit and keeps the
+        # narrowing below honest.
+        if latest_sth is None or earliest_sth is None:
             note = "log is empty for this tenant"
         elif int(pinned_tree_size) < int(earliest_sth["tree_size"]):
             note = (

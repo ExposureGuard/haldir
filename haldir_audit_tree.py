@@ -117,11 +117,14 @@ def _sign(tree_size: int, root: bytes) -> dict[str, Any]:
         or os.environ.get("HALDIR_STH_ALGORITHM", "").lower() == "ed25519"
     )
     if want_ed25519:
-        key, source = merkle.load_ed25519_signing_key_from_env()
-        sth = merkle.sign_sth(tree_size, root, key)
+        # Distinct names per branch: the two loaders return different key
+        # types (Ed25519 vs raw HMAC bytes), and a single reused name would
+        # pin the first type it was assigned.
+        ed_key, source = merkle.load_ed25519_signing_key_from_env()
+        sth = merkle.sign_sth(tree_size, root, ed_key)
     else:
-        key, source = merkle.load_signing_key_from_env()
-        sth = merkle.sign_sth(tree_size, root, key)
+        hmac_key, source = merkle.load_signing_key_from_env()
+        sth = merkle.sign_sth(tree_size, root, hmac_key)
     sth["signing_key_source"] = source
     return sth
 

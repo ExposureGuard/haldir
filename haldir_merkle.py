@@ -60,7 +60,13 @@ import hmac
 import json
 import os
 import time
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable, Iterator
+
+if TYPE_CHECKING:
+    # Used only in annotations below. cryptography is imported lazily inside
+    # the signing functions to keep module import cheap, but mypy needs the
+    # real class names in scope to resolve those annotations.
+    from cryptography.hazmat.primitives.asymmetric import ed25519
 
 
 # ── RFC 6962 primitive hashes ─────────────────────────────────────
@@ -286,7 +292,7 @@ def _rebuild_consistency(
     n: int,
     complete: bool,
     first_root: bytes | None,
-    proof_iter,
+    proof_iter: Iterator[bytes],
 ) -> tuple[bytes, bytes]:
     """Return (r2, r1) at this recursion level — where r1 is the first
     tree's root projected at this subtree, and r2 is the second
@@ -357,7 +363,7 @@ def _canonical_sth(tree_size: int, root_hash: bytes, signed_at: int) -> bytes:
 def sign_sth(
     tree_size: int,
     root_hash: bytes,
-    signing_key: "bytes | Ed25519Private",
+    signing_key: "bytes | ed25519.Ed25519PrivateKey",
     signed_at: int | None = None,
 ) -> dict:
     """Produce a signed tree head. Returns a serializable dict the
@@ -394,7 +400,7 @@ def sign_sth(
     }
 
 
-def verify_sth(sth: dict, signing_key: "bytes | Ed25519Public | None" = None) -> bool:
+def verify_sth(sth: dict, signing_key: "bytes | ed25519.Ed25519PublicKey | None" = None) -> bool:
     """Verify an STH's signature.
 
     Algorithm dispatch is driven by sth["algorithm"]:
@@ -435,7 +441,11 @@ def verify_sth(sth: dict, signing_key: "bytes | Ed25519Public | None" = None) ->
         elif isinstance(signing_key, ed25519.Ed25519PublicKey):
             pub_bytes = signing_key.public_bytes_raw()
         else:
-            return False
+            # The annotation above makes this branch unreachable to mypy, but
+            # the untyped callers (api.py, cli.py) are not checked — a wrong
+            # key type reaching here must still fail closed rather than fall
+            # through to the HMAC path below.
+            return False  # type: ignore[unreachable]
         try:
             pub = ed25519.Ed25519PublicKey.from_public_bytes(pub_bytes)
             pub.verify(bytes.fromhex(sth.get("signature", "")), canonical)
@@ -464,7 +474,7 @@ def derive_signing_key(seed: str) -> bytes:
     return hashlib.sha256(seed.encode()).digest()
 
 
-def derive_ed25519_key_from_seed(seed: str):
+def derive_ed25519_key_from_seed(seed: str) -> "ed25519.Ed25519PrivateKey":
     """Deterministically derive an Ed25519 private key from a string
     seed. Used so HALDIR_TREE_SIGNING_KEY_ED25519_SEED can be any
     printable secret and the same seed always gives the same key
@@ -498,7 +508,7 @@ def load_signing_key_from_env() -> tuple[bytes, str]:
     return load_signing_key_from_env._ephemeral, "ephemeral"  # type: ignore[attr-defined]
 
 
-def load_ed25519_signing_key_from_env():
+def load_ed25519_signing_key_from_env() -> "tuple[ed25519.Ed25519PrivateKey, str]":
     """Pick the Ed25519 signing key following env precedence:
 
         HALDIR_TREE_SIGNING_KEY_ED25519         base64url(32-byte-raw)
