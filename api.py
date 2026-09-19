@@ -5200,6 +5200,7 @@ def cloud_root():
     """Cloud landing: redirect to login if no key, to overview if a key
     is present in the querystring, otherwise to the login page.
     """
+    import html as _h
     key = request.args.get("key", "")
     if key:
         return redirect("/cloud/overview?key=" + _h.escape(key))
