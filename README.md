@@ -267,7 +267,7 @@ curl -X POST https://haldir.xyz/v1/approvals/rules \
 
 ## MCP Server
 
-Haldir is available as an MCP server with 10 tools for Claude, Cursor, Windsurf, and any MCP-compatible AI:
+Haldir is available as an MCP server with 9 tools for Claude, Cursor, Windsurf, and any MCP-compatible AI:
 
 ```json
 {
@@ -282,7 +282,9 @@ Haldir is available as an MCP server with 10 tools for Claude, Cursor, Windsurf,
 }
 ```
 
-**MCP Tools:** `createSession`, `getSession`, `revokeSession`, `checkPermission`, `storeSecret`, `getSecret`, `authorizePayment`, `logAction`, `getAuditTrail`, `getSpend`
+**MCP Tools:** `createSession`, `revokeSession`, `checkPermission`, `storeSecret`, `getSecret`, `authorizePayment`, `logAction`, `getAuditTrail`, `getSpend`
+
+These are the tools `haldir-mcp` registers (`mcp_server.py`) — the process the config above launches. `haldir_mcp_server.py` registers a different, larger set under `haldir_*` names, and the hosted `POST /mcp` endpoint answers with a third; see the note in that module. If you are wiring a client by hand, copy the names from the server you actually start.
 
 **MCP HTTP Endpoint:** `POST https://haldir.xyz/mcp`
 
