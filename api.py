@@ -5127,6 +5127,10 @@ def cloud_overview_page():
       <section class="page" id="page-compliance">
         <div class="page-title">Compliance</div>
         <div class="stat-grid">
+          <div class="stat">
+            <div class="stat-val" id="stat-compliance-score" style="font-size:2rem">—</div>
+            <div class="stat-label">Compliance score</div>
+          </div>
           <div class="stat"><div class="stat-val" id="stat-compliance-schedules">—</div>
             <div class="stat-label">Recurring schedules</div></div>
           <div class="stat"><div class="stat-val" id="stat-compliance-next">—</div>
@@ -5134,13 +5138,9 @@ def cloud_overview_page():
         </div>
         <div class="panel">
           <h2>Evidence export</h2>
+          <button class="btn btn-w" id="btn-export-evidence" style="margin-bottom:1rem">Export evidence pack</button>
           <p style="font-family:var(--mono);font-size:0.7rem;color:var(--w50);line-height:1.6">
-            Generate an auditor-ready compliance evidence pack from the CLI:
-          </p>
-          <p style="font-family:var(--mono);font-size:0.7rem;color:var(--gold);
-                    background:rgba(224,221,213,0.04);padding:0.75rem;border-radius:4px;
-                    margin-top:0.5rem;overflow-x:auto">
-            haldir compliance evidence --since 2026-01-01 --out evidence-q1-2026.md
+            Downloads an auditor-ready compliance evidence pack (Markdown) covering the last 90 days.
           </p>
         </div>
       </section>
@@ -5149,10 +5149,24 @@ def cloud_overview_page():
       <section class="page" id="page-settings">
         <div class="page-title">Settings</div>
         <div class="panel">
+          <h2>Tenant</h2>
+          <div class="stat-grid">
+            <div class="stat"><div class="stat-val" id="stat-settings-tenant">—</div>
+              <div class="stat-label">Tenant ID</div></div>
+            <div class="stat"><div class="stat-val" id="stat-settings-tier">—</div>
+              <div class="stat-label">Plan tier</div></div>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>API key</h2>
           <p style="font-family:var(--mono);font-size:0.7rem;color:var(--w50);line-height:1.6">
-            Cloud dashboard settings are managed through the API and CLI.
-            This page is a placeholder for future cloud-only configuration
-            (SSO, team members, alert routing, billing).
+            API key currently authenticating this session:
+          </p>
+          <p style="font-family:var(--mono);font-size:0.7rem;color:var(--w);word-break:break-all;background:rgba(224,221,213,0.04);padding:0.5rem;border-radius:4px;margin-top:0.5rem">
+            <span id="stat-settings-key" style="color:var(--gold)">—</span>
+          </p>
+          <p style="font-family:var(--mono);font-size:0.65rem;color:var(--w20);margin-top:0.5rem">
+            <a href="/cloud/login">Sign in with a different key</a>
           </p>
         </div>
       </section>

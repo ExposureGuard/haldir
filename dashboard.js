@@ -469,6 +469,74 @@
     });
   }
 
+  // ── Compliance page ─────────────────────────────────────────────────
+  function loadCompliance() {
+    if (!key) { return; }
+    Promise.all([
+      api("/v1/compliance/score"),
+      api("/v1/compliance/schedules")
+    ]).then(function(results) {
+      var score = results[0];
+      var schedules = results[1];
+      var s = score.score != null ? score.score : 0;
+      var scoreEl = $("#stat-compliance-score");
+      if (scoreEl) {
+        scoreEl.textContent = s + "/100";
+        scoreEl.style.color = s >= 80 ? "var(--green)" : s >= 60 ? "var(--gold)" : "var(--red)";
+      }
+      var schedEl = $("#stat-compliance-schedules");
+      if (schedEl) {
+        var list = schedules.schedules != null ? schedules.schedules : [];
+        schedEl.textContent = list.length;
+      }
+      var nextEl = $("#stat-compliance-next");
+      if (nextEl) {
+        var nd = schedules.next_due != null ? schedules.next_due : null;
+        nextEl.textContent = nd ? new Date(nd * 1000).toLocaleDateString() : "—";
+      }
+    }).catch(function(e) {
+      flash("compliance load failed: " + (e.message || ""));
+    });
+  }
+
+  function exportEvidence() {
+    if (!key) { return; }
+    flash("Generating evidence pack...");
+    var since = document.getElementById("evidence-since") && document.getElementById("evidence-since").value || "90d";
+    var format = document.getElementById("evidence-format") && document.getElementById("evidence-format").value || "markdown";
+    api("/v1/compliance/evidence?since=" + encodeURIComponent(since) + "&format=" + encodeURIComponent(format), {
+      method: "GET"
+    }).then(function(body) {
+      var blob = new Blob([body], { type: "text/markdown; charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = "haldir-evidence.md";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      flash("Evidence pack exported");
+    }).catch(function(e) {
+      flash("Evidence export failed: " + (e.message || ""));
+    });
+  }
+
+  function loadSettings() {
+    if (!key) { return; }
+    api("/admin/overview").then(function(o) {
+      var t = o.tenant || {};
+      var tierEl = $("#stat-settings-tier");
+      if (tierEl) tierEl.textContent = t.tier || "—";
+      var tenantEl = $("#stat-settings-tenant");
+      if (tenantEl) tenantEl.textContent = t.tenant_id || "—";
+      var keyEl = $("#stat-settings-key");
+      if (keyEl) keyEl.textContent = key;
+    }).catch(function(e) {
+      flash("settings load failed: " + (e.message || ""));
+    });
+  }
+
   // ── Page router ─────────────────────────────────────────────────────
   function loadPage(name) {
     if (name === "account") { loadAccount(); }
@@ -477,7 +545,8 @@
     else if (name === "audit") { loadAudit(); }
     else if (name === "webhooks") { loadWebhooks(); }
     else if (name === "approvals") { loadApprovals(); }
-    // compliance and settings are static HTML
+    else if (name === "compliance") { loadCompliance(); }
+    else if (name === "settings") { loadSettings(); }
   }
 
   // Bind audit filters on boot
