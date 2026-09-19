@@ -139,7 +139,7 @@ haldir login                           # one-time; stashes API key
 haldir overview --watch                # top-style live dashboard
 haldir status                          # green/yellow/red component pills
 haldir ready                           # exits 0/1, perfect for CI
-haldir audit tail --agent my-bot       # the last N entries
+haldir audit trail --agent my-bot      # the last N entries
 haldir audit export --format=jsonl --out audit-2026-04.jsonl
 haldir audit verify                    # hash chain integrity check
 haldir webhooks deliveries             # last 20 retry attempts

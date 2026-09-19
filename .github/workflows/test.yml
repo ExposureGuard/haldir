@@ -140,9 +140,14 @@ jobs:
           # generates a throwaway one and warns.
           HALDIR_ENCRYPTION_KEY: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
         run: |
-          pytest tests/test_db.py \
-                 tests/test_gate.py \
-                 tests/test_vault.py \
-                 tests/test_watch.py \
-                 tests/test_migrate.py \
+          # API-level suites only. The unit tests (test_db, test_migrate, …)
+          # build their own temp SQLite files and pass the path in, so with
+          # DATABASE_URL set they assert against a file the app is no longer
+          # using — they would measure the harness, not Postgres. These go
+          # through the app's own connection layer, which is the path a
+          # deployment actually takes.
+          pytest tests/test_api.py \
+                 tests/test_admin.py \
+                 tests/test_delegation.py \
+                 tests/test_sth_log.py \
                  -q --tb=short

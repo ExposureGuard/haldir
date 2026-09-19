@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import os
 import sys
-import sqlite3
 
 import pytest
 
@@ -43,9 +42,15 @@ def haldir_client():
     """A Flask test_client for the shared api module, guaranteed to have
     no API keys when first yielded (so bootstrap flows work)."""
     import api
+    from haldir_db import get_db
 
     # Wipe keys on first use so the first caller can bootstrap.
-    conn = sqlite3.connect(api.DB_PATH)
+    #
+    # Goes through the app's own connection layer rather than sqlite3.connect:
+    # when DATABASE_URL is set the app is talking to Postgres, and a raw
+    # sqlite3 handle to api.DB_PATH would open an empty file, find no
+    # api_keys table, and fail — while the real database went untouched.
+    conn = get_db(api.DB_PATH)
     conn.execute("DELETE FROM api_keys")
     conn.commit()
     conn.close()
