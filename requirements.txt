@@ -1,15 +1,30 @@
-flask>=3.0.0
-flask-cors>=4.0.0
-gunicorn>=21.2.0
-# Pinned below 2.0: haldir_mcp_server.py targets the mcp 1.x Server API
+# Runtime dependencies.
+#
+# Every entry carries an upper bound: the floor is the oldest version we
+# claim to support, the ceiling is the next major above what CI actually
+# exercises.
+#
+# This is not ceremony. Unbounded ranges are what let a clean install
+# resolve mcp 2.0.0 — which had removed the Server API haldir_mcp_server.py
+# is built on — and ship a broken MCP server to every new install. A `>=`
+# floor alone does not constrain anything upward; it only picks a minimum.
+# Raising a ceiling should be a decision: install the new major, run the
+# suite, then move the bound.
+
+flask>=3.0.0,<4.0.0
+flask-cors>=4.0.0,<7.0.0
+gunicorn>=21.2.0,<27.0.0
+# Below 2.0: haldir_mcp_server.py targets the mcp 1.x Server API
 # (server.list_tools / server.call_tool / create_initialization_options).
-# mcp 2.0 replaced that surface with add_request_handler / get_request_handler,
-# so an unpinned install resolves to 2.x and the MCP server fails to start —
-# which is what a fresh `pip install` got. Migrating to the 2.x API is a
-# follow-up; this pin is what keeps new installs working until then.
+# mcp 2.0 replaced that surface with add_request_handler /
+# get_request_handler, so anything >=2.0 fails to start. Migrating to the
+# 2.x handler API is a follow-up; this ceiling is what keeps new installs
+# working until then.
 mcp>=1.0.0,<2.0.0
-httpx>=0.27.0
-pydantic>=2.0.0
-cryptography>=42.0.0
-psycopg2-binary>=2.9.0
-stripe>=8.0.0
+# httpx is still pre-1.0, where minor bumps are permitted to break API —
+# so 1.0 is the real compatibility boundary, not 0.29.
+httpx>=0.27.0,<1.0.0
+pydantic>=2.0.0,<3.0.0
+cryptography>=42.0.0,<51.0.0
+psycopg2-binary>=2.9.0,<3.0.0
+stripe>=8.0.0,<16.0.0

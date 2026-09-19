@@ -1,0 +1,23 @@
+# Development and CI dependencies.
+#
+# One file so a developer environment and CI cannot drift. They did:
+# pytest-asyncio was installed on developer machines but never in CI, so
+# the async MCP-server tests failed there with "async def functions are
+# not natively supported" while passing locally. CI now installs this file
+# instead of naming packages inline.
+#
+# Install:  pip install -r requirements-dev.txt
+#
+# The runtime pins in requirements.txt apply here too, via the -r below —
+# a test run must exercise the same dependency versions users get.
+
+-r requirements.txt
+
+pytest>=9.0.0,<10.0.0
+pytest-cov>=7.0.0,<8.0.0
+# Required by tests/test_mcp_server.py (@pytest.mark.asyncio).
+pytest-asyncio>=1.0.0,<2.0.0
+# Property-based tests: test_merkle_properties.py, test_vault_properties.py,
+# test_watch_properties.py.
+hypothesis>=6.0.0,<7.0.0
+mypy>=2.0.0,<3.0.0
