@@ -20,6 +20,7 @@ import time
 import secrets
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 
 class ApprovalStatus(Enum):
@@ -90,13 +91,13 @@ class ApprovalEngine:
         if db_path:
             self._init_table()
 
-    def _get_db(self):
+    def _get_db(self) -> Any:
         if not self._db_path:
             return None
         from haldir_db import get_db
         return get_db(self._db_path)
 
-    def _init_table(self):
+    def _init_table(self) -> None:
         conn = self._get_db()
         if conn:
             conn.execute("""
@@ -122,7 +123,8 @@ class ApprovalEngine:
             conn.commit()
             conn.close()
 
-    def add_rule(self, rule_type: str, threshold: float = 0, tools: list[str] | None = None):
+    def add_rule(self, rule_type: str, threshold: float = 0,
+                 tools: list[str] | None = None) -> None:
         """
         Add an auto-approval-required rule.
 
@@ -138,7 +140,7 @@ class ApprovalEngine:
             "tools": tools or [],
         })
 
-    def add_webhook(self, url: str):
+    def add_webhook(self, url: str) -> None:
         """Add a webhook URL to notify on new approval requests."""
         self._webhooks.append(url)
 
@@ -155,7 +157,7 @@ class ApprovalEngine:
                 return True, f"Destructive action '{action}' requires approval"
         return False, ""
 
-    def request_approval(self, session, tool: str, action: str,
+    def request_approval(self, session: Any, tool: str, action: str,
                          amount: float = 0.0, reason: str = "",
                          details: dict | None = None,
                          ttl: int = 3600) -> ApprovalRequest:
@@ -307,7 +309,7 @@ class ApprovalEngine:
             return [self._row_to_request(r) for r in rows]
         return list(self._requests.values())[-limit:]
 
-    def _row_to_request(self, row) -> ApprovalRequest:
+    def _row_to_request(self, row: Any) -> ApprovalRequest:
         return ApprovalRequest(
             request_id=row["request_id"],
             session_id=row["session_id"],
@@ -325,7 +327,7 @@ class ApprovalEngine:
             decision_note=row["decision_note"],
         )
 
-    def _notify_webhooks(self, req: ApprovalRequest):
+    def _notify_webhooks(self, req: ApprovalRequest) -> None:
         """Fire webhooks for new approval requests (non-blocking)."""
         if not self._webhooks:
             return
@@ -345,7 +347,7 @@ class ApprovalEngine:
             "deny_url": f"https://haldir.xyz/v1/approvals/{req.request_id}/deny",
         }).encode()
 
-        def fire(url):
+        def fire(url: str) -> None:
             try:
                 r = urllib.request.Request(url, data=payload,
                                            headers={"Content-Type": "application/json"})

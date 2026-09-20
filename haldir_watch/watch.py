@@ -16,6 +16,26 @@ from typing import Any, Optional
 from haldir_tracing import traced_span
 
 
+# How many times an append re-reads the chain tail after losing a race for a
+# sequence number. Each retry means a concurrent writer beat us; a handful is
+# generous for any realistic write rate, and the loop raises rather than
+# spinning forever if the contention is genuinely pathological.
+APPEND_ATTEMPTS = 8
+
+
+def _is_unique_violation(exc: BaseException) -> bool:
+    """True for a UNIQUE/PRIMARY KEY conflict on either backend.
+
+    Matched by class name rather than by import: sqlite3 and psycopg2 are
+    both optional depending on how Haldir is deployed, and importing either
+    at module scope would make the other a hard dependency. sqlite3 raises
+    IntegrityError, psycopg2 raises errors.UniqueViolation (a subclass of
+    IntegrityError), and both appear in the MRO.
+    """
+    return any(k.__name__ in ("IntegrityError", "UniqueViolation")
+               for k in type(exc).__mro__)
+
+
 @dataclass
 class AuditEntry:
     entry_id: str
@@ -31,6 +51,11 @@ class AuditEntry:
     tenant_id: str = ""
     prev_hash: str = ""
     entry_hash: str = ""
+    # Position in the tenant's chain. Deliberately NOT part of compute_hash:
+    # the hash covers linkage, and adding a field would invalidate every
+    # entry written before this column existed, breaking verification of
+    # logs that are perfectly intact.
+    seq: int = 0
 
     def compute_hash(self) -> str:
         """SHA-256 hash of entry contents + previous hash = tamper-evident chain.
@@ -90,18 +115,66 @@ class Watch:
     def log_action(self, session: Any, tool: str, action: str,
                    details: Optional[dict[str, Any]] = None, cost_usd: float = 0.0,
                    tenant_id: str = "") -> AuditEntry:
-        # Get previous entry hash for chaining
-        prev_hash = ""
+        """Append an entry to the tenant's chain.
+
+        The tail is found by sequence number, and the insert carries the next
+        one. Two writers that race therefore collide on the unique index
+        rather than both chaining onto the same predecessor — the loser
+        re-reads the tail and writes the entry that actually follows.
+
+        This replaces a read of `ORDER BY timestamp DESC LIMIT 1`, which had
+        no tiebreak and no constraint behind it. Eight concurrent appends
+        produced eight rows of which one was reachable from the head; the
+        other seven were on branches, and the log stopped being a chain.
+        """
         conn = self._get_db()
-        if conn:
-            row = conn.execute(
-                "SELECT entry_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 1",
-                (tenant_id,)
-            ).fetchone()
-            if row:
-                prev_hash = row["entry_hash"]
+        if not conn:
+            # No database: build the entry and chain it in memory only.
+            return self._build_entry(session, tool, action, details, cost_usd,
+                                     tenant_id, prev_hash="", seq=0)
+
+        try:
+            for _attempt in range(APPEND_ATTEMPTS):
+                row = conn.execute(
+                    "SELECT entry_hash, seq FROM audit_log "
+                    "WHERE tenant_id = ? ORDER BY seq DESC LIMIT 1",
+                    (tenant_id,),
+                ).fetchone()
+                prev_hash = row["entry_hash"] if row else ""
+                seq = (row["seq"] if row else 0) + 1
+
+                entry = self._build_entry(session, tool, action, details,
+                                          cost_usd, tenant_id, prev_hash, seq)
+                try:
+                    conn.execute(
+                        "INSERT INTO audit_log (entry_id, tenant_id, session_id, agent_id, action, tool, details, cost_usd, timestamp, flagged, flag_reason, prev_hash, entry_hash, seq) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (entry.entry_id, tenant_id, entry.session_id, entry.agent_id,
+                         entry.action, entry.tool, json.dumps(entry.details),
+                         entry.cost_usd, entry.timestamp, int(entry.flagged),
+                         entry.flag_reason, entry.prev_hash, entry.entry_hash, seq),
+                    )
+                    conn.commit()
+                    return entry
+                except Exception as e:  # noqa: BLE001 — re-raised unless it is
+                    # the expected collision with a concurrent appender.
+                    if not _is_unique_violation(e):
+                        raise
+                    conn.rollback()
+
+            raise RuntimeError(
+                f"could not append to the audit chain after {APPEND_ATTEMPTS} "
+                f"attempts — sustained concurrent writes to tenant {tenant_id!r}"
+            )
+        finally:
             conn.close()
 
+    def _build_entry(self, session: Any, tool: str, action: str,
+                     details: Optional[dict[str, Any]], cost_usd: float,
+                     tenant_id: str, prev_hash: str, seq: int) -> AuditEntry:
+        """Construct and hash one entry. Anomaly rules run BEFORE hashing so
+        that the flagged state is covered by the hash — deciding afterwards
+        would let the flag be altered without breaking the chain."""
         entry = AuditEntry(
             entry_id=f"aud_{secrets.token_urlsafe(16)}",
             session_id=session.session_id,
@@ -110,12 +183,12 @@ class Watch:
             tool=tool,
             details=details or {},
             cost_usd=round(cost_usd, 2),
-            timestamp=time.time(),  # sub-second precision for deterministic chain ordering; hash uses int()
+            timestamp=time.time(),  # sub-second precision; hash uses int()
             tenant_id=tenant_id,
             prev_hash=prev_hash,
+            seq=seq,
         )
 
-        # Apply anomaly rules BEFORE hashing so flagged state is part of the hash
         for rule in self._anomaly_rules:
             if self._check_anomaly(entry, rule):
                 entry.flagged = True
@@ -123,20 +196,6 @@ class Watch:
                 break
 
         entry.entry_hash = entry.compute_hash()
-
-        conn = self._get_db()
-        if conn:
-            conn.execute(
-                "INSERT INTO audit_log (entry_id, tenant_id, session_id, agent_id, action, tool, details, cost_usd, timestamp, flagged, flag_reason, prev_hash, entry_hash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (entry.entry_id, tenant_id, entry.session_id, entry.agent_id, entry.action,
-                 entry.tool, json.dumps(entry.details), entry.cost_usd,
-                 entry.timestamp, int(entry.flagged), entry.flag_reason,
-                 entry.prev_hash, entry.entry_hash)
-            )
-            conn.commit()
-            conn.close()
-
         return entry
 
     def log_admin_action(self, actor: str, action: str,
@@ -157,19 +216,61 @@ class Watch:
 
         Goes through log_action so these entries land in the same hash chain,
         carry the same prev_hash linkage, and are covered by the same Merkle
-        tree and signed tree heads. An admin action recorded somewhere else
-        would be exactly the kind of thing an attacker would edit.
+        tree and signed tree heads. An action recorded somewhere else would be
+        exactly the kind of thing an attacker would edit.
         """
-        principal = _AdminPrincipal(
+        return self.log_system_action(
+            actor=actor,
+            action=f"admin.{action}",
+            tool="haldir",
+            details=details,
+            cost_usd=0.0,
+            tenant_id=tenant_id,
             session_id="",
-            agent_id=f"admin:{actor}" if actor else "admin",
+            stamp_actor=True,
+            principal_prefix="admin:",
         )
+
+    def log_system_action(self, actor: str, action: str, tool: str = "",
+                          details: Optional[dict[str, Any]] = None,
+                          cost_usd: float = 0.0, tenant_id: str = "",
+                          session_id: str = "", stamp_actor: bool = False,
+                          principal_prefix: str = "") -> AuditEntry:
+        """Record an action that belongs to no agent session.
+
+        The general form of log_admin_action: the system itself did something
+        — settled an x402 payment, ran a retention prune — and it has to land
+        in the chain like anything else.
+
+        This exists because two call sites were writing to audit_log with a
+        hand-built INSERT and a fabricated `entry_hash` such as
+        `f"x402-hash-{entry_id}"`. Those rows never verified: the writer and
+        the verifier disagreed about what a chain hash is, so a *legitimate*
+        payment made verify_chain report tampering. Going through log_action
+        means one implementation of the hash, and the entry is covered by the
+        same Merkle tree and signed tree heads as everything else.
+
+        `cost_usd` is real here — an x402 settlement moves money, and a
+        system action that spends is exactly the kind of thing the trail is
+        for.
+        """
+        # `principal_prefix` labels the agent_id without altering the actor
+        # recorded in details — prefixing the actor itself and then stamping
+        # it recorded "admin:hld_abc12345" as the actor, which is a different
+        # key from the one that acted.
+        principal = _AdminPrincipal(
+            session_id=session_id,
+            agent_id=f"{principal_prefix}{actor}" if actor else "system",
+        )
+        payload = dict(details or {})
+        if stamp_actor:
+            payload["actor"] = actor or "unknown"
         return self.log_action(
             principal,
-            tool="haldir",
-            action=f"admin.{action}",
-            details={**(details or {}), "actor": actor or "unknown"},
-            cost_usd=0.0,
+            tool=tool,
+            action=action,
+            details=payload,
+            cost_usd=cost_usd,
             tenant_id=tenant_id,
         )
 
@@ -198,7 +299,11 @@ class Watch:
                 params.append(since)
             if flagged_only:
                 query += " AND flagged = 1"
-            query += " ORDER BY timestamp DESC LIMIT ?"
+            # seq first: it is unique per tenant and follows write order.
+            # timestamp is the tiebreak for a log that has not been numbered
+            # yet (all seq = 0), so ordering degrades to the old behaviour
+            # rather than to something arbitrary.
+            query += " ORDER BY seq DESC, timestamp DESC LIMIT ?"
             params.append(limit)
 
             rows = conn.execute(query, params).fetchall()
@@ -218,6 +323,7 @@ class Watch:
                     tenant_id=tenant_id,
                     prev_hash=r["prev_hash"] if "prev_hash" in r.keys() else "",
                     entry_hash=r["entry_hash"] if "entry_hash" in r.keys() else "",
+                    seq=r["seq"] if "seq" in r.keys() else 0,
                 )
                 for r in rows
             ]
@@ -316,7 +422,8 @@ class Watch:
             return {"verified": False, "error": "No database"}
 
         rows = conn.execute(
-            "SELECT * FROM audit_log WHERE tenant_id = ? ORDER BY timestamp ASC LIMIT ?",
+            "SELECT * FROM audit_log WHERE tenant_id = ? "
+            "ORDER BY seq ASC, timestamp ASC LIMIT ?",
             (tenant_id, limit)
         ).fetchall()
         conn.close()
@@ -362,6 +469,7 @@ class Watch:
                 details=json.loads(r["details"]), cost_usd=r["cost_usd"],
                 timestamp=r["timestamp"], flagged=bool(r["flagged"]),
                 prev_hash=r["prev_hash"],
+                seq=r["seq"] if "seq" in r.keys() else 0,
             )
             expected_hash = entry.compute_hash()
             stored_hash = r["entry_hash"]

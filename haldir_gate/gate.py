@@ -7,6 +7,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 from haldir_tracing import traced_span
 
@@ -20,6 +21,49 @@ MAX_DELEGATION_DEPTH = 8
 
 class DelegationError(ValueError):
     """A parent/child session link would be invalid (missing, cross-tenant, too deep)."""
+
+
+def reserve_spend(conn: Any, session_id: str, tenant_id: str, amount: float,
+                  now: float | None = None) -> bool:
+    """Atomically reserve `amount` against a session's budget.
+
+    One statement, and that is the entire point. The check and the increment
+    used to be two — `authorize_spend()` then `record_spend()` then
+    `UPDATE sessions SET spent = ?` — which made the budget advisory rather
+    than enforced:
+
+      * `Gate.record_spend` reloads the session from the database on every
+        call, so every concurrent caller read `spent = 0` and every one
+        passed the check.
+      * The write then set `spent` to that caller's own idea of the total,
+        so the last writer won and the rest vanished. Ten simultaneous $20
+        authorizations against a $100 cap all succeeded, and the row ended
+        up recording $20 of the $200 handed out.
+
+    Doing the arithmetic in the UPDATE means the database evaluates the limit
+    against the committed value, and `rowcount` reports whether the
+    reservation happened. It is also the only formulation that stays correct
+    across processes and replicas without a distributed lock — a Python lock
+    would not have helped the second uvicorn worker.
+
+    Returns True if the reservation succeeded, False if it would have
+    exceeded the cap, the session is revoked, or it has expired. `spend_limit`
+    of 0 means unlimited, matching `Session.authorize_spend`.
+    """
+    if amount < 0:
+        # Refunds are a separate operation; silently accepting a negative
+        # reservation here would let a caller raise its own cap.
+        raise ValueError("amount must be non-negative")
+
+    cur = conn.execute(
+        "UPDATE sessions SET spent = spent + ? "
+        "WHERE session_id = ? AND tenant_id = ? "
+        "  AND revoked = 0 "
+        "  AND (expires_at = 0 OR expires_at > ?) "
+        "  AND (spend_limit <= 0 OR spent + ? <= spend_limit)",
+        (amount, session_id, tenant_id, now if now is not None else time.time(), amount),
+    )
+    return bool(cur.rowcount == 1)
 
 
 class Permission(Enum):
@@ -74,7 +118,7 @@ class Session:
             return False
         return True
 
-    def record_spend(self, amount: float):
+    def record_spend(self, amount: float) -> None:
         self.spent += amount
 
 
@@ -88,7 +132,7 @@ class Gate:
         self._sessions: dict[str, Session] = {}
         self._agent_policies: dict[str, dict] = {}
 
-    def _get_db(self):
+    def _get_db(self) -> Any:
         if not self._db_path:
             return None
         from haldir_db import get_db
@@ -96,7 +140,7 @@ class Gate:
 
     def register_agent(self, agent_id: str, default_scopes: list[str] | None = None,
                        max_spend: float = 0.0, metadata: dict | None = None,
-                       tenant_id: str = ""):
+                       tenant_id: str = "") -> None:
         scopes = default_scopes or ["read", "browse"]
         policy = {
             "default_scopes": scopes,
@@ -116,7 +160,7 @@ class Gate:
             conn.close()
 
     @staticmethod
-    def _row_to_session(row) -> Session:
+    def _row_to_session(row: Any) -> Session:
         """Map a sessions row to a Session.
 
         Columns introduced after the initial schema are absent on databases
@@ -251,10 +295,12 @@ class Gate:
                 return session
             return None
 
-        # In-memory fallback
-        session = self._sessions.get(session_id)
-        if session and session.is_valid and session.tenant_id == tenant_id:
-            return session
+        # In-memory fallback. Named separately from `session` above because
+        # that one is bound from a database row and is never None; reusing
+        # the name made its type `Session` then `Session | None`.
+        cached = self._sessions.get(session_id)
+        if cached and cached.is_valid and cached.tenant_id == tenant_id:
+            return cached
         return None
 
     @traced_span("haldir.gate.check_permission")
@@ -271,17 +317,35 @@ class Gate:
         return session.authorize_spend(amount)
 
     def record_spend(self, session_id: str, amount: float, tenant_id: str = "") -> bool:
-        session = self.get_session(session_id, tenant_id=tenant_id)
-        if not session or not session.authorize_spend(amount):
-            return False
-        session.record_spend(amount)
+        """Reserve `amount` against the session's budget, or refuse.
 
+        Delegates the decision to `reserve_spend` so that the check and the
+        increment happen in one statement. See that function for what went
+        wrong when they were two.
+        """
         conn = self._get_db()
-        if conn:
-            conn.execute("UPDATE sessions SET spent = ? WHERE session_id = ? AND tenant_id = ?",
-                         (session.spent, session_id, tenant_id))
-            conn.commit()
-            conn.close()
+        if not conn:
+            # No database: fall back to the in-process session, which is the
+            # only state there is. Same semantics, no persistence.
+            session = self.get_session(session_id, tenant_id=tenant_id)
+            if not session or not session.authorize_spend(amount):
+                return False
+            session.record_spend(amount)
+            return True
+
+        granted = reserve_spend(conn, session_id, tenant_id, amount)
+        conn.commit()
+        conn.close()
+
+        if not granted:
+            return False
+
+        # Keep the cached object consistent with what the database now holds,
+        # so a caller that reads session.remaining_budget right after this
+        # sees the reservation it just made.
+        session = self.get_session(session_id, tenant_id=tenant_id)
+        if session:
+            session.spent += amount
         return True
 
     @traced_span("haldir.gate.revoke_session")
@@ -297,7 +361,7 @@ class Gate:
             conn.commit()
             affected = conn.total_changes
             conn.close()
-            return affected > 0
+            return bool(affected > 0)
         return session is not None
 
     def list_sessions(self, agent_id: str | None = None, tenant_id: str = "",

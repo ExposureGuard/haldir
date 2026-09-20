@@ -259,6 +259,46 @@ def test_successful_payment_logs_to_audit(haldir_client) -> None:
     assert after == before + 1
 
 
+def test_a_settled_payment_does_not_look_like_tampering(haldir_client) -> None:
+    """The row must carry a real chain hash, not a placeholder.
+
+    The writer used to set `entry_hash = f"x402-hash-{entry_id}"` with an
+    empty `prev_hash`. verify_chain recomputes the digest and compares, so
+    every settled payment made the audit trail report as tampered — the
+    product's central claim, falsified by its own revenue.
+    """
+    import api
+    from haldir_db import get_db
+    import haldir_demo_tamper
+
+    haldir_demo_tamper.ensure_seeded()
+
+    b64 = _valid_payload("http://localhost/v1/x402/tree-head", 1000)
+    assert haldir_client.get(
+        "/v1/x402/tree-head", headers={"PAYMENT-SIGNATURE": b64},
+    ).status_code == 200
+
+    conn = get_db(api.DB_PATH)
+    # Order by timestamp, NOT by seq: a row written by the old code path has
+    # seq = 0 and would sort last, so `ORDER BY seq DESC LIMIT 1` inspects
+    # some other tenant's row and the test passes no matter what this writer
+    # did. That is exactly how the first version of this test was vacuous.
+    row = conn.execute(
+        "SELECT entry_id, prev_hash, entry_hash, seq, cost_usd FROM audit_log "
+        "WHERE tool = 'x402' ORDER BY timestamp DESC LIMIT 1",
+    ).fetchone()
+    conn.close()
+
+    assert row is not None, "the payment wrote no audit row"
+    assert not row["entry_hash"].startswith("x402-hash-"), (
+        "entry_hash is still the placeholder, so this row cannot verify"
+    )
+    assert len(row["entry_hash"]) == 64, (
+        f"entry_hash is not a SHA-256 digest: {row['entry_hash']!r}"
+    )
+    assert row["seq"] > 0, "the row was not sequenced into the chain"
+
+
 # ── Schema conformance (base64 + field coverage) ────────────────────
 
 def test_402_carries_bazaar_extension(haldir_client) -> None:

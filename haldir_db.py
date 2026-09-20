@@ -355,7 +355,8 @@ _SCHEMA = """
         flagged INTEGER NOT NULL DEFAULT 0,
         flag_reason TEXT NOT NULL DEFAULT '',
         prev_hash TEXT NOT NULL DEFAULT '',
-        entry_hash TEXT NOT NULL DEFAULT ''
+        entry_hash TEXT NOT NULL DEFAULT '',
+        seq INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id);
@@ -439,6 +440,67 @@ _SCHEMA = """
 _SCHEMA_SQLITE = _SCHEMA.replace("BYTEA", "BLOB").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
 
 
+def _migrate_audit_seq(conn):
+    """Give every audit row a per-tenant sequence number, then make it unique.
+
+    The chain's tail was selected with `ORDER BY timestamp DESC LIMIT 1` and
+    no tiebreak, and nothing stopped two rows from naming the same
+    predecessor. Under concurrency that forks the log: eight simultaneous
+    appends produced eight entries, of which exactly one was reachable by
+    walking from the head. The rest were on branches, and a log that is not a
+    single chain proves nothing about its own history.
+
+    A per-tenant sequence makes "the tail" a fact rather than a guess, and
+    the unique index makes a fork impossible to commit — a racing writer
+    collides and retries instead of silently branching.
+
+    Runs on both backends: the correlated subquery and the partial-free
+    unique index are portable, and `ADD COLUMN` is wrapped because neither
+    engine offers `IF NOT EXISTS` for it.
+    """
+    try:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN seq INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass  # column already exists
+
+    try:
+        pending = conn.execute("SELECT 1 FROM audit_log WHERE seq = 0 LIMIT 1").fetchone()
+    except Exception:
+        return  # table missing; nothing to migrate
+
+    # Backfill only when something needs it, so a large log is not renumbered
+    # on every boot. The index below is created either way — skipping it on a
+    # fresh database (where the table is empty, so *nothing* has seq = 0)
+    # would leave every new deployment with an unguarded chain, which is
+    # exactly the bug this function exists to close.
+    if pending:
+        # (timestamp, entry_id) is a total order: entry_id is the primary
+        # key, so no two rows tie. Counting predecessors yields 1..N.
+        conn.execute(
+            "UPDATE audit_log SET seq = ("
+            "  SELECT COUNT(*) FROM audit_log AS a2"
+            "  WHERE a2.tenant_id = audit_log.tenant_id"
+            "    AND (a2.timestamp < audit_log.timestamp"
+            "         OR (a2.timestamp = audit_log.timestamp"
+            "             AND a2.entry_id <= audit_log.entry_id))"
+            ") WHERE seq = 0"
+        )
+    try:
+        # Partial on seq > 0. Appends through Watch.log_action always number
+        # their row (the tail's seq plus one), so the guard covers every
+        # entry that joins the chain — while leaving rows written raw, with
+        # seq left at its 0 default, free of a constraint they were never
+        # part of. The tamper demo rewrites history on purpose, and test
+        # fixtures plant rows with hand-picked hashes; neither should have
+        # to fabricate a sequence number to do it.
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_seq "
+            "ON audit_log(tenant_id, seq) WHERE seq > 0"
+        )
+    except Exception:
+        pass  # pre-existing duplicates; appends still retry, index is a backstop
+
+
 def init_db(db_path: str = DEFAULT_DB_PATH):
     """Create all tables if they don't exist."""
     if _is_postgres():
@@ -478,6 +540,7 @@ def _init_sqlite(db_path: str):
         )
     except Exception:
         pass  # index already exists; fine
+    _migrate_audit_seq(conn)
     # Compliance scheduler table (migration 004). Belt-and-suspenders
     # for environments that don't run HALDIR_AUTO_MIGRATE.
     try:
@@ -590,6 +653,16 @@ def _init_pg():
     except Exception as e:
         conn.rollback()
         logger.warning("idx_sessions_parent CREATE skipped: %s", e)
+
+    # Chain sequencing for audit_log — see _migrate_audit_seq. Postgres
+    # supports ADD COLUMN IF NOT EXISTS, but the helper's try/except covers
+    # the non-IF-NOT-EXISTS path too, so the same code serves both backends.
+    try:
+        _migrate_audit_seq(conn)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.warning("audit_log seq migration skipped: %s", e)
 
     # Migration 002 (webhook_deliveries table) is normally applied by
     # haldir_migrate at boot. Belt-and-suspenders: emit it here too so

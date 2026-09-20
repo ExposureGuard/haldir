@@ -40,6 +40,7 @@ import time
 import secrets
 import urllib.request
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -53,6 +54,15 @@ class UpstreamServer:
     total_errors: int = 0
     avg_latency_ms: float = 0.0
 
+    # Diagnostics from the last health probe, surfaced by /v1/proxy/tools so
+    # a failing upstream can be told apart from an unreachable one. Declared
+    # rather than set ad hoc: an undeclared attribute is invisible to mypy,
+    # so the reads in api.py were the only thing keeping the two halves
+    # honest, and nothing would have caught a rename on one side.
+    _raw_status: int | None = None
+    _raw_body: str | None = None
+    _last_error: str | None = None
+
 
 class HaldirProxy:
     """
@@ -63,8 +73,9 @@ class HaldirProxy:
     to the agent with governance wrappers, and forwards calls after authorization.
     """
 
-    def __init__(self, gate=None, vault=None, watch=None, approval_engine=None,
-                 webhook_mgr=None, db_path=None):
+    def __init__(self, gate: Any = None, vault: Any = None, watch: Any = None,
+                 approval_engine: Any = None, webhook_mgr: Any = None,
+                 db_path: str | None = None) -> None:
         self.gate = gate
         self.vault = vault
         self.watch = watch
@@ -75,7 +86,7 @@ class HaldirProxy:
         self._policies: list[dict] = []
         self._db_path = db_path
 
-    def register_upstream(self, name: str, url: str):
+    def register_upstream(self, name: str, url: str) -> UpstreamServer:
         """Register an upstream MCP server to proxy through."""
         server = UpstreamServer(name=name, url=url)
         self._upstreams[name] = server
@@ -83,7 +94,7 @@ class HaldirProxy:
         self._discover_tools(server)
         return server
 
-    def _discover_tools(self, server: UpstreamServer):
+    def _discover_tools(self, server: UpstreamServer) -> None:
         """Call tools/list on an upstream server to discover its tools."""
         try:
             import httpx
@@ -117,7 +128,8 @@ class HaldirProxy:
             import traceback
             traceback.print_exc()
 
-    def add_policy(self, policy_type: str = "", type: str = "", **kwargs):
+    def add_policy(self, policy_type: str = "", type: str = "",
+                   **kwargs: Any) -> None:
         """
         Add a governance policy applied to all proxied calls.
 
@@ -154,7 +166,7 @@ class HaldirProxy:
         return tools
 
     def call_tool(self, tool_name: str, arguments: dict,
-                  session=None) -> dict:
+                  session: Any = None) -> dict:
         """
         Intercept a tool call, enforce governance, then forward to upstream.
 
@@ -269,7 +281,7 @@ class HaldirProxy:
                 follow_redirects=True,
             )
             data = resp.json()
-            return data.get("result", {"content": [{"type": "text", "text": "Empty response"}]})
+            return dict(data.get("result", {"content": [{"type": "text", "text": "Empty response"}]}))
         except httpx.HTTPStatusError as e:
             server.total_errors += 1
             return self._error(f"Upstream error: {e.response.status_code}")
@@ -279,7 +291,7 @@ class HaldirProxy:
             return self._error(f"Upstream connection failed: {e}")
 
     def _enforce_policies(self, tool_name: str, arguments: dict,
-                          session) -> dict | None:
+                          session: Any) -> dict | None:
         """Check all policies. Returns error dict if blocked, None if allowed."""
         for policy in self._policies:
             ptype = policy["type"]

@@ -574,10 +574,31 @@ class Vault:
         if not session.is_valid:
             return {"authorized": False, "reason": "Session invalid or expired"}
 
-        if not session.authorize_spend(amount):
+        amount = float(amount)
+        tenant_id = getattr(session, "tenant_id", "")
+
+        # Claim the budget first, in a single statement. The check and the
+        # increment used to be two — authorize_spend() up here, the UPDATE
+        # down at the bottom — which let concurrent callers each read the
+        # same starting balance and each conclude they were within it.
+        conn = self._get_db()
+        if conn:
+            from haldir_gate import reserve_spend
+            granted = reserve_spend(conn, session.session_id, tenant_id, amount)
+            conn.commit()
+            conn.close()
+        else:
+            # No database to serialize against, so the in-process session is
+            # the only state there is. Single writer by construction.
+            granted = session.authorize_spend(amount)
+
+        if not granted:
             return {
                 "authorized": False,
-                "reason": f"Insufficient budget. Remaining: ${session.remaining_budget:.2f}, requested: ${amount:.2f}",
+                "reason": (
+                    f"Insufficient budget. Remaining: "
+                    f"${session.remaining_budget:.2f}, requested: ${amount:.2f}"
+                ),
             }
 
         session.record_spend(amount)
@@ -595,17 +616,17 @@ class Vault:
             "timestamp": time.time(),
         }
 
-        tenant_id = getattr(session, "tenant_id", "")
-
         conn = self._get_db()
         if conn:
+            # The budget was already claimed by reserve_spend. This only
+            # records the payment — writing `spent` a second time here
+            # would set it from this process's view and undo the atomicity
+            # that reserve_spend exists to provide.
             conn.execute(
                 "INSERT INTO payments (authorization_id, tenant_id, session_id, agent_id, amount, currency, description, remaining_budget, timestamp) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (auth_id, tenant_id, session.session_id, session.agent_id, amount, currency, description, session.remaining_budget, time.time())
             )
-            conn.execute("UPDATE sessions SET spent = ? WHERE session_id = ? AND tenant_id = ?",
-                         (session.spent, session.session_id, tenant_id))
             conn.commit()
             conn.close()
 

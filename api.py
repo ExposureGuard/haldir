@@ -3742,11 +3742,15 @@ def register_upstream():
         "tools_discovered": len(server.tools),
         "tool_names": [t["name"] for t in server.tools],
     }
-    if hasattr(server, '_last_error'):
+    # These are declared on UpstreamServer with a None default, so `is not
+    # None` is what `hasattr` was standing in for — and unlike hasattr it is
+    # checked by mypy, which is how a rename on the writing side would now
+    # show up here instead of silently dropping the diagnostic.
+    if server._last_error is not None:
         resp["error"] = server._last_error
-    if hasattr(server, '_raw_status'):
+    if server._raw_status is not None:
         resp["upstream_status"] = server._raw_status
-    if hasattr(server, '_raw_body'):
+    if server._raw_body is not None:
         resp["upstream_body"] = server._raw_body[:300]
     _idempotency_store("/v1/proxy/upstreams", data, tenant, resp, 201)
     return jsonify(resp), 201
