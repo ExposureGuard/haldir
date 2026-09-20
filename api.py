@@ -1692,6 +1692,99 @@ def verify_audit_sth_log():
     ))
 
 
+# ── Audit retention ───────────────────────────────────────────────────
+
+@app.route("/v1/audit/retention", methods=["GET"])
+@require_api_key
+@require_scope("audit:read")
+def get_audit_retention():
+    """The tenant's retention window, plus what it would remove right now.
+
+    `retain_days` of 0 — the default — means the audit log is kept forever.
+    The preview is included so "how much would this delete?" is answerable
+    without running the prune to find out.
+    """
+    import haldir_retention
+    tenant = getattr(request, "tenant_id", "")
+    policy = haldir_retention.get_policy(DB_PATH, tenant)
+    policy["preview"] = haldir_retention.preview(DB_PATH, tenant)
+    return jsonify(policy)
+
+
+@app.route("/v1/audit/retention", methods=["PUT"])
+@require_api_key
+@require_scope("admin:write")
+@validate_body({
+    "retain_days": {"type": int, "required": True, "min": 0, "max": 36500},
+})
+def set_audit_retention():
+    """Set the retention window.
+
+    Setting a window does not delete anything — the next prune does, and it
+    is explicit. That separation matters: a policy change should be as easy
+    to make and as hard to regret as any other config change.
+    """
+    import haldir_retention
+    tenant = getattr(request, "tenant_id", "")
+    days = request.validated["retain_days"]
+    policy = haldir_retention.set_policy(
+        DB_PATH, tenant, days,
+        updated_by=getattr(request, "api_key_prefix", ""),
+    )
+    policy["preview"] = haldir_retention.preview(DB_PATH, tenant)
+    return jsonify(policy)
+
+
+@app.route("/v1/audit/retention/prune", methods=["POST"])
+@require_api_key
+@require_scope("admin:write")
+@validate_body({
+    # Defaulted rather than required: with `required: True` a caller sending
+    # {"confirm": false} fails schema validation and never reaches the check
+    # below, so the two cases — "you didn't confirm" and "you sent garbage" —
+    # would be indistinguishable to whoever is reading the error.
+    "confirm": {"type": bool, "default": False},
+})
+def prune_audit_log():
+    """Delete audit entries older than the window, keeping it verifiable.
+
+    Destructive and deliberately not reversible, so it takes an explicit
+    `{"confirm": true}` rather than acting on a bare POST — the difference
+    between a scheduled job and someone fat-fingering a request.
+
+    Records a Signed Tree Head over the log before deleting anything, so the
+    removal is provable afterwards rather than silent. If that commitment
+    cannot be produced, nothing is deleted.
+    """
+    import haldir_retention
+    if not request.validated["confirm"]:
+        return _json_error("confirmation_required",
+                           "send {\"confirm\": true} to prune", 400)
+
+    tenant = getattr(request, "tenant_id", "")
+    out = haldir_retention.prune(
+        DB_PATH, tenant,
+        actor=getattr(request, "api_key_prefix", ""),
+    )
+    return jsonify(out), (200 if out.get("pruned") else 409)
+
+
+@app.route("/v1/audit/retention/checkpoints", methods=["GET"])
+@require_api_key
+@require_scope("audit:read")
+def list_audit_checkpoints():
+    """Every prune this tenant has performed.
+
+    The record of what was removed, when, and the signed Merkle root it
+    produced — which is the answer a retention policy exists to be able to
+    give an auditor.
+    """
+    import haldir_retention
+    tenant = getattr(request, "tenant_id", "")
+    cps = haldir_retention.list_checkpoints(DB_PATH, tenant)
+    return jsonify({"count": len(cps), "checkpoints": cps})
+
+
 @app.route("/v1/audit/consistency-proof", methods=["GET"])
 @require_api_key
 @require_scope("audit:read")

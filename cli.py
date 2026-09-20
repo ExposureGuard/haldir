@@ -1652,6 +1652,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit_cn.add_argument("--json", action="store_true")
     p_audit_cn.set_defaults(func=cmd_audit_consistency)
 
+    # ── retention (audit windows + prune checkpoints) ──
+    p_ret = sub.add_parser("retention", help="Audit retention windows and prunes")
+    ret_sub = p_ret.add_subparsers(dest="retention_command")
+
+    p_ret_show = ret_sub.add_parser("show", help="Current window and what a prune would remove")
+    p_ret_show.add_argument("--json", action="store_true")
+    p_ret_show.set_defaults(func=cmd_retention_show)
+
+    p_ret_set = ret_sub.add_parser("set", help="Set the retention window in days (0 = keep forever)")
+    p_ret_set.add_argument("days", type=int, help="Days to keep; 0 keeps everything")
+    p_ret_set.set_defaults(func=cmd_retention_set)
+
+    p_ret_prune = ret_sub.add_parser(
+        "prune", help="Delete entries older than the window (not reversible)")
+    p_ret_prune.add_argument("--yes", action="store_true",
+                             help="Actually prune. Without it this only reports what would go.")
+    p_ret_prune.add_argument("--json", action="store_true")
+    p_ret_prune.set_defaults(func=cmd_retention_prune)
+
+    p_ret_ck = ret_sub.add_parser(
+        "checkpoints", help="What has been pruned, and the signed root committing to it")
+    p_ret_ck.add_argument("--limit", type=int, default=20)
+    p_ret_ck.add_argument("--json", action="store_true")
+    p_ret_ck.set_defaults(func=cmd_retention_checkpoints)
+
     # ── webhooks deliveries ──
     p_wh = sub.add_parser("webhooks", help="Webhook delivery inspection")
     wh_sub = p_wh.add_subparsers(dest="webhooks_command")
@@ -1754,6 +1779,111 @@ def build_parser() -> argparse.ArgumentParser:
     p_mcp_config.set_defaults(func=cmd_mcp_config)
 
     return parser
+
+
+# ── retention ─────────────────────────────────────────────────────────
+
+def cmd_retention_show(args: argparse.Namespace) -> None:
+    """Print the retention window and what a prune would remove."""
+    client = APIClient()
+    r = client.get("/v1/audit/retention")
+    if getattr(args, "json", False):
+        print(json.dumps(r, indent=2))
+        return
+
+    days = r.get("retain_days", 0)
+    print()
+    print(f"  {Color.DIM}Audit retention{Color.RESET}")
+    if days:
+        print(f"  Keep          {days} days")
+    else:
+        print(f"  Keep          forever {Color.DIM}(no window set){Color.RESET}")
+
+    prev = r.get("preview") or {}
+    if prev.get("enabled"):
+        n = prev.get("would_delete", 0)
+        print(f"  Prunable now  {n} entr{'y' if n == 1 else 'ies'}")
+        if prev.get("oldest_entry_at"):
+            oldest = time.strftime("%Y-%m-%d %H:%M:%S",
+                                   time.localtime(prev["oldest_entry_at"]))
+            print(f"  Oldest entry  {oldest}")
+    print()
+    info("a prune is explicit: run 'haldir retention prune --yes'")
+
+
+def cmd_retention_set(args: argparse.Namespace) -> None:
+    """Set the window. Does not delete anything by itself."""
+    client = APIClient()
+    r = client.request("PUT", "/v1/audit/retention",
+                       json={"retain_days": args.days})
+    if args.days:
+        info(f"retention window set to {args.days} days")
+    else:
+        info("retention disabled — the audit log is kept forever")
+
+    prev = r.get("preview") or {}
+    n = prev.get("would_delete", 0)
+    if n:
+        warn(f"{n} entries are already older than that window; "
+             f"run 'haldir retention prune --yes' to remove them")
+
+
+def cmd_retention_prune(args: argparse.Namespace) -> None:
+    """Delete entries past the window, recording a signed commitment first."""
+    client = APIClient()
+
+    if not args.yes:
+        # Report before acting. Pruning is not reversible, so the default
+        # invocation shows the size of it and stops.
+        r = client.get("/v1/audit/retention")
+        prev = r.get("preview") or {}
+        if not prev.get("enabled"):
+            info("no retention window set; nothing to prune")
+            return
+        n = prev.get("would_delete", 0)
+        if not n:
+            info("nothing is older than the retention window")
+            return
+        warn(f"would delete {n} entries older than {prev.get('retain_days')} days")
+        info("re-run with --yes to confirm")
+        return
+
+    r = client.request("POST", "/v1/audit/retention/prune", json={"confirm": True})
+    if getattr(args, "json", False):
+        print(json.dumps(r, indent=2))
+        return
+
+    if r.get("pruned"):
+        info(f"pruned {r['entries_deleted']} entries")
+        print(f"  checkpoint   {r['checkpoint_id']}")
+        print(f"  commitment   tree_size={r['tree_size']}  "
+              f"root={str(r.get('root_hash', ''))[:16]}…")
+        info("the chain still verifies; 'haldir audit verify' to confirm")
+    else:
+        warn(r.get("reason", "nothing to prune"))
+
+
+def cmd_retention_checkpoints(args: argparse.Namespace) -> None:
+    """Show every prune, with the signed root committing to what went."""
+    client = APIClient()
+    r = client.get("/v1/audit/retention/checkpoints",
+                   params={"limit": str(args.limit)})
+    if getattr(args, "json", False):
+        print(json.dumps(r, indent=2))
+        return
+
+    cps = r.get("checkpoints", [])
+    if not cps:
+        info("nothing has been pruned for this tenant")
+        return
+    print()
+    print(f"  {Color.DIM}{'when':>20}  {'deleted':>8}  {'tree_size':>9}  root{Color.RESET}")
+    for c in cps:
+        when = time.strftime("%Y-%m-%d %H:%M:%S",
+                             time.localtime(c.get("created_at", 0)))
+        print(f"  {when:>20}  {c.get('entries_deleted', 0):>8}  "
+              f"{c.get('tree_size', 0):>9}  {str(c.get('root_hash', ''))[:16]}…")
+    print()
 
 
 def main() -> None:

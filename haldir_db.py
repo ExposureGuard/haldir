@@ -501,6 +501,37 @@ def _init_sqlite(db_path: str):
         """)
     except Exception:
         pass
+    # Audit retention + prune checkpoints (migration 008). Same
+    # belt-and-suspenders reasoning as the table above.
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS audit_retention (
+                tenant_id   TEXT PRIMARY KEY,
+                retain_days INTEGER NOT NULL DEFAULT 0,
+                updated_at  REAL NOT NULL,
+                updated_by  TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS audit_checkpoints (
+                checkpoint_id          TEXT PRIMARY KEY,
+                tenant_id              TEXT NOT NULL,
+                pruned_before          REAL NOT NULL,
+                last_pruned_entry_hash TEXT NOT NULL DEFAULT '',
+                entries_deleted        INTEGER NOT NULL DEFAULT 0,
+                tree_size              INTEGER NOT NULL DEFAULT 0,
+                root_hash              TEXT NOT NULL DEFAULT '',
+                algorithm              TEXT NOT NULL DEFAULT '',
+                signature              TEXT NOT NULL DEFAULT '',
+                signed_at              REAL NOT NULL DEFAULT 0,
+                key_id                 TEXT NOT NULL DEFAULT '',
+                public_key             TEXT NOT NULL DEFAULT '',
+                created_at             REAL NOT NULL,
+                created_by             TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_checkpoints_tenant
+                ON audit_checkpoints(tenant_id, created_at DESC);
+        """)
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 

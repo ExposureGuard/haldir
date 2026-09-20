@@ -358,6 +358,22 @@ JSON for evidence-locker upload, Markdown for the "show this to the auditor" mom
 
 ---
 
+### Retention and deletion
+
+Audit data is kept forever by default. When a policy requires otherwise, you can set a window and prune to it — and the prune stays provable:
+
+```bash
+haldir retention set 90      # keep 90 days (0 = forever)
+haldir retention show        # what a prune would remove, before running it
+haldir retention prune --yes
+```
+
+The audit log is a hash chain, so deleting old entries naively leaves the surviving chain pointing at a hash that no longer exists — which would turn a working audit trail into one that fails verification. Instead, a Signed Tree Head is taken over the log *before* anything is removed, and the hash of the last deleted entry is recorded as the link across the boundary.
+
+The result is that pruning is not silent. `haldir audit verify` still passes, and reports what was removed along with the signed Merkle root that commits to it — so the honest answer to an auditor is *"entries before this point were deleted under a retention policy, and here is the root they produced at the time."* If that commitment cannot be produced, nothing is deleted.
+
+---
+
 ## API Reference
 
 Full docs at [haldir.xyz/docs](https://haldir.xyz/docs) — the complete OpenAPI 3.1 spec is at [haldir.xyz/openapi.json](https://haldir.xyz/openapi.json).
@@ -374,6 +390,9 @@ Key endpoints (see the spec for the full surface):
 | `/v1/payments/authorize`                 | POST     | Authorize payment              |
 | `/v1/audit`                              | POST/GET | Log / query actions            |
 | `/v1/audit/spend`                        | GET      | Spend summary                  |
+| `/v1/audit/retention`                    | GET/PUT  | Read / set the retention window |
+| `/v1/audit/retention/prune`              | POST     | Prune to the window (needs `confirm`) |
+| `/v1/audit/retention/checkpoints`        | GET      | Prune history + signed commitments |
 | `/v1/approvals/rules`                    | POST     | Add approval rule              |
 | `/v1/approvals/request`                  | POST     | Request approval               |
 | `/v1/approvals/:id/approve`              | POST     | Approve                        |
