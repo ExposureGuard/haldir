@@ -23,17 +23,40 @@ from haldir_tracing import traced_span
 APPEND_ATTEMPTS = 8
 
 
-def _is_unique_violation(exc: BaseException) -> bool:
-    """True for a UNIQUE/PRIMARY KEY conflict on either backend.
+def _is_retryable_append_conflict(exc: BaseException) -> bool:
+    """True when an append should be re-read and tried again.
 
-    Matched by class name rather than by import: sqlite3 and psycopg2 are
-    both optional depending on how Haldir is deployed, and importing either
-    at module scope would make the other a hard dependency. sqlite3 raises
-    IntegrityError, psycopg2 raises errors.UniqueViolation (a subclass of
-    IntegrityError), and both appear in the MRO.
+    Three things reach here, and all three mean the same thing — another
+    writer got there first:
+
+      * a UNIQUE conflict on the sequence number, which is the guard doing
+        its job;
+      * SQLite's "database is locked", raised when this writer's transaction
+        met another's and the busy timeout ran out;
+      * Postgres deadlock or serialization failure, the same situation under
+        MVCC.
+
+    Not catching the last two would leave a self-hosted SQLite deployment
+    returning 500s under exactly the concurrency this loop exists for — the
+    retry has to cover the engine's way of saying "busy", not only our own
+    constraint.
+
+    Matched by class name and message rather than by import: sqlite3 and
+    psycopg2 are each optional depending on how Haldir is deployed, and
+    importing either at module scope would make the other a hard dependency.
     """
-    return any(k.__name__ in ("IntegrityError", "UniqueViolation")
-               for k in type(exc).__mro__)
+    if any(k.__name__ in ("IntegrityError", "UniqueViolation",
+                          "DeadlockDetected", "SerializationFailure")
+           for k in type(exc).__mro__):
+        return True
+
+    message = str(exc).lower()
+    return any(fragment in message for fragment in (
+        "database is locked",
+        "database table is locked",
+        "deadlock detected",
+        "could not serialize",
+    ))
 
 
 @dataclass
@@ -157,8 +180,8 @@ class Watch:
                     conn.commit()
                     return entry
                 except Exception as e:  # noqa: BLE001 — re-raised unless it is
-                    # the expected collision with a concurrent appender.
-                    if not _is_unique_violation(e):
+                    # the expected collision with a concurrent writer.
+                    if not _is_retryable_append_conflict(e):
                         raise
                     conn.rollback()
 
