@@ -47,6 +47,8 @@ from haldir_watch.watch import Watch
 import haldir_idempotency
 import haldir_tiers
 from haldir_logging import configure_logging, get_logger
+
+logger = get_logger(__name__)
 from haldir_metrics import registry as prom_metrics
 from haldir_validation import validate_body
 from haldir_openapi import generate_openapi
@@ -4996,53 +4998,64 @@ a{{color:#b8973a;text-decoration:none}}a:hover{{text-decoration:underline}}</sty
 
 # ── Agent discovery files ──
 
+def _serve_content(*parts: str, content_type: str = "text/plain; charset=utf-8"):
+    """Read a file the application serves from its own directory.
+
+    Returns 404, not 500, when it is absent. These routes do a bare open()
+    relative to the package directory, so a file that is missing produces
+    FileNotFoundError and a 500 — which is what an installed Haldir did on
+    /llms.txt, /.well-known/agent.json and /AGENTS.md, because none of this
+    content was in the wheel. A 500 says "the server is broken"; a 404 says
+    "that is not here", and only one of those is true.
+
+    The packaging bug is fixed. This makes the class of bug visible in the
+    status line instead of the traceback if it ever returns.
+    """
+    path = os.path.join(os.path.dirname(__file__), *parts)
+    if not os.path.isfile(path):
+        logger.warning(
+            "content file missing from the installation: %s. If this is a "
+            "pip install, it was not packaged — see the wheel include list "
+            "in pyproject.toml.", os.path.join(*parts),
+        )
+        return jsonify({"error": "not found", "path": "/" + os.path.join(*parts)}), 404
+    with open(path, encoding="utf-8") as f:
+        return f.read(), 200, {"Content-Type": content_type}
+
+
 @app.route("/llms.txt")
 def llms_txt():
-    p = os.path.join(os.path.dirname(__file__), "llms.txt")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return _serve_content("llms.txt")
 
 
 @app.route("/llms-full.txt")
 def llms_full_txt():
-    p = os.path.join(os.path.dirname(__file__), "llms-full.txt")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return _serve_content("llms-full.txt")
 
 
 @app.route("/robots.txt")
 def robots_txt():
-    p = os.path.join(os.path.dirname(__file__), "robots.txt")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return _serve_content("robots.txt")
 
 
 @app.route("/sitemap.xml")
 def sitemap_xml():
-    p = os.path.join(os.path.dirname(__file__), "sitemap.xml")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "application/xml; charset=utf-8"}
+    return _serve_content("sitemap.xml", content_type="application/xml; charset=utf-8")
 
 
 @app.route("/.well-known/security.txt")
 def security_txt():
-    p = os.path.join(os.path.dirname(__file__), ".well-known", "security.txt")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return _serve_content(".well-known", "security.txt")
 
 
 @app.route("/.well-known/ai.txt")
 def ai_txt():
-    p = os.path.join(os.path.dirname(__file__), ".well-known", "ai.txt")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return _serve_content(".well-known", "ai.txt")
 
 
 @app.route("/.well-known/ai-plugin.json")
 def ai_plugin():
-    p = os.path.join(os.path.dirname(__file__), "ai-plugin.json")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "application/json"}
+    return _serve_content("ai-plugin.json", content_type="application/json")
 
 
 @app.route("/.well-known/agent.json")
@@ -5052,11 +5065,7 @@ def agent_json():
     / MCP HTTP / x402), every integration package, every trust signal,
     and where we're already listed in the ecosystem. One file, one
     fetch, complete picture."""
-    p = os.path.join(
-        os.path.dirname(__file__), ".well-known", "agent.json",
-    )
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "application/json"}
+    return _serve_content(".well-known", "agent.json", content_type="application/json")
 
 
 @app.route("/.well-known/jwks.json")

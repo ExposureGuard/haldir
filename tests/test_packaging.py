@@ -300,3 +300,81 @@ def test_the_wheel_does_not_ship_development_scripts(pyproject) -> None:
         assert script not in include, (
             f"{script} is a development script and should not ship"
         )
+
+
+# ── Content the application serves from its own directory ────────────
+
+# Every HTTP route in api.py that does `open(os.path.dirname(__file__)/...)`
+# is serving a file that has to be in the wheel. These are not documentation:
+# without them an installed Haldir answers 500 on /llms.txt,
+# /.well-known/agent.json, /AGENTS.md, /robots.txt, /sitemap.xml, /docs, the
+# blog and the demo.
+#
+# The discovery ones matter most. They are how an agent or a registry works
+# out that Haldir exists at all, so an installed copy was invisible to
+# precisely the audience the product is built for — and 500 rather than 404,
+# which reads as a broken server rather than a missing file.
+SERVED_CONTENT = (
+    "llms.txt",
+    "llms-full.txt",
+    "robots.txt",
+    "sitemap.xml",
+    "ai-plugin.json",
+    "AGENTS.md",
+    "THREAT_MODEL.md",
+    "SECURITY.md",
+    "dashboard.html",
+    "demo_gallery.html",
+    "quickstart.html",
+)
+
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def test_served_content_files_exist_on_disk() -> None:
+    """If one of these is absent the route 404s in every installation,
+    including the source tree, where it is easiest to notice."""
+    missing = [f for f in SERVED_CONTENT if not os.path.isfile(os.path.join(_ROOT, f))]
+    assert not missing, f"the app serves these but they are not in the tree: {missing}"
+
+
+def test_served_content_is_listed_for_packaging(pyproject) -> None:
+    include = _wheel_include(pyproject)
+    missing = [f for f in SERVED_CONTENT if f not in include]
+    assert not missing, (
+        f"these are served by the app but not packaged, so every installed "
+        f"copy answers 500 on their routes: {missing}"
+    )
+
+
+def test_served_content_directories_are_packaged(pyproject) -> None:
+    """The dot-directory is the one that got missed.
+
+    `.well-known` is where the agent card, the MCP server card, security.txt
+    and ai.txt live — the whole machine-readable discovery surface.
+    """
+    include = _wheel_include(pyproject)
+    for d in (".well-known", "landing", "blog", "demo", "docs"):
+        assert d in include, (
+            f"{d}/ is served by the app but not packaged, so its routes 404 "
+            f"in every installed copy"
+        )
+
+
+def test_a_missing_content_file_is_404_not_500() -> None:
+    """The status line should say what is true.
+
+    These routes did a bare open() relative to the package directory, so a
+    file that was not packaged raised FileNotFoundError and the client got a
+    500 — "the server is broken" — for a file that simply was not installed.
+    """
+    import api
+
+    # Inside a request context, because _serve_content returns jsonify() on
+    # the missing path and jsonify needs one — which is also the only way it
+    # is ever called in production.
+    with api.app.test_request_context("/llms.txt"):
+        result = api._serve_content("definitely-not-a-real-file.txt")
+    # A 2-tuple: Flask takes (body, status) as well as (body, status, headers).
+    assert result[1] == 404, f"expected 404, got {result[1]!r}"

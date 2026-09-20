@@ -40,13 +40,23 @@ def _stated_versions() -> dict[str, str]:
     """Every other place the version is written as a literal."""
     found: dict[str, str] = {}
     patterns = {
+        # The machine-readable discovery surface. These are what an agent or
+        # a registry reads to work out what Haldir is and which version it
+        # is talking to, and they had drifted to four different answers
+        # (0.1.0, 0.2.0, 0.3.1, 0.3.1) across four files.
+        # The FIRST version field only — agent.json lists integration packages
+        # further down, each with its own independent version, and a
+        # pattern without re.M would happily compare those instead.
+        ".well-known/agent.json":              r'^  "version": "([^"]+)"',
+        ".well-known/mcp/server-card.json":    r'"version": "([^"]+)"',
+        ".well-known/mcp/mcp.json":            r'"version": "([^"]+)"',
         "haldir_openapi.py":    r'version: str = "([^"]+)"',
         "haldir_mcp_server.py": r'SERVER_VERSION = "([^"]+)"',
         "haldir_watch/webhooks.py": r'Haldir/([0-9][^"]*)',
         "haldir_tracing.py":    r'"haldir", "([^"]+)"',
     }
     for rel, pat in patterns.items():
-        m = re.search(pat, _read(rel))
+        m = re.search(pat, _read(rel), re.M)
         if m:
             found[rel] = m.group(1)
     return found
