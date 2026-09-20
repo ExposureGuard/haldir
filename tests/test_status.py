@@ -58,10 +58,18 @@ def test_check_database_down_on_unreachable_path(tmp_path) -> None:
     assert "failed" in s.message.lower()
 
 
-def test_check_billing_degraded_without_stripe_key(monkeypatch) -> None:
+def test_check_billing_is_off_without_a_stripe_key(monkeypatch) -> None:
+    """Unconfigured, not degraded.
+
+    Billing without a Stripe key is the expected state of every self-hosted
+    install and of a fresh cloud tenant. Reporting it as `degraded` made a
+    brand-new, entirely healthy Haldir announce itself as "Status ● degraded",
+    which reads as a broken product at the moment someone is deciding whether
+    it works. `off` is the neutral state and the overall rollup skips it.
+    """
     monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
     s = check_billing()
-    assert s.state == "degraded"
+    assert s.state == "off"
 
 
 def test_check_billing_ok_with_stripe_key(monkeypatch) -> None:
@@ -70,11 +78,17 @@ def test_check_billing_ok_with_stripe_key(monkeypatch) -> None:
     assert s.state == "ok"
 
 
-def test_check_proxy_degraded_when_no_upstream_table(tmp_path) -> None:
+def test_check_proxy_is_off_when_no_upstream_table(tmp_path) -> None:
+    """Same reasoning as billing: an unused optional feature is not a fault.
+
+    Registering an upstream flips this to `ok` — see the test below, which
+    pins that direction so `off` cannot become a way of never reporting
+    anything.
+    """
     db = tmp_path / "empty.db"
     sqlite3.connect(str(db)).close()  # no proxy_upstreams table
     s = check_proxy(str(db))
-    assert s.state == "degraded"
+    assert s.state == "off"
 
 
 def test_check_proxy_ok_when_upstreams_present(tmp_path) -> None:
