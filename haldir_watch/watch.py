@@ -277,7 +277,37 @@ class Watch:
         if not rows:
             return {"verified": True, "entries_checked": 0, "message": "Empty audit log"}
 
+        # If retention has pruned this tenant's log, the oldest surviving entry
+        # commits to a hash that is deliberately gone. Start from the recorded
+        # boundary instead of from empty, or every pruned log would report as
+        # broken — which would make pruning strictly worse than not pruning.
+        #
+        # This does not weaken the check: the boundary hash is the hash of the
+        # newest removed entry, so the survivors still have to chain back to
+        # something real, and the checkpoint carries the signed tree head that
+        # commits to everything before it.
         prev_hash = ""
+        pruned = None
+        try:
+            import haldir_retention
+            ck = (haldir_retention.latest_checkpoint(self._db_path, tenant_id)
+                  if self._db_path else None)
+        except Exception:
+            ck = None
+        if ck:
+            prev_hash = ck.get("last_pruned_entry_hash") or ""
+            pruned = {
+                "checkpoint_id":    ck.get("checkpoint_id"),
+                "pruned_before":    ck.get("pruned_before"),
+                "entries_deleted":  ck.get("entries_deleted"),
+                "tree_size":        ck.get("tree_size"),
+                "root_hash":        ck.get("root_hash"),
+                "signed_at":        ck.get("signed_at"),
+                "note": ("Entries older than pruned_before were removed under a "
+                         "retention policy. The signed tree head above is the "
+                         "commitment to them."),
+            }
+
         for i, r in enumerate(rows):
             entry = AuditEntry(
                 entry_id=r["entry_id"], session_id=r["session_id"],
@@ -305,11 +335,16 @@ class Watch:
                 }
             prev_hash = stored_hash or expected_hash
 
-        return {
+        result = {
             "verified": True,
             "entries_checked": len(rows),
             "message": "Audit chain integrity verified",
         }
+        if pruned:
+            # Surfaced rather than silent: "the log is shorter than it was"
+            # is something an auditor should be told, not left to notice.
+            result["pruned"] = pruned
+        return result
 
     def export_log(self, format: str = "json", limit: int = 1000, tenant_id: str = "") -> str | list[dict]:
         entries = self.get_audit_trail(limit=limit, tenant_id=tenant_id)
