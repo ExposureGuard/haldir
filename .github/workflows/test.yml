@@ -3,8 +3,12 @@ name: tests
 on:
   push:
     branches: [main]
+  # Every pull request, not only those targeting main. Restricting this to
+  # `main` meant a stacked PR — one branched off another feature branch
+  # rather than off main — ran no checks at all, which is the moment you
+  # most want them. Pushes are still limited to main so a feature branch
+  # does not re-run CI on every commit.
   pull_request:
-    branches: [main]
 
 # Cancel in-flight runs for the same branch when new commits arrive.
 concurrency:
