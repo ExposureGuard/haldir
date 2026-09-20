@@ -255,10 +255,20 @@ def test_a_pruned_log_still_detects_tampering(db) -> None:
     assert Watch(db_path=db).verify_chain(tenant_id="t1")["verified"] is True
 
     # Rewrite a surviving entry's action without recomputing its hash.
+    #
+    # The row is chosen by a subquery rather than `UPDATE ... ORDER BY ... LIMIT 1`.
+    # SQLite accepts ORDER BY and LIMIT on an UPDATE as an extension; Postgres
+    # does not, and rejects the statement with "syntax error at or near ORDER".
+    # Selecting the id first is valid on both.
     from haldir_db import get_db
     conn = get_db(db)
-    conn.execute("UPDATE audit_log SET action = 'exfiltrate' WHERE tenant_id = ? "
-                 "ORDER BY timestamp ASC LIMIT 1", ("t1",))
+    conn.execute(
+        "UPDATE audit_log SET action = 'exfiltrate' WHERE entry_id = ("
+        "  SELECT entry_id FROM audit_log WHERE tenant_id = ? "
+        "  ORDER BY timestamp ASC LIMIT 1"
+        ")",
+        ("t1",),
+    )
     conn.commit()
     conn.close()
 

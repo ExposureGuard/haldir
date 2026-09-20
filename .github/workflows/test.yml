@@ -168,29 +168,31 @@ jobs:
           # using — they would measure the harness, not Postgres. These go
           # through the app's own connection layer, which is the path a
           # deployment actually takes.
-          # Scope: the suites that verifiably pass on Postgres.
+          # Everything, including the invariant and concurrency suites.
           #
-          # The invariant and concurrency suites are not listed, and that is a
-          # coverage gap rather than a judgement that they do not matter.
-          # They fail on Postgres and then run past this job's fifteen-minute
-          # ceiling. Their SQLite behaviour is correct and covered by the
-          # matrix jobs; their Postgres behaviour is *unknown*, because there
-          # is no Postgres in the development environment to reproduce against
-          # and CI is a fifteen-minute loop per attempt.
+          # Two things had to be fixed before they could run here, and neither
+          # was a product bug:
           #
-          # Three rounds of reasoning about it from the outside were wrong —
-          # a lock timeout, a schema-init connection, and test isolation were
-          # each blamed in turn and none was the whole cause. Guessing further
-          # spends CI minutes and produces commits that claim more than they
-          # deliver.
+          #   * isolation — on Postgres the temp path is ignored, so every test
+          #     shared one database and all of them wrote to the same tenant.
+          #     Counts accumulated across tests.
           #
-          # They come back the moment there is a Postgres to run them against.
-          # `sudo apt-get install postgresql` is the whole of what that needs.
+          #   * SQLite-only syntax — `UPDATE ... ORDER BY ... LIMIT 1` is a
+          #     SQLite extension. Postgres rejects it outright. The row is now
+          #     chosen by a subquery, which both accept.
+          #
+          # These belong here rather than only on SQLite: the spend cap is a
+          # conditional UPDATE and the chain guard is a partial unique index,
+          # so the database is doing the enforcing.
           pytest tests/test_api.py \
                  tests/test_admin.py \
                  tests/test_delegation.py \
                  tests/test_sth_log.py \
                  tests/test_retention.py \
+                 tests/test_concurrency.py \
+                 tests/test_invariants_chain.py \
+                 tests/test_invariants_spend.py \
+                 tests/test_invariants_secrets.py \
                  -q --tb=short \
                  --timeout=120 --timeout-method=thread
 
