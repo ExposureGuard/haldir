@@ -46,7 +46,7 @@ Good first contributions:
 - **Tests** — add test cases for edge cases we haven't covered
 - **Docs polish** — typos, clarity, better examples
 - **New framework integration** — LangChain, CrewAI, AutoGen, LlamaIndex and the Vercel AI SDK already exist under `integrations/`; Semantic Kernel, Pydantic AI, Mastra and the OpenAI Agents SDK are wanted (follow the `integrations/langchain-haldir/` pattern)
-- **New MCP tools** — `mcp_server.py` registers 9 today; more is better. It is not the only MCP surface: `haldir_mcp_server.py` registers a larger `haldir_*` set, and `POST /mcp` answers with its own. Add to the one you mean.
+- **New MCP tools** — Haldir as an MCP server exposes 19 tools today; more is better. Add them to `TOOLS` in `haldir_mcp_server.py` — that list is the catalog both MCP surfaces are checked against.
 - **SDK ergonomics** — sync/async helpers, typed convenience methods
 
 Check [open issues](https://github.com/ExposureGuard/haldir/issues) for items labelled `good first issue` or `help wanted`.
@@ -64,7 +64,7 @@ haldir/
 ├── haldir_gate/          Gate module — sessions, scopes, spend caps
 ├── haldir_vault/         Vault module — encrypted secrets
 ├── haldir_watch/         Watch module — hash-chained audit trail
-├── mcp_server.py         MCP server (stdio JSON-RPC)
+├── haldir_mcp_server.py  MCP server (stdio JSON-RPC) — the packaged one
 ├── sdk/                  Python SDK
 ├── sdk-js/               JavaScript/TypeScript SDK
 ├── integrations/         Framework integrations

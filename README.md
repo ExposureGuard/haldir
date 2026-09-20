@@ -267,7 +267,7 @@ curl -X POST https://haldir.xyz/v1/approvals/rules \
 
 ## MCP Server
 
-Haldir is available as an MCP server with 9 tools for Claude, Cursor, Windsurf, and any MCP-compatible AI:
+Haldir is available as an MCP server with 19 tools for Claude, Cursor, Windsurf, and any MCP-compatible AI:
 
 ```json
 {
@@ -282,9 +282,19 @@ Haldir is available as an MCP server with 9 tools for Claude, Cursor, Windsurf, 
 }
 ```
 
-**MCP Tools:** `createSession`, `revokeSession`, `checkPermission`, `storeSecret`, `getSecret`, `authorizePayment`, `logAction`, `getAuditTrail`, `getSpend`
+**MCP Tools** (the process above registers all 19):
 
-These are the tools `haldir-mcp` registers (`mcp_server.py`) — the process the config above launches. `haldir_mcp_server.py` registers a different, larger set under `haldir_*` names, and the hosted `POST /mcp` endpoint answers with a third; see the note in that module. If you are wiring a client by hand, copy the names from the server you actually start.
+| Governance | Tamper-evidence | Approvals & compliance |
+|---|---|---|
+| `haldir_create_session` | `haldir_verify_audit_chain` | `haldir_request_approval` |
+| `haldir_get_session` | `haldir_get_tree_head` | `haldir_get_approval_status` |
+| `haldir_check_permission` | `haldir_get_inclusion_proof` | `haldir_compliance_score` |
+| `haldir_revoke_session` | `haldir_get_consistency_proof` | `haldir_build_evidence_pack` |
+| `haldir_store_secret` | `haldir_log_audit_action` | `haldir_authorize_payment` |
+| `haldir_get_secret` | `haldir_query_audit_trail` | |
+| `haldir_list_secrets` | `haldir_get_spend` | |
+
+There is one tool catalog. The stdio server (`haldir-mcp`, or `haldir mcp serve`) registers all 19; the hosted `POST /mcp` endpoint implements a 10-tool subset under the *same* names. A name means the same thing on both surfaces, so a client written against one works against the other.
 
 **MCP HTTP Endpoint:** `POST https://haldir.xyz/mcp`
 

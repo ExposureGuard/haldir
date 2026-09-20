@@ -266,8 +266,9 @@ All endpoints are under `https://haldir.xyz/v1`. Auth via
 
 ### MCP
 
-- `POST /mcp` — MCP JSON-RPC endpoint
-- Exposes 10 tools: `createSession`, `getSession`, `revokeSession`, `checkPermission`, `storeSecret`, `getSecret`, `authorizePayment`, `logAction`, `getAuditTrail`, `getSpend`
+- `POST /mcp` — MCP JSON-RPC endpoint (hosted, no install)
+- Exposes 10 of the 19 canonical tools, under their canonical names: `haldir_create_session`, `haldir_get_session`, `haldir_revoke_session`, `haldir_check_permission`, `haldir_store_secret`, `haldir_get_secret`, `haldir_authorize_payment`, `haldir_log_audit_action`, `haldir_query_audit_trail`, `haldir_get_spend`
+- The remaining 9 (`haldir_verify_audit_chain`, `haldir_get_tree_head`, `haldir_get_inclusion_proof`, `haldir_get_consistency_proof`, `haldir_list_secrets`, `haldir_request_approval`, `haldir_get_approval_status`, `haldir_compliance_score`, `haldir_build_evidence_pack`) are available over the stdio server or the REST API
 - Full OpenAPI spec: `https://haldir.xyz/openapi.json`
 - MCP server card: `https://haldir.xyz/.well-known/mcp/server-card.json`
 

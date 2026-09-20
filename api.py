@@ -2984,7 +2984,7 @@ MCP_CAPABILITIES = {
 
 MCP_TOOLS = [
     {
-        "name": "createSession",
+        "name": "haldir_create_session",
         "description": (
             "Create a new agent session with scoped permissions and an optional spend budget. "
             "Every AI agent must have an active session before it can access secrets, make payments, "
@@ -3023,7 +3023,7 @@ MCP_TOOLS = [
         },
     },
     {
-        "name": "getSession",
+        "name": "haldir_get_session",
         "description": (
             "Retrieve the current state of an agent session including its scopes, spend budget, "
             "remaining balance, and validity status. Use this to check whether a session is still "
@@ -3048,7 +3048,7 @@ MCP_TOOLS = [
         },
     },
     {
-        "name": "revokeSession",
+        "name": "haldir_revoke_session",
         "description": (
             "Immediately revoke an agent session, permanently disabling all permissions and blocking "
             "further actions under that session. Use this when an agent misbehaves, exceeds its mandate, "
@@ -3073,7 +3073,7 @@ MCP_TOOLS = [
         },
     },
     {
-        "name": "checkPermission",
+        "name": "haldir_check_permission",
         "description": (
             "Check whether a specific session has a given permission scope. Returns a boolean indicating "
             "if the action is allowed. Use this before performing any sensitive operation to enforce "
@@ -3102,7 +3102,7 @@ MCP_TOOLS = [
         },
     },
     {
-        "name": "storeSecret",
+        "name": "haldir_store_secret",
         "description": (
             "Store an encrypted secret in the Haldir Vault with an optional scope requirement. "
             "Secrets are encrypted at rest using AES and can only be retrieved by sessions that hold "
@@ -3136,7 +3136,7 @@ MCP_TOOLS = [
         },
     },
     {
-        "name": "getSecret",
+        "name": "haldir_get_secret",
         "description": (
             "Retrieve a decrypted secret from the Vault. If a session_id is provided, the session's "
             "scopes are checked against the secret's required scope before returning the value. "
@@ -3165,7 +3165,7 @@ MCP_TOOLS = [
         },
     },
     {
-        "name": "authorizePayment",
+        "name": "haldir_authorize_payment",
         "description": (
             "Authorize a payment against an agent session's spend budget. The amount is deducted from "
             "the session's remaining budget if sufficient funds exist. If the payment would exceed the "
@@ -3202,7 +3202,7 @@ MCP_TOOLS = [
         },
     },
     {
-        "name": "logAction",
+        "name": "haldir_log_audit_action",
         "description": (
             "Log an agent action to the tamper-evident audit trail with automatic anomaly detection. "
             "Every tool call, API request, or decision an agent makes should be logged here. The Watch "
@@ -3244,7 +3244,7 @@ MCP_TOOLS = [
         },
     },
     {
-        "name": "getAuditTrail",
+        "name": "haldir_query_audit_trail",
         "description": (
             "Query the audit trail to review all actions taken by agents. Filter by session ID, agent ID, "
             "tool name, or flagged-only entries. Returns a chronological list of logged actions with their "
@@ -3265,7 +3265,7 @@ MCP_TOOLS = [
                     "type": "string",
                     "description": "Filter to entries from a specific tool (e.g. 'web_search'). Omit to see all tools."
                 },
-                "flagged_only": {
+                "flagged": {
                     "type": "boolean",
                     "description": "If true, only return entries that were flagged as anomalous. Defaults to false."
                 },
@@ -3284,7 +3284,7 @@ MCP_TOOLS = [
         },
     },
     {
-        "name": "getSpend",
+        "name": "haldir_get_spend",
         "description": (
             "Get a summary of total spend across agent sessions, broken down by session or agent. "
             "Returns total USD spent, number of transactions, and budget utilization. Use this to monitor "
@@ -3376,7 +3376,7 @@ def _mcp_call_tool(name, arguments):
     tenant = getattr(request, "tenant_id", "")
 
     # -- Gate --
-    if name == "createSession":
+    if name == "haldir_create_session":
         agent_id = arguments.get("agent_id")
         if not agent_id:
             return {"isError": True, "content": [{"type": "text", "text": "agent_id is required"}]}
@@ -3394,7 +3394,7 @@ def _mcp_call_tool(name, arguments):
             "ttl": ttl,
         })}]}
 
-    if name == "getSession":
+    if name == "haldir_get_session":
         session = gate.get_session(arguments.get("session_id", ""), tenant_id=tenant)
         if not session:
             return {"isError": True, "content": [{"type": "text", "text": "Session not found or expired"}]}
@@ -3410,14 +3410,14 @@ def _mcp_call_tool(name, arguments):
             "expires_at": session.expires_at,
         })}]}
 
-    if name == "revokeSession":
+    if name == "haldir_revoke_session":
         sid = arguments.get("session_id", "")
         revoked = gate.revoke_session(sid, tenant_id=tenant)
         if not revoked:
             return {"isError": True, "content": [{"type": "text", "text": "Session not found"}]}
         return {"content": [{"type": "text", "text": json.dumps({"revoked": True, "session_id": sid})}]}
 
-    if name == "checkPermission":
+    if name == "haldir_check_permission":
         sid = arguments.get("session_id", "")
         scope = arguments.get("scope", "")
         if not scope:
@@ -3426,7 +3426,7 @@ def _mcp_call_tool(name, arguments):
         return {"content": [{"type": "text", "text": json.dumps({"allowed": allowed, "session_id": sid, "scope": scope})}]}
 
     # -- Vault --
-    if name == "storeSecret":
+    if name == "haldir_store_secret":
         sname = arguments.get("name", "")
         value = arguments.get("value", "")
         if not sname or not value:
@@ -3435,7 +3435,7 @@ def _mcp_call_tool(name, arguments):
         vault.store_secret(sname, value, scope_required=scope_req, tenant_id=tenant)
         return {"content": [{"type": "text", "text": json.dumps({"stored": True, "name": sname})}]}
 
-    if name == "getSecret":
+    if name == "haldir_get_secret":
         sname = arguments.get("name", "")
         session_id = arguments.get("session_id")
         if not session_id:
@@ -3451,7 +3451,7 @@ def _mcp_call_tool(name, arguments):
             return {"isError": True, "content": [{"type": "text", "text": f"Secret '{sname}' not found"}]}
         return {"content": [{"type": "text", "text": json.dumps({"name": sname, "value": value})}]}
 
-    if name == "authorizePayment":
+    if name == "haldir_authorize_payment":
         sid = arguments.get("session_id", "")
         amount = arguments.get("amount")
         if not sid or amount is None:
@@ -3467,7 +3467,7 @@ def _mcp_call_tool(name, arguments):
         return {"content": [{"type": "text", "text": json.dumps(result)}]}
 
     # -- Watch --
-    if name == "logAction":
+    if name == "haldir_log_audit_action":
         sid = arguments.get("session_id", "")
         action = arguments.get("action", "")
         if not sid or not action:
@@ -3486,12 +3486,12 @@ def _mcp_call_tool(name, arguments):
             "flagged": entry.flagged, "flag_reason": entry.flag_reason,
         })}]}
 
-    if name == "getAuditTrail":
+    if name == "haldir_query_audit_trail":
         entries = watch.get_audit_trail(
             session_id=arguments.get("session_id"),
             agent_id=arguments.get("agent_id"),
             tool=arguments.get("tool"),
-            flagged_only=arguments.get("flagged_only", False),
+            flagged_only=arguments.get("flagged", False),
             limit=int(arguments.get("limit", 100)),
             tenant_id=tenant,
         )
@@ -3509,7 +3509,7 @@ def _mcp_call_tool(name, arguments):
             ],
         })}]}
 
-    if name == "getSpend":
+    if name == "haldir_get_spend":
         return {"content": [{"type": "text", "text": json.dumps(watch.get_spend(
             session_id=arguments.get("session_id"),
             agent_id=arguments.get("agent_id"),

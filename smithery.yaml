@@ -15,7 +15,7 @@ configSchema:
 commandFunction: |-
   (config) => ({
     command: 'python3',
-    args: ['-m', 'mcp_server'],
+    args: ['-m', 'haldir_mcp_server'],
     env: { HALDIR_API_KEY: config.apiKey }
   })
 
