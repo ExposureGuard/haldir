@@ -245,3 +245,71 @@ def test_a_tenant_cannot_read_another_tenants_secret_by_name(db) -> None:
     assert vault.get_secret("stripe_key", tenant_id="one") == "tenant-one"
     assert vault.get_secret("stripe_key", tenant_id="two") == "tenant-two"
     assert vault.get_secret("stripe_key", tenant_id="three") is None
+
+
+# ── The blob as the database actually hands it back ──────────────────
+#
+# psycopg2 returns a BYTEA column as a memoryview whose format is 'c'
+# (characters), not 'B'. Comparing that to bytes is False, so every tagged
+# blob failed the magic check in _parse_blob and was read as a headerless
+# legacy blob. On Postgres that meant the key id was discarded and every
+# secret was decrypted with the primary key — correct until the first
+# rotation, after which every secret became unreadable.
+
+def _psycopg2_style_memoryview(data: bytes) -> memoryview:
+    """A memoryview shaped like the one psycopg2 returns for BYTEA."""
+    return memoryview(data).cast("c")
+
+
+def test_parse_blob_reads_a_psycopg2_style_memoryview() -> None:
+    """The regression, at the smallest possible scale."""
+    from haldir_vault.vault import (
+        BLOB_VERSION, KEY_ID_LEN, MAGIC, NONCE_LEN, TAG_LEN, _parse_blob,
+    )
+    kid = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+    blob = MAGIC + bytes([BLOB_VERSION]) + kid + b"n" * NONCE_LEN + b"c" * (TAG_LEN + 4)
+
+    assert _parse_blob(blob)[0] == kid.hex(), "plain bytes should parse"
+
+    as_pg = _psycopg2_style_memoryview(blob)
+    assert _parse_blob(as_pg)[0] == kid.hex(), (
+        "a BYTEA-shaped memoryview was read as a legacy blob, so its key id "
+        "was discarded — which silently breaks every secret at the first "
+        "rotation on Postgres"
+    )
+    assert KEY_ID_LEN == len(kid)
+
+
+def test_the_fake_memoryview_is_actually_pg_shaped() -> None:
+    """Guards the guard: a default memoryview has format 'B' and compares
+    equal to bytes, so it would pass whether or not the fix is present."""
+    blob = b"HDLR\x01payload"
+    assert _psycopg2_style_memoryview(blob).format == "c"
+    assert (_psycopg2_style_memoryview(blob)[:4] == b"HDLR") is False, (
+        "the fake no longer reproduces psycopg2's behaviour, so the test "
+        "above proves nothing"
+    )
+
+
+def test_rotation_still_reads_back_through_a_pg_shaped_blob(db) -> None:
+    """End to end: store, rotate, read — with the blob handed back the way
+    Postgres hands it back."""
+    from haldir_db import get_db
+    from haldir_vault.vault import _parse_blob
+
+    old_key, new_key = Vault.generate_key(), Vault.generate_key()
+    v = Vault(encryption_key=old_key, db_path=db)
+    v.store_secret("rotate-me", "value", tenant_id="t1")
+    v.rotate_keys(new_key)
+
+    conn = get_db(db)
+    mv = conn.execute("SELECT encrypted_value FROM secrets WHERE name = ?",
+                      ("rotate-me",)).fetchone()["encrypted_value"]
+    conn.close()
+
+    assert _parse_blob(_psycopg2_style_memoryview(bytes(mv)))[0], (
+        "after rotation the blob carries no readable key id, so a fresh vault "
+        "cannot tell which key opens it"
+    )
+    assert Vault(encryption_key=new_key, db_path=db).get_secret(
+        "rotate-me", tenant_id="t1") == "value"

@@ -76,6 +76,22 @@ def _parse_blob(blob: bytes) -> tuple[str, bytes, bytes]:
     guard, and `legacy_key` is present in any vault that could still hold
     one.
     """
+    # Normalise to bytes first. psycopg2 returns a BYTEA column as a
+    # memoryview with format 'c' (characters), and comparing *that* to bytes
+    # is False — so on Postgres every tagged blob failed the magic check and
+    # was read as a headerless legacy blob.
+    #
+    # A memoryview over bytes built in Python has format 'B' and does compare
+    # equal, which is why this survived a casual check of the semantics; only
+    # the object psycopg2 actually returns shows it. (Verified both ways.)
+    #
+    # The consequence was not subtle: the key id is what tells _open which key
+    # to use, so losing it meant every secret was decrypted with the primary
+    # key. That works until the day you rotate — and then every secret in the
+    # vault becomes unreadable, with a message about pre-key-id ciphertext
+    # that names the wrong cause entirely.
+    blob = bytes(blob)
+
     if not blob:
         raise ValueError("empty ciphertext blob")
 
