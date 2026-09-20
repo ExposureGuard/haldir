@@ -75,15 +75,12 @@ def test_haldir_tiers_imports_nothing_heavy() -> None:
 
 # ── The plans have to be usable ──────────────────────────────────────
 
-# One agent making a single call per minute, which is a leisurely pace.
-ACTIONS_PER_AGENT_AT_1_PER_MIN = 60 * 24 * 30
-
-
 def test_a_paid_plan_can_run_the_agents_it_allows() -> None:
-    """The bug the numbers had: Pro allowed 10 agents and 50,000 actions.
+    """The bug the numbers had: Pro allowed 10 agents and 50,000 API calls.
 
-    One agent at one call per minute spends 43,200 actions a month. So the
-    plan left 6,800 for the other nine agents, and would have hit its ceiling
+    One agent costs 86,400 API calls a month on the module's stated
+    assumptions. So the plan ran out less than two-thirds of the way through a
+    single agent's month while advertising ten, and would have hit its ceiling
     mid-task — for an agent whose entire purpose is to be audited. A plan
     whose allowance cannot run its own agent count is not a plan, it is a
     trap, and it was invisible because the two numbers were never compared.
@@ -98,17 +95,22 @@ def test_a_paid_plan_can_run_the_agents_it_allows() -> None:
     If free is ever repositioned as a usable-forever tier rather than a
     trial, this exemption has to go with it.
     """
+    # The per-agent figure comes from the module, not from a second copy
+    # here: sizing the plan against one number and testing it against another
+    # is the drift this whole file exists to prevent.
+    per_agent = haldir_tiers.api_calls_per_agent_per_month()
+
     for name, plan in haldir_tiers.TIERS.items():
         if name == "free":
             continue
         agents = plan["agents"]
         if agents >= 999_999:      # unlimited: nothing to be consistent with
             continue
-        needed = agents * ACTIONS_PER_AGENT_AT_1_PER_MIN
+        needed = agents * per_agent
         assert plan["actions_per_month"] >= needed, (
             f"{name} allows {agents} agents but only "
-            f"{plan['actions_per_month']:,} actions/month; running all of them "
-            f"at one call a minute needs {needed:,}"
+            f"{plan['actions_per_month']:,} API calls/month; running all of them "
+            f"at one API call a minute needs {needed:,}"
         )
 
 

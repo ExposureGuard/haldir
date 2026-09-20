@@ -64,9 +64,11 @@ def test_valid_key_renders_dashboard(haldir_client, bootstrap_key) -> None:
     body = r.data.decode()
     # Header chrome.
     assert "Haldir admin" in body
-    # The seven dashboard rows.
+    # The seven dashboard rows. The first is labelled "API calls", not
+    # "Actions": the meter counts API calls to /v1/*, and the old label read
+    # as audited operations, which is a different and much smaller number.
     for label in (
-        "Actions", "Spend", "Sessions", "Vault",
+        "API calls", "Spend", "Sessions", "Vault",
         "Audit", "Webhooks", "Approvals",
     ):
         assert label in body, f"missing row label {label!r}"

@@ -118,7 +118,7 @@ The window for building governance into your agent stack is now, before an incid
 pip install haldir
 ```
 
-Haldir is open-source, model-agnostic, and works with Claude, GPT, Gemini, LLaMA, or any agent framework. Free tier includes 1 agent and 10,000 actions per month.
+Haldir is open-source, model-agnostic, and works with Claude, GPT, Gemini, LLaMA, or any agent framework. Free tier includes 1 agent and 10,000 API calls per month.
 
 Read the full docs at [haldir.xyz/docs](https://haldir.xyz/docs) or check the source on [GitHub](https://github.com/ExposureGuard/haldir).
 

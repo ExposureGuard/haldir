@@ -22,38 +22,69 @@ test instead of reaching a customer.
 
 ## The usage model
 
-Cloud and API are usage-based: a monthly platform fee buys an allowance of
-metered actions, and usage past the allowance is billed per action rather
-than refused. The allowances are sized so that the agent count on a plan is
-actually usable at it — which the previous numbers were not:
+Cloud and API are usage-based on **API calls to /v1/***. A monthly platform
+fee buys an allowance of those calls, and usage past the allowance is billed
+rather than refused. The allowances are sized so the agent count on a plan is
+actually usable at it, which the previous numbers were not:
 
-    Pro allowed 10 agents and 50,000 actions/month. One agent making a
-    single tool call per minute — a leisurely pace, not a busy one — spends
-    43,200 actions/month. That leaves 6,800 for the other nine agents. The
-    plan could not run the fleet it advertised, and the ceiling would have
-    been hit mid-task by an agent whose whole purpose is to be audited.
+    Pro allowed 10 agents and 50,000 API calls/month. One agent costs 86,400
+    of them (see the assumptions below), so the plan ran out less than
+    two-thirds of the way through a single agent's month — while advertising
+    ten. The ceiling would have been hit mid-task by an agent whose whole
+    purpose is to be audited.
 
-An action is one audited operation: a tool call, a payment, a secret access,
-anything that writes to the audit chain. Metering that is a choice worth
-naming — it is the thing the product exists to record, so a customer who
-records less pays less, which is revenue pointed against the guarantee. The
-mitigation is that overage is cheap and the tiers are generous enough that
-nobody sane reaches for it; the alternative, metering seats or agents, cannot
-express the difference between a fleet doing nothing and a fleet doing work.
+Metering API calls rather than seats or agents is what lets a plan express
+the difference between a fleet doing nothing and a fleet doing work. It has
+one consequence worth naming: the meter counts calls, including the ones that
+do nothing, so a customer polling in a loop pays for the polling. That is the
+normal shape of an API product and it is why the plan cards say "API calls"
+rather than the vaguer "actions" the column is still named after.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# One audited operation is one unit. Named because "actions_per_month" is
-# the field every caller reads and the unit deserves stating once.
-METERED_UNIT = "action"
+# One unit is one authenticated API call to /v1/*, counted in api.py's
+# track_usage after_request hook.
+#
+# The column and the plan key call it an "action", which is why this needs
+# saying: an "action" here is not an audited operation. Five read-only
+# GET /v1/audit calls meter as five units and write nothing to the audit
+# chain. The name has already misled one reader of this file into describing
+# the meter as counting audit entries, and the sizing arithmetic below was
+# wrong because of it. The field name is kept for compatibility with the
+# usage table and the API surface; the unit it holds is an API call.
+METERED_UNIT = "API call"
 
-# Actions a single agent generates per month at one call per minute. Used to
-# size the allowances below — kept here so the arithmetic that justifies the
-# numbers is visible next to them rather than in someone's head.
-_ACTIONS_PER_AGENT_AT_1_PER_MIN = 60 * 24 * 30  # 43,200
+# ── Sizing assumptions ───────────────────────────────────────────────
+#
+# The allowances are derived from these rather than picked as round numbers,
+# because a plan whose allowance cannot run the agents it advertises is a
+# trap, and round numbers are exactly how that happens.
+#
+# One governed agent action — a tool call the proxy gates — costs more than
+# one API call: the agent calls the proxy, and typically checks its session
+# or reads something back. Two is the conservative figure; it is an
+# assumption, not a measurement, and it is the number to change first if a
+# real deployment shows otherwise.
+API_CALLS_PER_AGENT_ACTION = 2
+
+# One agent action per minute is a leisurely pace for an LLM agent, whose
+# actions are bounded by model latency, not by the machine.
+AGENT_ACTIONS_PER_MIN = 1
+
+_MINUTES_PER_MONTH = 60 * 24 * 30
+
+
+def api_calls_per_agent_per_month() -> int:
+    """What one agent costs against the meter in a month.
+
+    Single definition, because both the allowances below and the test that
+    checks them need the same figure — and the last time this arithmetic was
+    written down twice, the two copies disagreed.
+    """
+    return API_CALLS_PER_AGENT_ACTION * AGENT_ACTIONS_PER_MIN * _MINUTES_PER_MONTH
 
 
 TIERS: dict[str, dict[str, Any]] = {
@@ -81,18 +112,20 @@ TIERS: dict[str, dict[str, Any]] = {
     "pro": {
         "label": "Pro",
         "agents": 25,
-        # Sized to the agent count, with headroom: 25 agents x 43,200 =
-        # 1,080,000, so the allowance has to clear that. This is the number
-        # that makes the plan's own agent limit meaningful, and the first
-        # draft of it was 1,000,000 — a rounder figure that was 80,000 short
-        # and would have reintroduced the exact incoherence being fixed.
-        # tests/test_tiers.py::test_a_paid_plan_can_run_the_agents_it_allows
-        # is what caught it.
-        "actions_per_month": 1_500_000,
+        # Sized to the agent count, with headroom: 25 agents x 86,400 =
+        # 2,160,000, so the allowance has to clear that. This is the number
+        # that makes the plan's own agent limit meaningful, and it has been
+        # wrong twice — first 50,000 (a tenth of one agent), then 1,000,000
+        # (a rounder figure 80,000 short), then 1,500,000 sized against a
+        # unit that was not the one being metered. Each time the arithmetic
+        # test caught it, which is the reason that test exists.
+        "actions_per_month": 2_500_000,
         "price_usd_month": 99,
-        # $200 per additional million — about 2x the effective included rate
-        # of $99/1M, which is the usual shape for overage.
-        "overage_usd_per_action": 0.0002,
+        # $100 per additional million, about 2.5x the effective included rate
+        # of $99/2.5M — the usual shape for overage. It has to stay above the
+        # included rate or nobody would ever upgrade; they would just run
+        # past the cap.
+        "overage_usd_per_action": 0.0001,
         "hard_cap": False,
         "blurb": "For teams running multiple agents in production.",
         "features": [
@@ -144,12 +177,12 @@ def feature_lines(tier: str) -> list[str]:
     )
     included = plan.get("actions_per_month", 0)
     if included >= 999_999_999:
-        lines.append("Unlimited actions / month")
+        lines.append("Unlimited API calls / month")
     else:
-        lines.append(f"{included:,} actions / month included")
+        lines.append(f"{included:,} API calls / month included")
     rate = plan.get("overage_usd_per_action")
     if rate is not None:
-        lines.append(f"${rate:,.4f} per action beyond that, billed not blocked")
+        lines.append(f"${rate:,.4f} per API call beyond that, billed not blocked")
     lines.extend(plan.get("features", []))
     return lines
 
@@ -174,7 +207,7 @@ def overage_cost(tier: str, actions_over: int) -> float | None:
     rate = limits(tier).get("overage_usd_per_action")
     if rate is None or actions_over <= 0:
         return None
-    return round(actions_over * rate, 6)
+    return round(float(rate) * actions_over, 6)
 
 
 def is_hard_capped(tier: str) -> bool:

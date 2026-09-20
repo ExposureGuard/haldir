@@ -124,7 +124,7 @@ $ haldir overview
   acct_xyz123  ·  tier pro  ·  2026-04-19T18:42:11+00:00
 
   Status     ● ok
-  Actions      4,217 / 1,500,000  ░░░░░░░░░░░░░░░░░░░    0.3%
+  API calls    4,217 / 2,500,000  ░░░░░░░░░░░░░░░░░░░    0.2%
   Spend      $ 47.30 this month
   Sessions        12 active  ·  3/25 agents
   Vault            8 secrets  ·  62 accesses this month

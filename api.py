@@ -2834,7 +2834,7 @@ def _render_admin_overview(o: dict, key: str) -> str:
   <div class="grid">
 
     <div class="row">
-      <div class="label">Actions</div>
+      <div class="label">API calls</div>
       <div class="value">{u.get('actions_this_month', 0):,}<span style="color:rgba(224,221,213,0.4);font-weight:300"> / {u.get('actions_limit', 0):,}</span><span class="bar"><span class="bar-fill"></span></span></div>
       <div class="sub">{pct * 100:.1f}% of monthly quota</div>
     </div>
@@ -4688,7 +4688,7 @@ footer a { color: var(--gold); text-decoration: none; }
     <h2>Questions</h2>
     <div class="faq-item">
         <div class="faq-q">What counts as an action?</div>
-        <div class="faq-a">Every API call to /v1/* counts as one action. Creating sessions, checking permissions, storing secrets, logging audit entries — each is one action.</div>
+        <div class="faq-a">Every API call to /v1/* counts as one. Creating sessions, checking permissions, storing secrets, logging audit entries — each is one API call, and reads count too.</div>
     </div>
     <div class="faq-item">
         <div class="faq-q">What happens if I exceed my limit?</div>
