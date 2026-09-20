@@ -434,3 +434,111 @@ def test_the_migration_guard_runs_when_there_is_no_table_at_all() -> None:
     conn = _mk("CREATE TABLE something_else (x INTEGER);")
     assert haldir_db._audit_seq_is_current(conn) is False
     conn.close()
+
+
+# ── Connection vs cursor ─────────────────────────────────────────────
+#
+# psycopg2 connections have no .execute — only cursors do. sqlite3
+# connections have both. So code written against the sqlite3 shape runs on
+# SQLite and raises AttributeError on Postgres, and if that raise lands in a
+# broad except it does so silently. That is exactly how the audit chain's
+# uniqueness constraint came never to be created on Postgres: the migration
+# that builds it was handed a raw psycopg2 connection, raised, was logged as
+# a warning, and the fork protection did not exist.
+
+class _Cursor:
+    def __init__(self, conn):
+        self._conn = conn
+        self._rows: list = []
+        self.statements: list[str] = []
+
+    def execute(self, sql, params=None):
+        self.statements.append(sql)
+        self._conn.statements.append(sql)
+        if "pragma_table_info" in sql or "information_schema" in sql:
+            # Columns look migrated...
+            self._rows = [("entry_id",), ("seq",), ("hash_version",)]
+        elif "pg_indexes" in sql or "sqlite_master" in sql:
+            # ...but the index is absent, so the guard must report "not
+            # current" and the migration body runs. Returning the index here
+            # instead would short-circuit _migrate_audit_seq and these tests
+            # would assert nothing — which is exactly what the first version
+            # of them did, caught by mutating the shim back and watching them
+            # still pass.
+            self._rows = []
+        else:
+            self._rows = []
+        return self
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def close(self):
+        pass
+
+
+class Psycopg2LikeConn:
+    """Has what a psycopg2 connection has, and nothing else."""
+
+    def __init__(self):
+        self.statements: list[str] = []
+
+    def cursor(self):
+        return _Cursor(self)
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def test_the_migration_runs_on_a_connection_without_execute() -> None:
+    """The regression.
+
+    Passing a psycopg2-shaped connection must work. Before the shim this
+    raised AttributeError, which the caller swallowed — so the migration
+    silently did nothing on Postgres while working on SQLite, and the only
+    visible symptom was, much later, a forked audit chain.
+    """
+    conn = Psycopg2LikeConn()
+    haldir_db._migrate_audit_seq(conn)   # must not raise
+    joined = " ".join(conn.statements)
+    # Matched on CREATE, not on the name alone: the guard's own catalogue
+    # query contains the literal 'idx_audit_seq', so asserting on the name
+    # passes even when no index is ever built. The first version of this test
+    # did exactly that and survived reverting the fix.
+    assert "CREATE UNIQUE INDEX" in joined and "idx_audit_seq" in joined, (
+        f"the unique index was never created — this is the fork protection. "
+        f"Statements that did run: {conn.statements}"
+    )
+
+
+def test_the_guard_runs_on_a_connection_without_execute() -> None:
+    """Same shape, same hazard: the guard also used conn.execute, so on
+    Postgres it raised, the broad except swallowed it, and it always
+    reported 'not current'."""
+    conn = Psycopg2LikeConn()
+    haldir_db._audit_seq_is_current(conn)   # must not raise
+
+
+def test_psycopg2_like_connection_really_lacks_execute() -> None:
+    """Guards the guard: if a future refactor gives this fake an .execute
+    method, the two tests above stop testing anything."""
+    assert not hasattr(Psycopg2LikeConn(), "execute")
+
+
+def test_exec_works_on_both_shapes(tmp_path) -> None:
+    """The shim itself, against a real sqlite3 connection and the fake."""
+    sqlite_conn = sqlite3.connect(":memory:")
+    sqlite_conn.execute("CREATE TABLE t (a INTEGER)")
+    haldir_db._exec(sqlite_conn, "INSERT INTO t VALUES (1)")
+    assert haldir_db._exec(sqlite_conn, "SELECT a FROM t").fetchone()[0] == 1
+    sqlite_conn.close()
+
+    fake = Psycopg2LikeConn()
+    haldir_db._exec(fake, "SELECT 1")
+    assert fake.statements == ["SELECT 1"]

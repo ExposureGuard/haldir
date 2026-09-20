@@ -393,7 +393,25 @@ jobs:
         # and that is exactly the move this forbids.
         run: |
           set -euo pipefail
-          base="$(git merge-base HEAD origin/${{ github.base_ref }})"
+
+          # Make the base ref resolvable before depending on it. With
+          # `set -e`, a failing command substitution aborts the step
+          # immediately and prints nothing at all — which is how this check
+          # came to fail with an empty log and no explanation: `origin/main`
+          # was not a ref in the checkout, so `git merge-base` exited 1 and
+          # took the step with it before a single line was echoed.
+          #
+          # A check whose failure mode is silence is worse than no check, so
+          # the fetch is explicit and its failure is reported.
+          if ! git rev-parse --verify --quiet "origin/${{ github.base_ref }}" >/dev/null; then
+            echo "origin/${{ github.base_ref }} not present; fetching it"
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+          fi
+
+          base="$(git merge-base HEAD origin/${{ github.base_ref }})" || {
+            echo "::error::could not find a merge base against origin/${{ github.base_ref }}"
+            exit 1
+          }
           old=$(git show "$base:.github/workflows/test.yml" \
                 | grep -oE '\-\-cov-fail-under=[0-9]+' | head -1 | cut -d= -f2)
           new=$(grep -oE '\-\-cov-fail-under=[0-9]+' .github/workflows/test.yml | head -1 | cut -d= -f2)

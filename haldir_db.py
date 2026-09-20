@@ -606,14 +606,49 @@ def _audit_seq_is_current(conn) -> bool:
          "SELECT 1 FROM pg_indexes WHERE indexname = 'idx_audit_seq'"),
     ):
         try:
-            columns = {row[0] for row in conn.execute(cols_sql).fetchall()}
-            has_index = conn.execute(idx_sql).fetchone() is not None
+            columns = {row[0] for row in _exec(conn, cols_sql).fetchall()}
+            has_index = _exec(conn, idx_sql).fetchone() is not None
         except Exception:
             continue  # not this backend's catalogue
         if not columns:
             continue  # this backend answered nothing; try the next
         return has_index and {"seq", "hash_version"} <= columns
     return False
+
+
+def _exec(conn_or_cursor: Any, sql: str, params: Any = None) -> Any:
+    """Execute on a connection or a cursor, whichever this is.
+
+    psycopg2 connections have no `.execute` — only cursors do. sqlite3
+    connections have both. Code written against the sqlite3 shape therefore
+    runs correctly on SQLite and raises `AttributeError: 'psycopg2.extensions.
+    connection' object has no attribute 'execute'` on Postgres.
+
+    That is not hypothetical. Both callers of _migrate_audit_seq passed a
+    connection, which is fine from _init_sqlite and broken from
+    _apply_pg_schema, which hands over the raw psycopg2 connection built in
+    _init_pg. The AttributeError landed in a `except Exception` that logged a
+    warning, so on Postgres this migration never ran: no `seq`, no
+    `hash_version`, and — the part that matters — no unique index over
+    (tenant_id, seq). The index is the only thing preventing two concurrent
+    appends from claiming the same sequence number, so the audit chain could
+    fork, and did:
+
+        FAILED test_concurrent_audit_appends_keep_the_chain_linear
+        AssertionError: 2 entries claim to start the chain
+
+    ...while the same test passed on SQLite, where the connection happened to
+    support the call.
+
+    A shim rather than threading a cursor through every caller, because the
+    difference between the two objects is exactly this one method and the
+    indirection is smaller than the blast radius of getting it wrong again.
+    """
+    if hasattr(conn_or_cursor, "execute"):
+        return conn_or_cursor.execute(sql, params) if params is not None \
+            else conn_or_cursor.execute(sql)
+    return conn_or_cursor.cursor().execute(sql, params) if params is not None \
+        else conn_or_cursor.cursor().execute(sql)
 
 
 def _migrate_audit_seq(conn):
@@ -655,12 +690,12 @@ def _migrate_audit_seq(conn):
         "ALTER TABLE audit_log ADD COLUMN hash_version INTEGER NOT NULL DEFAULT 1",
     ):
         try:
-            conn.execute(column_ddl)
+            _exec(conn, column_ddl)
         except Exception:
             pass  # column already exists
 
     try:
-        pending = conn.execute("SELECT 1 FROM audit_log WHERE seq = 0 LIMIT 1").fetchone()
+        pending = _exec(conn, "SELECT 1 FROM audit_log WHERE seq = 0 LIMIT 1").fetchone()
     except Exception:
         return  # table missing; nothing to migrate
 
@@ -672,7 +707,7 @@ def _migrate_audit_seq(conn):
     if pending:
         # (timestamp, entry_id) is a total order: entry_id is the primary
         # key, so no two rows tie. Counting predecessors yields 1..N.
-        conn.execute(
+        _exec(conn, 
             "UPDATE audit_log SET seq = ("
             "  SELECT COUNT(*) FROM audit_log AS a2"
             "  WHERE a2.tenant_id = audit_log.tenant_id"
@@ -689,7 +724,7 @@ def _migrate_audit_seq(conn):
         # part of. The tamper demo rewrites history on purpose, and test
         # fixtures plant rows with hand-picked hashes; neither should have
         # to fabricate a sequence number to do it.
-        conn.execute(
+        _exec(conn, 
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_seq "
             "ON audit_log(tenant_id, seq) WHERE seq > 0"
         )
@@ -982,7 +1017,12 @@ def _apply_pg_schema(conn):
         ("approval_requests", "amount"),
     ):
         try:
-            conn.execute(
+            # A cursor, not the connection: conn here is the raw psycopg2
+            # connection from _init_pg, which has no .execute — so this ALTER
+            # raised AttributeError on Postgres, was swallowed by the except
+            # below, and the money columns were never widened. The fix that
+            # made them DOUBLE PRECISION had never actually run.
+            cursor.execute(
                 f"ALTER TABLE {table} ALTER COLUMN {column} TYPE DOUBLE PRECISION"
             )
             conn.commit()
