@@ -356,7 +356,8 @@ _SCHEMA = """
         flag_reason TEXT NOT NULL DEFAULT '',
         prev_hash TEXT NOT NULL DEFAULT '',
         entry_hash TEXT NOT NULL DEFAULT '',
-        seq INTEGER NOT NULL DEFAULT 0
+        seq INTEGER NOT NULL DEFAULT 0,
+        hash_version INTEGER NOT NULL DEFAULT 1
     );
 
     CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id);
@@ -458,10 +459,17 @@ def _migrate_audit_seq(conn):
     unique index are portable, and `ADD COLUMN` is wrapped because neither
     engine offers `IF NOT EXISTS` for it.
     """
-    try:
-        conn.execute("ALTER TABLE audit_log ADD COLUMN seq INTEGER NOT NULL DEFAULT 0")
-    except Exception:
-        pass  # column already exists
+    for column_ddl in (
+        "ALTER TABLE audit_log ADD COLUMN seq INTEGER NOT NULL DEFAULT 0",
+        # Defaults to 1, not to the current version: existing rows were hashed
+        # by the older rule and must keep verifying under it. New rows are
+        # written with the current version by Watch.
+        "ALTER TABLE audit_log ADD COLUMN hash_version INTEGER NOT NULL DEFAULT 1",
+    ):
+        try:
+            conn.execute(column_ddl)
+        except Exception:
+            pass  # column already exists
 
     try:
         pending = conn.execute("SELECT 1 FROM audit_log WHERE seq = 0 LIMIT 1").fetchone()

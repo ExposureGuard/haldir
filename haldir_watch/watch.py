@@ -22,6 +22,24 @@ from haldir_tracing import traced_span
 # spinning forever if the contention is genuinely pathological.
 APPEND_ATTEMPTS = 8
 
+# Which fields the entry hash covers.
+#
+#   v1  everything except flag_reason
+#   v2  additionally covers flag_reason
+#
+# v1 entries were written before `flag_reason` was included, so editing the
+# stated reason an action was flagged left the entry verifying. Including the
+# field unconditionally would have been simpler and wrong: every entry written
+# under v1 would suddenly fail verification, and a log that reports itself
+# tampered reads as a catastrophic breach rather than a format change. The
+# version is stored per entry so verification uses the rule that wrote it.
+#
+# New entries are v2. A v1 entry stays verifiable as a v1 entry forever, and
+# the one thing it does not protect — its flag_reason — is exactly what the
+# entry predates.
+HASH_VERSION_LEGACY = 1
+HASH_VERSION_CURRENT = 2
+
 
 def _is_retryable_append_conflict(exc: BaseException) -> bool:
     """True when an append should be re-read and tried again.
@@ -79,6 +97,9 @@ class AuditEntry:
     # entry written before this column existed, breaking verification of
     # logs that are perfectly intact.
     seq: int = 0
+    # Which hash rule produced entry_hash. Selects the payload in
+    # compute_hash; not itself hashed, because it is what says how to hash.
+    hash_version: int = HASH_VERSION_CURRENT
 
     def compute_hash(self) -> str:
         """SHA-256 hash of entry contents + previous hash = tamper-evident chain.
@@ -86,6 +107,10 @@ class AuditEntry:
         Uses normalized representations (2 decimal places for cost, integer seconds
         for timestamp) to avoid precision drift between Python float and Postgres
         REAL column storage.
+
+        Which fields are covered depends on `hash_version` — see the constants
+        at the top of the module for why that is versioned rather than simply
+        extended.
         """
         ts_int = int(self.timestamp)
         payload = (
@@ -94,6 +119,10 @@ class AuditEntry:
             f"{self.cost_usd:.2f}|{ts_int}|"
             f"{1 if self.flagged else 0}|{self.prev_hash}"
         )
+        if self.hash_version >= HASH_VERSION_CURRENT:
+            # Appended, not inserted, so a v1 payload is a prefix of the v2 one
+            # for the same entry and the two can never collide.
+            payload += f"|{self.flag_reason}"
         return hashlib.sha256(payload.encode()).hexdigest()
 
 
@@ -170,12 +199,13 @@ class Watch:
                                           cost_usd, tenant_id, prev_hash, seq)
                 try:
                     conn.execute(
-                        "INSERT INTO audit_log (entry_id, tenant_id, session_id, agent_id, action, tool, details, cost_usd, timestamp, flagged, flag_reason, prev_hash, entry_hash, seq) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO audit_log (entry_id, tenant_id, session_id, agent_id, action, tool, details, cost_usd, timestamp, flagged, flag_reason, prev_hash, entry_hash, seq, hash_version) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (entry.entry_id, tenant_id, entry.session_id, entry.agent_id,
                          entry.action, entry.tool, json.dumps(entry.details),
                          entry.cost_usd, entry.timestamp, int(entry.flagged),
-                         entry.flag_reason, entry.prev_hash, entry.entry_hash, seq),
+                         entry.flag_reason, entry.prev_hash, entry.entry_hash, seq,
+                         entry.hash_version),
                     )
                     conn.commit()
                     return entry
@@ -218,6 +248,7 @@ class Watch:
                 entry.flag_reason = rule.get("reason", "Anomaly detected")
                 break
 
+        entry.hash_version = HASH_VERSION_CURRENT
         entry.entry_hash = entry.compute_hash()
         return entry
 
@@ -486,15 +517,39 @@ class Watch:
             }
 
         for i, r in enumerate(rows):
-            entry = AuditEntry(
-                entry_id=r["entry_id"], session_id=r["session_id"],
-                agent_id=r["agent_id"], action=r["action"], tool=r["tool"],
-                details=json.loads(r["details"]), cost_usd=r["cost_usd"],
-                timestamp=r["timestamp"], flagged=bool(r["flagged"]),
-                prev_hash=r["prev_hash"],
-                seq=r["seq"] if "seq" in r.keys() else 0,
-            )
-            expected_hash = entry.compute_hash()
+            # A row we cannot read is a row we cannot vouch for. Letting the
+            # reader raise here would mean an attacker who corrupts one field
+            # — a `details` column of invalid JSON is enough — turns "this log
+            # has been tampered with" into "the verification endpoint is
+            # down". That is a worse outcome than a wrong answer, because an
+            # outage looks like an accident and gets retried.
+            try:
+                entry = AuditEntry(
+                    entry_id=r["entry_id"], session_id=r["session_id"],
+                    agent_id=r["agent_id"], action=r["action"], tool=r["tool"],
+                    details=json.loads(r["details"]), cost_usd=r["cost_usd"],
+                    timestamp=r["timestamp"], flagged=bool(r["flagged"]),
+                    flag_reason=r["flag_reason"] if "flag_reason" in r.keys() else "",
+                    prev_hash=r["prev_hash"],
+                    seq=r["seq"] if "seq" in r.keys() else 0,
+                    hash_version=(r["hash_version"]
+                                  if "hash_version" in r.keys() else HASH_VERSION_LEGACY),
+                )
+                expected_hash = entry.compute_hash()
+            except Exception as e:  # noqa: BLE001 — any failure to read an
+                # entry is a failure to verify it, and verification failure is
+                # what this function exists to report.
+                return {
+                    "verified": False,
+                    "entries_checked": i + 1,
+                    "tampered_entry": r["entry_id"],
+                    "error": (
+                        f"Entry could not be read ({type(e).__name__}: {e}) — "
+                        f"a row that cannot be verified is not a row that can "
+                        f"be trusted"
+                    ),
+                }
+
             stored_hash = r["entry_hash"]
 
             if stored_hash and stored_hash != expected_hash:

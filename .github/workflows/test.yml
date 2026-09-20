@@ -151,6 +151,15 @@ jobs:
           # using — they would measure the harness, not Postgres. These go
           # through the app's own connection layer, which is the path a
           # deployment actually takes.
+          # The three invariant suites are here because the guarantees they
+          # assert are enforced *by the database*: the spend cap is a
+          # conditional UPDATE, the chain guard a partial unique index, and
+          # the secret binding rides on the engine's AES-GCM implementation.
+          # SQLite and Postgres agree on all three, but "they agree" is a
+          # claim worth testing rather than assuming. Postgres also stores
+          # NaN and infinity where SQLite rejects them, so the fuzz cases in
+          # test_invariants_chain only run in full here.
+          #
           # test_concurrency is here deliberately: the spend cap is a
           # conditional UPDATE and the chain guard is a partial unique index,
           # and both are evaluated by the *database*. SQLite and Postgres
@@ -164,6 +173,9 @@ jobs:
                  tests/test_sth_log.py \
                  tests/test_concurrency.py \
                  tests/test_retention.py \
+                 tests/test_invariants_chain.py \
+                 tests/test_invariants_spend.py \
+                 tests/test_invariants_secrets.py \
                  -q --tb=short
 
   security:

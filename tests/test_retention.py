@@ -63,10 +63,12 @@ def append(db: str, tenant: str, ts: float, action: str = "act") -> AuditEntry:
     entry.entry_hash = entry.compute_hash()
     conn.execute(
         "INSERT INTO audit_log (entry_id, tenant_id, session_id, agent_id, action, "
-        "tool, details, cost_usd, timestamp, flagged, flag_reason, prev_hash, entry_hash) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "tool, details, cost_usd, timestamp, flagged, flag_reason, prev_hash, "
+        "entry_hash, hash_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (entry.entry_id, tenant, entry.session_id, entry.agent_id, entry.action,
-         entry.tool, "{}", 0.0, entry.timestamp, 0, "", entry.prev_hash, entry.entry_hash),
+         entry.tool, "{}", 0.0, entry.timestamp, 0, "", entry.prev_hash,
+         entry.entry_hash, entry.hash_version),
     )
     conn.commit()
     conn.close()
