@@ -315,9 +315,11 @@ def test_existing_postgres_money_columns_get_widened(tmp_path) -> None:
     unless the type is changed in place."""
     import inspect
 
-    src = inspect.getsource(haldir_db._init_pg)
+    # _apply_pg_schema, not _init_pg: the latter now only owns the connection
+    # (and the schema-init lock around the call), so the DDL lives here.
+    src = inspect.getsource(haldir_db._apply_pg_schema)
     assert "DOUBLE PRECISION" in src, (
-        "_init_pg does not widen existing money columns, so a Postgres "
+        "_apply_pg_schema does not widen existing money columns, so a Postgres "
         "deployment created before this keeps losing precision"
     )
 

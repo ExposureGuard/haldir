@@ -37,6 +37,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from typing import Any
 
 from haldir_logging import get_logger
@@ -77,6 +78,19 @@ _PG_SERVER_OPTIONS = " ".join((
     f"-c lock_timeout={os.environ.get('HALDIR_PG_LOCK_TIMEOUT_MS', '10000')}",
     f"-c statement_timeout={os.environ.get('HALDIR_PG_STATEMENT_TIMEOUT_MS', '120000')}",
 ))
+
+# Advisory-lock key that serializes schema initialization across processes.
+# The value is arbitrary; what matters is that every Haldir process uses the
+# same one. Spelled as ASCII "HALD" so it is recognisable in pg_locks.
+_SCHEMA_INIT_LOCK_KEY = 0x48414C44
+
+# How long to wait for another process to finish initializing the schema
+# before giving up. Generous: the wait is bounded by how long one process
+# takes to run the schema, which is a few seconds, and the alternative to
+# waiting is starting up against a half-created schema.
+_SCHEMA_INIT_LOCK_WAIT_S = float(
+    os.environ.get("HALDIR_PG_SCHEMA_LOCK_WAIT_S", "60")
+)
 
 _pg_pool_min = int(os.environ.get("HALDIR_PG_POOL_MIN", "2"))
 _pg_pool_max = int(os.environ.get("HALDIR_PG_POOL_MAX", "20"))
@@ -741,6 +755,65 @@ def _init_sqlite(db_path: str):
     conn.close()
 
 
+def _is_lock_cancellation(exc: BaseException) -> bool:
+    """True when Postgres cancelled a statement because it waited for a lock.
+
+    Checked by exception class first — psycopg2 surfaces this as
+    LockNotAvailable (SQLSTATE 55P03) — with the message as a fallback for
+    the wrapped or re-raised forms that reach here, and for backends that
+    report it as plain OperationalError.
+    """
+    for cls in type(exc).__mro__:
+        if cls.__name__ in ("LockNotAvailable", "LockTimeout"):
+            return True
+    text = str(exc).lower()
+    return "lock timeout" in text or "canceling statement" in text
+
+
+def _acquire_schema_init_lock(cursor) -> None:
+    """Wait our turn to run schema DDL.
+
+    `CREATE INDEX IF NOT EXISTS` is not concurrency-safe. The existence check
+    happens outside any lock, so two processes starting together both see the
+    index as missing and both go to create it; one takes the lock and the
+    other queues behind it. That was survivable while the wait was unbounded —
+    the loser finished second and found the work already done — but with
+    lock_timeout set it is cancelled instead, and a cancelled CREATE INDEX
+    leaves the index absent. So the fix for "startup can hang forever" turned
+    into "startup quietly never creates its indexes", which is worse: on a
+    deployment of N replicas booting at once, the DDL is retried by every one
+    of them and none of them reliably finishes.
+
+    The CI symptom was a Postgres job that burned its full 15-minute budget
+    emitting nothing but alternating lock-timeout cancellations on
+    idx_audit_*, from connections that kept taking turns losing.
+
+    An advisory lock makes the question "who initializes the schema" have one
+    answer. The winner creates everything; everyone else waits, then finds it
+    all present and does no DDL at all. Try-lock rather than blocking lock so
+    the wait is bounded here, in code, instead of depending on how advisory
+    locks interact with lock_timeout.
+    """
+    deadline = time.monotonic() + _SCHEMA_INIT_LOCK_WAIT_S
+    while True:
+        cursor.execute("SELECT pg_try_advisory_lock(%s)", (_SCHEMA_INIT_LOCK_KEY,))
+        if cursor.fetchone()[0]:
+            return
+        if time.monotonic() >= deadline:
+            # Refusing to start is deliberate: the alternative is coming up
+            # against a schema another process is still halfway through
+            # changing. Raising the limit is the operator's call, hence the
+            # env var in the message — a large ALTER can legitimately outrun
+            # the default.
+            raise RuntimeError(
+                f"another process held the schema-init lock for more than "
+                f"{_SCHEMA_INIT_LOCK_WAIT_S:.0f}s; raise "
+                f"HALDIR_PG_SCHEMA_LOCK_WAIT_S if that process is applying a "
+                f"large migration"
+            )
+        time.sleep(0.1)
+
+
 def _init_pg():
     import psycopg2
     # With the same server-side timeouts as every pooled connection. This one
@@ -752,10 +825,22 @@ def _init_pg():
     # booting together can each wait on the other forever.
     #
     # This is where the Postgres CI job was hanging. The thread dump put the
-    # main thread in tests/test_concurrency.py's `db` fixture, inside init_db,
-    # at the cursor.execute below.
+    # main thread in tests/test_concurrency.py's `db` fixture, inside init_db.
+    # _apply_pg_schema below is what runs the statements that were waiting.
     conn = psycopg2.connect(DATABASE_URL, options=_PG_SERVER_OPTIONS)
+    try:
+        _apply_pg_schema(conn)
+    finally:
+        # Also releases the schema-init advisory lock: it is session-scoped,
+        # and the session ends here. Doing it in a finally is what keeps a
+        # crash mid-schema from blocking every other replica's startup, since
+        # the lock would otherwise live until the server reaped the socket.
+        conn.close()
+
+
+def _apply_pg_schema(conn):
     cursor = conn.cursor()
+    _acquire_schema_init_lock(cursor)
     # Execute each statement separately
     statements = [s.strip() for s in _SCHEMA.split(";") if s.strip()]
     for stmt in statements:
@@ -764,7 +849,21 @@ def _init_pg():
             conn.commit()
         except Exception as e:
             conn.rollback()
-            if "already exists" not in str(e):
+            if "already exists" in str(e):
+                continue  # idempotent DDL; expected on every start but the first
+            if _is_lock_cancellation(e):
+                # Cancelled is not the same as rejected. A lock timeout means
+                # the statement never ran, so whatever it creates is now
+                # missing and stays missing for the life of this process —
+                # and a bare warning buries that. On idx_audit_seq, which is
+                # the unique index that makes a forked audit chain impossible
+                # to commit, "missing" means the fork protection is not in
+                # force and the log can branch without anything objecting.
+                logger.error(
+                    "DB init: statement cancelled waiting for a lock, so its "
+                    "object was NOT created: %s", e,
+                )
+            else:
                 logger.warning("DB init warning: %s", e)
 
     # Idempotent column-add for legacy api_keys tables that pre-date
@@ -894,5 +993,3 @@ def _init_pg():
     except Exception as e:
         conn.rollback()
         logger.warning("compliance_schedules init warning: %s", e)
-
-    conn.close()
