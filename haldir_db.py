@@ -280,7 +280,7 @@ class PgConnectionWrapper:
         self._conn.commit()
 
     def close(self):
-        """Return the connection to the pool.
+        """Return the connection to the pool, with no transaction open.
 
         A failure here used to be swallowed, and that is how connections were
         lost: when the pool had been rebuilt underneath this wrapper, putconn
@@ -288,7 +288,30 @@ class PgConnectionWrapper:
         unreachable. Enough of those and the pool exhausts again — which used
         to trigger another rebuild. The connection is closed outright rather
         than left dangling, and the failure is logged.
+
+        The rollback is not tidiness. psycopg2 connections are not autocommit,
+        so a write that was never committed leaves the connection handed back
+        to the pool mid-transaction, still holding its row locks; the next
+        borrower inherits them, and the transaction stays open for as long as
+        nobody commits it. When the uncommitted write touched audit_log that
+        is a ROW EXCLUSIVE lock held indefinitely, and CREATE INDEX takes
+        SHARE, which conflicts — so every later `CREATE INDEX IF NOT EXISTS
+        idx_audit_*` blocks until lock_timeout cancels it. That is what the
+        Postgres CI job was doing for fifteen minutes at a time.
+
+        SQLite never showed it: sqlite3.close() discards uncommitted work, and
+        every get_db on SQLite hands back a brand-new connection rather than
+        recycling one. Rolling back here is what makes the two backends agree
+        — and it matches DB-API convention, where close() discards rather than
+        persists. Callers that mean to keep a write already call commit().
         """
+        if not getattr(self._conn, "closed", 0):
+            try:
+                self._conn.rollback()
+            except Exception:  # noqa: BLE001 — a dead connection has no
+                # transaction, and failing to roll one back must not stop it
+                # from being returned or closed below.
+                pass
         try:
             self._pool.putconn(self._conn)
         except Exception as e:  # noqa: BLE001
