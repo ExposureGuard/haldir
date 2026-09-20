@@ -271,6 +271,21 @@ TOOLS: list[dict[str, Any]] = [
         "handler": lambda args: _call("GET", "/v1/audit", params=args or None),
     },
     {
+        "name": "haldir_get_spend",
+        "description": (
+            "Spend summary for an agent or session: total USD and a "
+            "breakdown by tool. The question a budget owner asks."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Filter by session ID"},
+                "agent_id":   {"type": "string", "description": "Filter by agent ID"},
+            },
+        },
+        "handler": lambda args: _call("GET", "/v1/audit/spend", params=args or None),
+    },
+    {
         "name": "haldir_verify_audit_chain",
         "description": "Verify the SHA-256 hash chain end-to-end for this tenant's log.",
         "inputSchema": {"type": "object", "properties": {}},

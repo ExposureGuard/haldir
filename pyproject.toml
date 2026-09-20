@@ -50,7 +50,13 @@ dev = ["pytest>=9.0.3", "pytest-asyncio>=1.3.0"]
 
 [project.scripts]
 haldir = "cli:main"
-haldir-mcp = "mcp_server:main"
+# haldir_mcp_server, not mcp_server. There were two stdio MCP servers: this
+# one registers 18 tools (including the audit-integrity set — verify_chain,
+# tree heads, inclusion and consistency proofs, evidence packs) and is the
+# one with tests. mcp_server.py registered 9 of them, was untested, and was
+# the one both this entry point and the Smithery listing actually launched —
+# so every user got the narrower, unverified surface.
+haldir-mcp = "haldir_mcp_server:main"
 
 [project.urls]
 Homepage = "https://haldir.xyz"
@@ -65,7 +71,10 @@ Security = "https://github.com/ExposureGuard/haldir/blob/main/SECURITY.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["haldir_gate", "haldir_vault", "haldir_watch", "sdk"]
-include = ["mcp_server.py", "haldir_db.py", "cli.py"]
+# haldir_mcp_server.py was never in this list, so `haldir mcp serve` — which
+# imports it — raised ImportError for anyone who installed from PyPI rather
+# than cloning. It is the packaged MCP server now.
+include = ["haldir_mcp_server.py", "haldir_db.py", "cli.py"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -73,7 +82,7 @@ include = [
     "haldir_vault/**",
     "haldir_watch/**",
     "sdk/**",
-    "mcp_server.py",
+    "haldir_mcp_server.py",
     "haldir_db.py",
     "cli.py",
     "README.md",

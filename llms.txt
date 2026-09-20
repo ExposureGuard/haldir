@@ -115,9 +115,9 @@ Claude Desktop config:
         "env":     {"HALDIR_API_KEY": "hld_your_key"}
     }}}
 
-Exposes ~18 governance primitives as MCP tools: haldir_create_session, haldir_check_permission, haldir_log_audit_action, haldir_get_tree_head, haldir_get_inclusion_proof, haldir_get_consistency_proof, haldir_store_secret, haldir_compliance_score, haldir_build_evidence_pack, and more.
+Exposes 19 tools — Haldir's governance primitives: haldir_create_session, haldir_check_permission, haldir_log_audit_action, haldir_get_tree_head, haldir_get_inclusion_proof, haldir_get_consistency_proof, haldir_store_secret, haldir_compliance_score, haldir_build_evidence_pack, and more.
 
-HTTP/SSE endpoint: POST https://haldir.xyz/mcp (JSON-RPC 2.0)
+HTTP/SSE endpoint: POST https://haldir.xyz/mcp (JSON-RPC 2.0) — same tool names, 10 of the 19 implemented server-side.
 Smithery: https://smithery.ai/server/haldir/haldir
 PyPI: https://pypi.org/project/haldir/
 
