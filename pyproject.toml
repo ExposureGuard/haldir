@@ -104,18 +104,50 @@ Security = "https://github.com/ExposureGuard/haldir/blob/main/SECURITY.md"
 # tests/test_packaging.py now asserts that every module named by an entry point
 # is actually included, so this cannot recur silently.
 [tool.hatch.build.targets.wheel]
+# Every module, named explicitly.
+#
+# The glob "haldir_*.py" that preceded this built a correct 29-module wheel
+# locally and a wheel missing haldir_logging.py and haldir_tracing.py in CI —
+# the installed package then failed to import haldir_db, haldir_gate,
+# haldir_vault and haldir_watch, because each imports one of them. Rather than
+# work out which hatchling resolves globs differently, the list is now
+# explicit. tests/test_packaging.py fails when it goes stale, which is the
+# property that actually matters: a module added without being listed here
+# breaks the build rather than the installed package.
 include = [
+    "haldir_admin.py",
+    "haldir_audit_tree.py",
+    "haldir_compliance.py",
+    "haldir_compliance_scheduler.py",
+    "haldir_compliance_score.py",
+    "haldir_db.py",
+    "haldir_demo_tamper.py",
+    "haldir_email.py",
+    "haldir_export.py",
+    "haldir_health.py",
+    "haldir_idempotency.py",
+    "haldir_logging.py",
+    "haldir_mcp_proxy.py",
+    "haldir_mcp_server.py",
+    "haldir_merkle.py",
+    "haldir_metrics.py",
+    "haldir_migrate.py",
+    "haldir_openapi.py",
+    "haldir_rekor_verify.py",
+    "haldir_retention.py",
+    "haldir_scopes.py",
+    "haldir_status.py",
+    "haldir_sth_log.py",
+    "haldir_tracing.py",
+    "haldir_transparency_mirror.py",
+    "haldir_validation.py",
+    "haldir_x402.py",
+    # The packages.
     "haldir_gate",
     "haldir_vault",
     "haldir_watch",
     "sdk",
-    # A glob, not a list. The bug this replaced was a hand-written enumeration
-    # that named three modules and silently missed `haldir_merkle` and
-    # `haldir_migrate`, which `cli.py` also imports — the package installed
-    # fine and could not start. `haldir_*.py` covers the modules now and the
-    # ones added later; `cli.py` and `api.py` are named because they are the
-    # two entry points that do not carry the prefix.
-    "haldir_*.py",
+    # The two entry-point modules that do not carry the prefix.
     "cli.py",
     "api.py",
 ]

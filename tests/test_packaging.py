@@ -230,3 +230,39 @@ def test_every_dependency_has_an_upper_bound(pyproject) -> None:
         f"these dependencies have no upper bound, so a future major release "
         f"can be installed and break this package: {unbounded}"
     )
+
+
+def test_every_top_level_module_on_disk_is_in_the_wheel(pyproject) -> None:
+    """The wheel lists its modules explicitly, so the list can go stale.
+
+    That is the whole risk of enumerating: add `haldir_foo.py`, forget the
+    list, and the package installs without it. This test is what makes the
+    explicit list safe — it fails the moment a module exists that the wheel
+    would not carry.
+
+    The list is explicit rather than a glob because a glob built the right
+    wheel locally and the wrong one in CI.
+    """
+    on_disk = {
+        os.path.basename(p)
+        for p in glob.glob(os.path.join(ROOT, "haldir_*.py"))
+    }
+    assert on_disk, "no haldir_*.py modules found — is ROOT right?"
+
+    include = set(_wheel_include(pyproject))
+    missing = sorted(on_disk - include)
+    assert not missing, (
+        f"these modules exist but the wheel would not ship them, so an "
+        f"installed Haldir could not import whatever depends on them: "
+        f"{missing}. Add them to the wheel include list in pyproject.toml."
+    )
+
+
+def test_the_wheel_does_not_ship_development_scripts(pyproject) -> None:
+    """The other direction: a build script or a benchmark in the shipped
+    package is dead weight, and `bench_merkle.py` imports matplotlib."""
+    include = set(_wheel_include(pyproject))
+    for script in ("build_deck.py", "build_deck_pptx.py", "bench_merkle.py"):
+        assert script not in include, (
+            f"{script} is a development script and should not ship"
+        )
