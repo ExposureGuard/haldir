@@ -38,11 +38,32 @@ classifiers = [
     "Topic :: System :: Systems Administration :: Authentication/Directory",
     "Typing :: Typed",
 ]
+# These must say the same thing as requirements.txt. They did not, and it cost
+# the published package twice over:
+#
+#   * Five runtime dependencies were missing entirely. `api.py` is shipped and
+#     imports flask at module level, so `pip install haldir && python -c
+#     "import api"` failed on ModuleNotFoundError: No module named 'flask'.
+#
+#   * `mcp>=1.27.0` had no upper bound, so PyPI users resolved mcp 2.x, whose
+#     Server API rewrite removed the `@server.list_tools()` decorator this code
+#     uses — the MCP server died with `'Server' object has no attribute
+#     'list_tools'`. CI never saw it because CI installs requirements.txt,
+#     which correctly bounds mcp below 2.0.
+#
+# Every bound here is copied from requirements.txt, so a self-hoster and a
+# `pip install` get the same thing. tests/test_packaging.py asserts the two
+# lists describe the same packages.
 dependencies = [
-    "mcp>=1.27.0",
-    "httpx>=0.28.1",
-    "pydantic>=2.13.2",
-    "cryptography>=46.0.7",
+    "flask>=3.0.0,<4.0.0",
+    "flask-cors>=4.0.0,<7.0.0",
+    "gunicorn>=21.2.0,<27.0.0",
+    "mcp>=1.27.0,<2.0.0",
+    "httpx>=0.28.1,<1.0.0",
+    "pydantic>=2.13.2,<3.0.0",
+    "cryptography>=46.0.7,<51.0.0",
+    "psycopg2-binary>=2.9.0,<3.0.0",
+    "stripe>=8.0.0,<16.0.0",
 ]
 
 [project.optional-dependencies]
@@ -69,12 +90,35 @@ Wiki = "https://github.com/ExposureGuard/haldir/wiki"
 "Self-Hosting" = "https://github.com/ExposureGuard/haldir/blob/main/SELF_HOSTING.md"
 Security = "https://github.com/ExposureGuard/haldir/blob/main/SECURITY.md"
 
+# `include` alone, naming the packages AND the loose top-level modules.
+#
+# This previously set `packages = [...]` and then an `include = [...]` for the
+# three modules. Hatchling's `packages` is a shorthand that *replaces*
+# `include`, so those three were dropped from the wheel — and with them the
+# `haldir` console script, the `haldir-mcp` entry point, and the database
+# layer both import.
+#
+# The published 0.3.0 on PyPI has this shape. It is not a rare edge: nobody who
+# has ever run `pip install haldir` has been able to start the CLI, because the
+# first line of the README dies on `ModuleNotFoundError: No module named 'cli'`.
+# tests/test_packaging.py now asserts that every module named by an entry point
+# is actually included, so this cannot recur silently.
 [tool.hatch.build.targets.wheel]
-packages = ["haldir_gate", "haldir_vault", "haldir_watch", "sdk"]
-# haldir_mcp_server.py was never in this list, so `haldir mcp serve` — which
-# imports it — raised ImportError for anyone who installed from PyPI rather
-# than cloning. It is the packaged MCP server now.
-include = ["haldir_mcp_server.py", "haldir_db.py", "cli.py"]
+include = [
+    "haldir_gate",
+    "haldir_vault",
+    "haldir_watch",
+    "sdk",
+    # A glob, not a list. The bug this replaced was a hand-written enumeration
+    # that named three modules and silently missed `haldir_merkle` and
+    # `haldir_migrate`, which `cli.py` also imports — the package installed
+    # fine and could not start. `haldir_*.py` covers the modules now and the
+    # ones added later; `cli.py` and `api.py` are named because they are the
+    # two entry points that do not carry the prefix.
+    "haldir_*.py",
+    "cli.py",
+    "api.py",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
