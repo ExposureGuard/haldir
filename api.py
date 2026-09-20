@@ -411,6 +411,13 @@ def require_api_key(f):
 
         request.api_key_tier = row["tier"]
         request.api_key_name = row["name"]
+        # Recorded on admin actions so the audit trail can say which key did
+        # something. The prefix is the same value the dashboard displays and
+        # cannot be used to authenticate — only its hash is stored.
+        try:
+            request.api_key_prefix = row["key_prefix"]
+        except (IndexError, KeyError):
+            request.api_key_prefix = ""
         try:
             request.tenant_id = row["tenant_id"] or key_hash[:16]
         except (IndexError, KeyError):
@@ -470,6 +477,28 @@ def _get_tenant_monthly_actions(tenant_id):
     return row["action_count"] if row else 0
 
 
+def _audit_admin(action, details=None, tenant_id="", actor=None):
+    """Record an administrative action in the audit hash chain.
+
+    Agents were audited; the actions that decide who may act were not, so the
+    trail could not answer "who revoked production's key?". These entries go
+    through the same chain, Merkle tree and signed tree heads as everything
+    else — an admin log kept separately would be the first thing an attacker
+    edits.
+
+    `actor` overrides the key prefix from the request context, for routes that
+    authenticate themselves rather than through require_api_key — the key
+    creation route is one, which is why sub-keys were briefly credited to
+    "unknown".
+
+    Raises if the write fails. Callers decide what that means for their
+    action; see create_api_key for the fail-closed case.
+    """
+    if actor is None:
+        actor = getattr(request, "api_key_prefix", "")
+    return watch.log_admin_action(actor, action, details=details, tenant_id=tenant_id)
+
+
 # ── Bootstrap: create first API key ──
 
 @app.route("/v1/keys", methods=["POST"])
@@ -485,6 +514,10 @@ def create_api_key():
     # under their existing tenant — that's the multi-key, single-
     # tenant pattern every Stripe-shaped API ships.
     inherited_tenant: str | None = None
+    # Who is asking. This route authenticates itself rather than going through
+    # require_api_key, so the prefix is not on the request context — capture it
+    # from the key we validate, or admin.create entries are credited to nobody.
+    actor = ""
     if key_count > 0:
         key = request.headers.get("Authorization", "").replace("Bearer ", "") or request.headers.get("X-API-Key", "")
         bootstrap = os.environ.get("HALDIR_BOOTSTRAP_TOKEN", "")
@@ -496,6 +529,10 @@ def create_api_key():
             if not row:
                 return jsonify({"error": "Invalid API key"}), 401
             inherited_tenant = row["tenant_id"] or None
+            try:
+                actor = row["key_prefix"]
+            except (IndexError, KeyError):
+                actor = ""
         elif bootstrap and request.json and request.json.get("bootstrap_token") == bootstrap:
             pass
         else:
@@ -538,6 +575,31 @@ def create_api_key():
     )
     conn.commit()
     conn.close()
+
+    # Record the credential before handing it out. A key nobody can account
+    # for is the one thing this product exists to make impossible, so if the
+    # audit write fails the key is revoked rather than returned — the same
+    # rule the delegation spawn path applies to an unrecorded child session.
+    try:
+        _audit_admin(
+            "key.create",
+            {"key_prefix": full_key[:12], "name": name, "tier": tier,
+             "scopes": validated_scopes,
+             "bootstrap": inherited_tenant is None},
+            tenant_id=tenant_id,
+            actor=actor,
+        )
+    except Exception:
+        conn = get_db(DB_PATH)
+        conn.execute("UPDATE api_keys SET revoked = 1 WHERE key_hash = ?", (key_hash,))
+        conn.commit()
+        conn.close()
+        log.exception("key.create audit write failed; revoked the new key",
+                      extra={"key_prefix": full_key[:12]})
+        return jsonify({
+            "error": "Could not record the new key in the audit log, so it was "
+                     "revoked. The audit chain is unavailable — fix that first.",
+        }), 500
 
     response = {
         "key": full_key,
@@ -627,7 +689,28 @@ def revoke_api_key(prefix: str):
     )
     conn.commit()
     conn.close()
-    return jsonify({"revoked": True, "prefix": prefix}), 200
+    # Record it. This one is worth more than the create: "when did this key
+    # stop working, and who stopped it" is the question asked after an
+    # incident, and the answer has to come from somewhere other than memory.
+    #
+    # Deliberately not fail-closed, unlike create. The revocation has already
+    # happened and it is the safe direction; rolling it back to punish a
+    # failed audit write would restore access to a key someone just decided to
+    # kill. So the revocation stands, the failure is logged, and the response
+    # says plainly whether the entry was written.
+    audit_recorded = True
+    try:
+        _audit_admin(
+            "key.revoke",
+            {"key_prefix": prefix,
+             "self_revoke": prefix == getattr(request, "api_key_prefix", "")},
+            tenant_id=tenant,
+        )
+    except Exception:
+        audit_recorded = False
+        log.exception("key.revoke audit write failed", extra={"key_prefix": prefix})
+    return jsonify({"revoked": True, "prefix": prefix,
+                    "audit_recorded": audit_recorded}), 200
 
 
 @app.route("/v1/demo/key", methods=["POST"])
@@ -1721,6 +1804,12 @@ def add_approval_rule():
         tools=data.get("tools"),
     )
     response = {"added": True, "type": rule_type}
+    # An approval rule decides when a human gets asked; changing one changes
+    # who is in the loop, which is governance-relevant rather than routine.
+    _audit_admin("approval_rule.add",
+                 {"type": rule_type, "threshold": float(data.get("threshold", 0)),
+                  "tools": data.get("tools")},
+                 tenant_id=tenant)
     _idempotency_store("/v1/approvals/rules", data, tenant, response, 201)
     return jsonify(response), 201
 
@@ -1877,6 +1966,9 @@ def register_webhook():
         "secret": wh.secret,  # one-time display, like POST /v1/keys
         "message": "Save the secret — it won't be shown again.",
     }
+    _audit_admin("webhook.register",
+                 {"webhook_id": wh.webhook_id, "url": wh.url, "events": wh.events},
+                 tenant_id=tenant)
     _idempotency_store("/v1/webhooks", data, tenant, response, 201)
     return jsonify(response), 201
 
@@ -1914,6 +2006,11 @@ def rotate_webhook_secret(webhook_id: int):
             "no webhook with that id in this tenant",
             404,
         )
+    # Rotating a signing secret is a credential change; the audit trail should
+    # say when the old one stopped being the one.
+    _audit_admin("webhook.rotate_secret",
+                 {"webhook_id": webhook_id, "grace_seconds": grace},
+                 tenant_id=tenant)
     return jsonify(out), 200
 
 
