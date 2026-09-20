@@ -255,3 +255,26 @@ def test_the_columns_the_migration_adds_really_exist(tmp_path) -> None:
         f"init_db reported the audit-log migration as applied while these "
         f"columns are missing: {sorted({'seq', 'hash_version'} - cols)}"
     )
+
+
+def test_schema_init_connects_with_the_server_timeouts() -> None:
+    """_init_pg connects directly rather than through the pool, and it is the
+    path that needs a lock_timeout most — it runs the whole schema, and every
+    statement in it takes a lock. It hung the Postgres CI job for fifteen
+    minutes at a time, three runs in a row.
+
+    Checked at the source level because there is no Postgres here to connect
+    to; `psycopg2` accepting the parameter is covered separately.
+    """
+    import inspect
+    import re
+
+    src = inspect.getsource(haldir_db._init_pg)
+    calls = re.findall(r"psycopg2\.connect\(([^)]*)\)", src)
+    assert calls, "no connect call found in _init_pg"
+    for args in calls:
+        assert "options=" in args, (
+            f"_init_pg connects without the server-side timeouts: "
+            f"psycopg2.connect({args}). It runs DDL, so a lock wait there has "
+            f"no bound and blocks application startup."
+        )

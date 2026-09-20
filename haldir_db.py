@@ -667,7 +667,18 @@ def _init_sqlite(db_path: str):
 
 def _init_pg():
     import psycopg2
-    conn = psycopg2.connect(DATABASE_URL)
+    # With the same server-side timeouts as every pooled connection. This one
+    # connects directly rather than via the pool, and it is the path that
+    # needs them most: it runs the whole schema, and CREATE INDEX / ALTER
+    # TABLE / CREATE TABLE IF NOT EXISTS all take locks. Without a
+    # lock_timeout, a single open transaction anywhere blocks startup with no
+    # end — and init_db runs at every application start, so two replicas
+    # booting together can each wait on the other forever.
+    #
+    # This is where the Postgres CI job was hanging. The thread dump put the
+    # main thread in tests/test_concurrency.py's `db` fixture, inside init_db,
+    # at the cursor.execute below.
+    conn = psycopg2.connect(DATABASE_URL, options=_PG_SERVER_OPTIONS)
     cursor = conn.cursor()
     # Execute each statement separately
     statements = [s.strip() for s in _SCHEMA.split(";") if s.strip()]
