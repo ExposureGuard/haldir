@@ -173,6 +173,29 @@ class APIClient:
 
         if resp.status_code >= 400:
             msg = body.get("error") or body.get("reason") or resp.text
+
+            # A 404 that does not look like one of ours means we are not
+            # talking to Haldir at all — a hosting platform's "no application
+            # here" page, a proxy, or a typo'd host. Dumping that JSON at the
+            # user ("Not found: {"status":"error","code":404, ...}") reads as
+            # a bug in this CLI rather than as a server that is not there.
+            if resp.status_code == 404 and not _looks_like_haldir(body):
+                # One stream, written in order. `warn` prints to stdout and
+                # `error` to stderr, so mixing them lets the shell reorder
+                # the lines and the advice arrives before the problem.
+                y, r, d = Color.YELLOW, Color.RESET, Color.DIM
+                sys.stderr.write(
+                    f"{Color.RED}{Color.BOLD}[-]{r} {self.base_url} answered, "
+                    f"but it is not a Haldir API.\n"
+                    f"{d}    it said: {str(msg)[:120]}{r}\n"
+                    f"{y}[!]{r} If you were pointing at the hosted service, it "
+                    f"may be unavailable right now.\n"
+                    f"{y}[!]{r} Haldir runs locally with no account — try:\n"
+                    f"      {Color.BOLD}haldir serve{r}\n"
+                    f"{y}[!]{r} Or point HALDIR_BASE_URL at your own instance.\n"
+                )
+                sys.exit(1)
+
             if resp.status_code == 401:
                 error(f"Authentication failed: {msg}")
                 warn("Run 'haldir login' to set your API key.")
@@ -199,6 +222,21 @@ class APIClient:
 
     def delete(self, path: str, **kwargs: Any) -> dict:
         return self.request("DELETE", path, **kwargs)
+
+
+def _looks_like_haldir(body: dict) -> bool:
+    """Does this error body look like it came from a Haldir API?
+
+    Haldir's own error responses always carry an `error` key. Hosting
+    platforms answer with `status` / `code` / `message` instead, and
+    matching on any of those would mistake Railway's "Application not
+    found" for an API response — which is the exact confusion this is here
+    to remove.
+
+    Used only to choose better wording on a 404, so a wrong answer costs a
+    less specific message and nothing else.
+    """
+    return isinstance(body, dict) and "error" in body
 
 
 # ── Commands ──
@@ -816,9 +854,20 @@ def _render_overview(o: dict) -> None:
 
     u = o.get("usage", {})
     pct = float(u.get("actions_pct_used", 0.0))
-    print(f"  {Color.DIM}Actions{Color.RESET}    {Color.WHITE}{u.get('actions_this_month', 0):>7,}{Color.RESET}"
+    # Labelled "API calls", not "Actions": the meter counts API calls to
+    # /v1/*, and "actions" reads as audited operations, which is a different
+    # and much smaller number.
+    print(f"  {Color.DIM}API calls{Color.RESET}  {Color.WHITE}{u.get('actions_this_month', 0):>7,}{Color.RESET}"
           f" {Color.DIM}/{Color.RESET} {u.get('actions_limit', 0):,}"
           f"   {_bar(pct)}  {Color.DIM}{pct * 100:5.1f}%{Color.RESET}")
+    # Overage, when the plan is metered and the tenant is past its
+    # allowance. Shown here rather than only on an invoice, because a
+    # customer who cannot see what they are accruing cannot decide about it.
+    if u.get("overage_actions"):
+        over = u["overage_actions"]
+        cost = u.get("overage_usd")
+        shown = f"${cost:,.2f}" if cost is not None else "not billable"
+        print(f"  {Color.YELLOW}Over by{Color.RESET}   {over:>7,} API calls  {Color.DIM}({shown}){Color.RESET}")
     print(f"  {Color.DIM}Spend{Color.RESET}      {Color.WHITE}${u.get('spend_usd_this_month', 0.0):>6.2f}{Color.RESET}"
           f" {Color.DIM}this month{Color.RESET}")
 
@@ -1449,9 +1498,175 @@ def cmd_dev(args: argparse.Namespace) -> None:
 
     success("Haldir is starting on http://localhost:8000")
     print()
-    print("  Check health:  curl http://localhost:8000/health")
+    print("  Check health:  curl http://localhost:8000/healthz")
     print("  View logs:     docker compose logs -f api")
     print("  Stop:          haldir dev --down")
+
+
+# ── serve (run Haldir locally, no Docker and no account) ──
+
+def cmd_serve(args: argparse.Namespace) -> None:
+    """Run Haldir on this machine, with SQLite, in one command.
+
+    The point is a first run that works. Before this, the only two paths were
+    `haldir dev`, which needs Docker and Postgres, and pointing at the hosted
+    service, which needs the hosted service. A developer evaluating Haldir had
+    nothing they could run.
+
+    Three things it does that make the difference between "installed" and
+    "running":
+
+      * keeps the encryption key in a file, so a restart does not silently
+        orphan every secret stored before it (`api.py` otherwise generates a
+        throwaway key and warns that secrets will be lost — true, and a
+        terrible thing to discover later);
+      * puts the database somewhere stable rather than in whatever directory
+        you happened to be in, which is how the repository grew a stray
+        `haldir.db`;
+      * mints an API key and points the CLI at this instance, so the next
+        command you type works instead of returning 401.
+    """
+    import base64
+    import hashlib
+    import secrets as _secrets
+    import time
+
+    from pathlib import Path as _Path
+
+    data_dir = _Path(
+        args.data_dir
+        or os.environ.get("HALDIR_DATA_DIR")
+        or (_Path.home() / ".haldir")
+    ).expanduser()
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Encryption key, persisted ──
+    key_path = data_dir / "encryption.key"
+    if not os.environ.get("HALDIR_ENCRYPTION_KEY"):
+        if key_path.exists():
+            os.environ["HALDIR_ENCRYPTION_KEY"] = key_path.read_text().strip()
+            info(f"Using the encryption key in {key_path}")
+        else:
+            key = base64.urlsafe_b64encode(os.urandom(32)).decode()
+            key_path.write_text(key + "\n")
+            try:
+                key_path.chmod(0o600)
+            except OSError:
+                pass  # best effort; some filesystems have no useful mode
+            os.environ["HALDIR_ENCRYPTION_KEY"] = key
+            info(f"Generated an encryption key at {key_path} (mode 600)")
+
+    # ── Database, in a stable place ──
+    db_path = str(_Path(args.db).expanduser()) if args.db else str(data_dir / "haldir.db")
+    os.environ["HALDIR_DB_PATH"] = db_path
+
+    # ── Schema ──
+    #
+    # Both, and in this order. `init_db` creates the tables and applies the
+    # in-place column additions that the numbered migrations do not carry —
+    # `api_keys.scopes` among them — while `apply_pending` records the version
+    # ledger. api.py does the same pair on import, but that happens after the
+    # key is minted below, so a first run against a fresh database failed with
+    # "table api_keys has no column named scopes".
+    try:
+        from haldir_db import init_db
+        init_db(db_path)
+    except Exception as e:  # noqa: BLE001
+        warn(f"schema init: {type(e).__name__}: {e}")
+
+    try:
+        import haldir_migrate
+        haldir_migrate.apply_pending(db_path)
+    except Exception as e:  # noqa: BLE001 — surface it and keep going; the
+        # app itself will fail loudly on a missing table if this mattered.
+        warn(f"migrations: {type(e).__name__}: {e}")
+
+    host = args.host
+    port = args.port
+    base_url = f"http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}"
+
+    # ── Mint a key and point the CLI at this instance ──
+    api_key = ""
+    if not args.no_key:
+        try:
+            from haldir_db import get_db
+            full_key = f"hld_{_secrets.token_urlsafe(32)}"
+            key_hash = hashlib.sha256(full_key.encode()).hexdigest()
+            conn = get_db(db_path)
+            conn.execute(
+                "INSERT INTO api_keys (key_hash, key_prefix, tenant_id, name, tier, "
+                "scopes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (key_hash, full_key[:12], key_hash[:16], "local", "pro",
+                 '["*"]', time.time()),
+            )
+            conn.commit()
+            conn.close()
+            api_key = full_key
+        except Exception as e:  # noqa: BLE001
+            warn(f"could not mint a key automatically: {type(e).__name__}: {e}")
+
+    print()
+    print(f"  {Color.BOLD}Haldir is running{Color.RESET}  {base_url}")
+    print(f"  data: {data_dir}")
+    print()
+
+    if api_key:
+        note = _write_local_config(base_url, api_key)
+        print("  Your API key (saved to the Haldir CLI config):")
+        print(f"    {Color.BOLD}{api_key}{Color.RESET}")
+        print()
+        print("  Try it:")
+        print("    haldir overview")
+        print("    haldir session create --agent my-agent --scopes read")
+        print()
+        print("  Point an MCP client at this instance:")
+        print(f"    HALDIR_BASE_URL={base_url} HALDIR_API_KEY={api_key} haldir mcp serve")
+        if note:
+            print()
+            warn(note)
+    else:
+        print("  Mint a key:")
+        print(f"    curl -s -X POST {base_url}/v1/keys \\")
+        print("      -H 'Content-Type: application/json' -d '{\"name\":\"me\"}'")
+
+    print()
+    print(f"  API reference: {base_url}/docs")
+    if host == "0.0.0.0":
+        print()
+        warn("Bound to 0.0.0.0 — reachable from your network. Use "
+             "--host 127.0.0.1 for local-only.")
+    print()
+    print("  Ctrl-C to stop.")
+    print()
+
+    import api
+    api.app.run(host=host, port=port, debug=False, use_reloader=False,
+                threaded=True)
+
+
+def _write_local_config(base_url: str, api_key: str) -> str:
+    """Point the CLI at a local instance so the next command just works.
+
+    Non-destructive: keeps every other key in the config, and reports the
+    previous base_url when it is changing so someone who had a working
+    hosted setup is told rather than silently repointed. Returns a note to
+    print, or "" when there was nothing worth saying.
+
+    Best effort throughout — a failure here costs convenience, not
+    correctness, and the key has already been printed by the caller.
+    """
+    try:
+        config = load_config()
+        previous = config.get("base_url", "")
+        config["base_url"] = base_url
+        config["api_key"] = api_key
+        save_config(config)
+        if previous and previous.rstrip("/") != base_url.rstrip("/"):
+            return (f"Note: your CLI was pointed at {previous} and is now "
+                    f"pointed here. Run 'haldir login --url {previous}' to go back.")
+        return ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 # ── Argument parser ──
@@ -1793,6 +2008,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_dev.add_argument("--reset", action="store_true", help="Wipe volumes before starting (deletes all local data)")
     p_dev.add_argument("--foreground", "-f", action="store_true", help="Run in foreground (stream logs to terminal)")
     p_dev.set_defaults(func=cmd_dev)
+
+    # ── serve (run locally: no Docker, no account) ──
+    p_serve = sub.add_parser(
+        "serve",
+        help="Run Haldir on this machine with SQLite — no Docker, no account",
+        description=(
+            "Start a local Haldir on SQLite. Generates and stores an "
+            "encryption key, applies the schema, mints an API key, points the "
+            "CLI at this instance, and serves.\n\n"
+            "This is the fastest way to have something running: nothing else "
+            "needs to be installed, and no account is involved. For a "
+            "Postgres-backed deployment use `haldir init` + `haldir dev`."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_serve.add_argument("--host", default="127.0.0.1",
+                         help="Bind address (default 127.0.0.1 — this machine only)")
+    p_serve.add_argument("--port", type=int, default=8000, help="Port (default 8000)")
+    p_serve.add_argument("--data-dir", default="",
+                         help="Where to keep the key and database (default ~/.haldir)")
+    p_serve.add_argument("--db", default="",
+                         help="Database path (default <data-dir>/haldir.db)")
+    p_serve.add_argument("--no-key", action="store_true",
+                         help="Do not mint an API key or touch the CLI config")
+    p_serve.set_defaults(func=cmd_serve)
 
     # ── mcp (stdio server for Claude Desktop / Cursor / Windsurf) ──
     p_mcp = sub.add_parser(

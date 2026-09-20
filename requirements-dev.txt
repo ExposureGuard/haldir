@@ -20,6 +20,13 @@ pytest-asyncio>=1.0.0,<2.0.0
 # Property-based tests: test_merkle_properties.py, test_vault_properties.py,
 # test_watch_properties.py.
 hypothesis>=6.0.0,<7.0.0
-# Turns a hung test into a failure with a traceback of every thread.
+# Turns a hung test into a failure with a traceback of every thread's
+# stack. Without it a deadlock in the suite is invisible: pytest never
+# returns, so it never flushes its output, and the CI log shows the
+# step starting and nothing else — which is exactly what the Postgres
+# job did for fifteen minutes at a time.
 pytest-timeout>=2.3,<3
 mypy>=2.0.0,<3.0.0
+# tomllib is stdlib from 3.11; tests/test_packaging.py reads
+# pyproject.toml and the CI matrix includes 3.10.
+tomli>=2.0.0,<3.0.0; python_version < "3.11"

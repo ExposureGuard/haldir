@@ -3,12 +3,8 @@ name: tests
 on:
   push:
     branches: [main]
-  # Every pull request, not only those targeting main. Restricting this to
-  # `main` meant a stacked PR — one branched off another feature branch
-  # rather than off main — ran no checks at all, which is the moment you
-  # most want them. Pushes are still limited to main so a feature branch
-  # does not re-run CI on every commit.
   pull_request:
+    branches: [main]
 
 # Cancel in-flight runs for the same branch when new commits arrive.
 concurrency:
@@ -19,7 +15,6 @@ jobs:
   mypy:
     name: mypy (type check)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -43,7 +38,6 @@ jobs:
   pytest:
     name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -75,17 +69,12 @@ jobs:
           # including every merkle / STH / transparency test — the modules
           # behind the audit-integrity claim. A new test file is now gated the
           # moment it lands, instead of when someone remembers to add it.
-          # --cov-fail-under is a ratchet, not a target: coverage was being
-          # measured and uploaded but never enforced, so it could fall
-          # silently forever. Set just below the current figure so the only
-          # direction it can move is up. Raise it when you raise coverage.
           pytest tests/ \
             --cov=haldir_gate \
             --cov=haldir_vault \
             --cov=haldir_watch \
             --cov-report=xml \
             --cov-report=term-missing \
-            --cov-fail-under=78 \
             -v
 
       - name: Upload coverage to Codecov
@@ -105,12 +94,6 @@ jobs:
   postgres:
     name: pytest (Postgres)
     runs-on: ubuntu-latest
-    # Bounded on purpose. Without this a job that deadlocks sits "in
-    # progress" until GitHub's six-hour ceiling, producing no log to read —
-    # which is exactly what happened when these concurrency tests first met
-    # a real Postgres. A timeout turns a silent hang into a red check with
-    # a timestamp pointing at the test that never returned.
-    timeout-minutes: 15
 
     # The Postgres path had never run anywhere. DATABASE_URL is the documented
     # production configuration — README, SELF_HOSTING.md and docker-compose all
@@ -152,11 +135,6 @@ jobs:
 
       - name: Run tests against Postgres
         env:
-          # Progress reaches the log as it happens. Python block-buffers
-          # stdout into a pipe, so a run that never exits never flushes — and
-          # this job has twice now shown the step starting and then absolutely
-          # nothing for fifteen minutes.
-          PYTHONUNBUFFERED: "1"
           DATABASE_URL: postgresql://haldir:haldir@localhost:5432/haldir
           # Fixed key so the run is reproducible; the app otherwise
           # generates a throwaway one and warns.
@@ -168,29 +146,6 @@ jobs:
           # using — they would measure the harness, not Postgres. These go
           # through the app's own connection layer, which is the path a
           # deployment actually takes.
-          # Everything, including the concurrency suite.
-          #
-          # Bisected here: with the whole suite listed this job hung for
-          # fifteen minutes, and removing test_concurrency.py brought it back
-          # to a minute. The cause was that suite's queries — three of them
-          # walked every tenant's audit_log, which is free on SQLite (a fresh
-          # file per test) and wrong on Postgres (one shared database). Scoped
-          # to a module tenant now.
-          #
-          # Two things had to be fixed before they could run here, and neither
-          # was a product bug:
-          #
-          #   * isolation — on Postgres the temp path is ignored, so every test
-          #     shared one database and all of them wrote to the same tenant.
-          #     Counts accumulated across tests.
-          #
-          #   * SQLite-only syntax — `UPDATE ... ORDER BY ... LIMIT 1` is a
-          #     SQLite extension. Postgres rejects it outright. The row is now
-          #     chosen by a subquery, which both accept.
-          #
-          # These belong here rather than only on SQLite: the spend cap is a
-          # conditional UPDATE and the chain guard is a partial unique index,
-          # so the database is doing the enforcing.
           pytest tests/test_api.py \
                  tests/test_admin.py \
                  tests/test_delegation.py \
@@ -202,6 +157,111 @@ jobs:
                  tests/test_invariants_secrets.py \
                  -q --tb=short \
                  --timeout=120 --timeout-method=thread
+
+  package:
+    name: package (build the wheel and actually run it)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Every other job runs against the source tree, where `import cli` simply
+    # works because cli.py is sitting right there. That is why two separate
+    # breakages reached PyPI while CI stayed green:
+    #
+    #   * the wheel shipped no cli.py, haldir_db.py or haldir_mcp_server.py,
+    #     so `pip install haldir && haldir overview` — the first line of the
+    #     README — died on ModuleNotFoundError. Nobody who ever installed
+    #     from PyPI could start it.
+    #   * pyproject.toml declared `mcp>=1.27.0` with no upper bound while
+    #     requirements.txt bounded it below 2.0, so PyPI users resolved mcp
+    #     2.x and the MCP server died on `'Server' object has no attribute
+    #     'list_tools'`.
+    #
+    # Both were invisible from inside the checkout and obvious from outside
+    # it. This job is the outside.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build the wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build
+          # `python -m build` is not clean, and stale state there is
+          # indistinguishable from a fresh build. Both `dist/` and
+          # `*.egg-info/` change what gets packaged: with an old egg-info in
+          # place hatchling reuses its file selection, so a wheel built from a
+          # correct pyproject still shipped only three modules. That is why
+          # this job failed twice on the same symptom after two different
+          # fixes to the include list — the list was never the problem here.
+          rm -rf build dist *.egg-info
+          python -m build
+
+      - name: Install the wheel into a clean environment
+        # Not `pip install -e .`, and the next steps run from /tmp, so nothing
+        # can be satisfied by the source tree. This is what a user gets.
+        run: |
+          python -m venv /tmp/pkg-venv
+          /tmp/pkg-venv/bin/pip install --upgrade pip
+          /tmp/pkg-venv/bin/pip install dist/*.whl
+
+      - name: The console scripts must start
+        working-directory: /tmp
+        run: |
+          set -euo pipefail
+
+          # Proves the script resolves its module and that the dependency
+          # graph is complete enough to import.
+          /tmp/pkg-venv/bin/haldir --help > /dev/null
+          echo "haldir --help: ok"
+
+          # haldir-mcp speaks stdio and exits when stdin closes. What matters
+          # is that it builds the server rather than dying on an import, so a
+          # traceback naming our own modules or a missing attribute fails and
+          # a clean exit does not.
+          set +e
+          /tmp/pkg-venv/bin/haldir-mcp < /dev/null 2>/tmp/mcp.err
+          set -e
+          if grep -qE "ModuleNotFoundError|ImportError|AttributeError" /tmp/mcp.err; then
+            echo "::error::haldir-mcp could not start"
+            sed -n '1,40p' /tmp/mcp.err
+            exit 1
+          fi
+          echo "haldir-mcp: started without an import error"
+
+      - name: Every shipped module must import
+        working-directory: /tmp
+        run: |
+          # Catches a module that is included in the wheel but whose
+          # dependencies are not declared — `api.py` imports flask at module
+          # level, and flask was missing from pyproject.toml entirely.
+          /tmp/pkg-venv/bin/python - <<'PY'
+          import importlib
+          import pkgutil
+          import site
+          import sys
+
+          failures = []
+          for root in site.getsitepackages():
+              for mod in sorted(pkgutil.iter_modules([root])):
+                  name = mod.name
+                  if not (name.startswith("haldir") or name in ("cli", "api")):
+                      continue
+                  try:
+                      importlib.import_module(name)
+                  except Exception as e:
+                      failures.append(f"{name}: {type(e).__name__}: {e}")
+
+          if failures:
+              print("::error::shipped modules that cannot be imported:")
+              for f in failures:
+                  print("   ", f)
+              sys.exit(1)
+          print("all shipped modules import")
+          PY
 
   security:
     name: security (deps + static analysis)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "haldir"
-version = "0.3.0"
+version = "0.3.1"
 description = "The guardian layer for AI agents — scoped sessions, AES-256-GCM secrets, hash-chained audit, policy proxy."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,11 +38,32 @@ classifiers = [
     "Topic :: System :: Systems Administration :: Authentication/Directory",
     "Typing :: Typed",
 ]
+# These must say the same thing as requirements.txt. They did not, and it cost
+# the published package twice over:
+#
+#   * Five runtime dependencies were missing entirely. `api.py` is shipped and
+#     imports flask at module level, so `pip install haldir && python -c
+#     "import api"` failed on ModuleNotFoundError: No module named 'flask'.
+#
+#   * `mcp>=1.27.0` had no upper bound, so PyPI users resolved mcp 2.x, whose
+#     Server API rewrite removed the `@server.list_tools()` decorator this code
+#     uses — the MCP server died with `'Server' object has no attribute
+#     'list_tools'`. CI never saw it because CI installs requirements.txt,
+#     which correctly bounds mcp below 2.0.
+#
+# Every bound here is copied from requirements.txt, so a self-hoster and a
+# `pip install` get the same thing. tests/test_packaging.py asserts the two
+# lists describe the same packages.
 dependencies = [
-    "mcp>=1.27.0",
-    "httpx>=0.28.1",
-    "pydantic>=2.13.2",
-    "cryptography>=46.0.7",
+    "flask>=3.0.0,<4.0.0",
+    "flask-cors>=4.0.0,<7.0.0",
+    "gunicorn>=21.2.0,<27.0.0",
+    "mcp>=1.27.0,<2.0.0",
+    "httpx>=0.28.1,<1.0.0",
+    "pydantic>=2.13.2,<3.0.0",
+    "cryptography>=46.0.7,<51.0.0",
+    "psycopg2-binary>=2.9.0,<3.0.0",
+    "stripe>=8.0.0,<16.0.0",
 ]
 
 [project.optional-dependencies]
@@ -69,22 +90,119 @@ Wiki = "https://github.com/ExposureGuard/haldir/wiki"
 "Self-Hosting" = "https://github.com/ExposureGuard/haldir/blob/main/SELF_HOSTING.md"
 Security = "https://github.com/ExposureGuard/haldir/blob/main/SECURITY.md"
 
+# `include` alone, naming the packages AND the loose top-level modules.
+#
+# This previously set `packages = [...]` and then an `include = [...]` for the
+# three modules. Hatchling's `packages` is a shorthand that *replaces*
+# `include`, so those three were dropped from the wheel — and with them the
+# `haldir` console script, the `haldir-mcp` entry point, and the database
+# layer both import.
+#
+# The published 0.3.0 on PyPI has this shape. It is not a rare edge: nobody who
+# has ever run `pip install haldir` has been able to start the CLI, because the
+# first line of the README dies on `ModuleNotFoundError: No module named 'cli'`.
+# tests/test_packaging.py now asserts that every module named by an entry point
+# is actually included, so this cannot recur silently.
 [tool.hatch.build.targets.wheel]
-packages = ["haldir_gate", "haldir_vault", "haldir_watch", "sdk"]
-# haldir_mcp_server.py was never in this list, so `haldir mcp serve` — which
-# imports it — raised ImportError for anyone who installed from PyPI rather
-# than cloning. It is the packaged MCP server now.
-include = ["haldir_mcp_server.py", "haldir_db.py", "cli.py"]
+# Every module, named explicitly.
+#
+# The glob "haldir_*.py" that preceded this built a correct 29-module wheel
+# locally and a wheel missing haldir_logging.py and haldir_tracing.py in CI —
+# the installed package then failed to import haldir_db, haldir_gate,
+# haldir_vault and haldir_watch, because each imports one of them. Rather than
+# work out which hatchling resolves globs differently, the list is now
+# explicit. tests/test_packaging.py fails when it goes stale, which is the
+# property that actually matters: a module added without being listed here
+# breaks the build rather than the installed package.
+include = [
+    "haldir_admin.py",
+    "haldir_audit_tree.py",
+    "haldir_compliance.py",
+    "haldir_compliance_scheduler.py",
+    "haldir_compliance_score.py",
+    "haldir_db.py",
+    "haldir_demo_tamper.py",
+    "haldir_email.py",
+    "haldir_export.py",
+    "haldir_health.py",
+    "haldir_idempotency.py",
+    "haldir_logging.py",
+    "haldir_mcp_proxy.py",
+    "haldir_mcp_server.py",
+    "haldir_merkle.py",
+    "haldir_metrics.py",
+    "haldir_migrate.py",
+    "haldir_openapi.py",
+    "haldir_outbound.py",
+    "haldir_rekor_verify.py",
+    "haldir_retention.py",
+    "haldir_scopes.py",
+    "haldir_status.py",
+    "haldir_sth_log.py",
+    "haldir_tiers.py",
+    "haldir_tracing.py",
+    "haldir_transparency_mirror.py",
+    "haldir_validation.py",
+    "haldir_x402.py",
+    # The packages.
+    "haldir_gate",
+    "haldir_vault",
+    "haldir_watch",
+    "sdk",
+    # The two entry-point modules that do not carry the prefix.
+    "cli.py",
+    "api.py",
+]
 
 [tool.hatch.build.targets.sdist]
+# The same modules as the wheel, and this list is the load-bearing one.
+#
+# `python -m build` builds the sdist first and then builds the *wheel from the
+# sdist*. So anything missing here is missing from the wheel too, no matter
+# what the wheel target says — which is why two rounds of fixing the wheel's
+# include list changed nothing: the wheel was being built out of an
+# incomplete sdist, and the two files that kept going missing
+# (haldir_logging.py, haldir_tracing.py) were exactly the ones this list
+# lacked.
+#
+# It also matters on its own: an sdist that cannot build a complete wheel is
+# broken for anyone installing from source rather than from a wheel.
 include = [
+    "haldir_admin.py",
+    "haldir_audit_tree.py",
+    "haldir_compliance.py",
+    "haldir_compliance_scheduler.py",
+    "haldir_compliance_score.py",
+    "haldir_db.py",
+    "haldir_demo_tamper.py",
+    "haldir_email.py",
+    "haldir_export.py",
+    "haldir_health.py",
+    "haldir_idempotency.py",
+    "haldir_logging.py",
+    "haldir_mcp_proxy.py",
+    "haldir_mcp_server.py",
+    "haldir_merkle.py",
+    "haldir_metrics.py",
+    "haldir_migrate.py",
+    "haldir_openapi.py",
+    "haldir_outbound.py",
+    "haldir_rekor_verify.py",
+    "haldir_retention.py",
+    "haldir_scopes.py",
+    "haldir_status.py",
+    "haldir_sth_log.py",
+    "haldir_tiers.py",
+    "haldir_tracing.py",
+    "haldir_transparency_mirror.py",
+    "haldir_validation.py",
+    "haldir_x402.py",
     "haldir_gate/**",
     "haldir_vault/**",
     "haldir_watch/**",
     "sdk/**",
-    "haldir_mcp_server.py",
-    "haldir_db.py",
     "cli.py",
+    "api.py",
     "README.md",
     "pyproject.toml",
 ]
