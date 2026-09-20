@@ -151,3 +151,55 @@ def test_sqlite_pragmas_tuple_is_stable() -> None:
         "journal_mode", "synchronous", "temp_store",
         "mmap_size", "foreign_keys", "busy_timeout",
     ]
+
+
+# ── Postgres must not wait for a lock forever ────────────────────────
+#
+# The SQLite side is covered by the busy_timeout pragma asserted above. The
+# Postgres side had no equivalent: Postgres waits for a row lock indefinitely,
+# and `lock_timeout` defaults to 0, meaning never.
+
+def test_postgres_connections_set_a_lock_timeout() -> None:
+    """One stalled transaction must not park every other writer forever.
+
+    This is a production hazard and it is also what broke the Postgres CI job:
+    the run sat for fifteen minutes and printed nothing, because a worker
+    thread holding a lock had exceeded its join timeout and the main thread
+    then blocked on the same lock when it did its own database work. Marking
+    the threads daemons did not help — pytest was stuck, not exiting.
+    """
+    assert "lock_timeout=" in haldir_db._PG_SERVER_OPTIONS, (
+        f"pooled Postgres connections set no lock_timeout, so a query blocked "
+        f"on a row lock waits forever: options={haldir_db._PG_SERVER_OPTIONS!r}"
+    )
+
+
+def test_postgres_connections_set_a_statement_timeout() -> None:
+    """A backstop against a runaway query.
+
+    Set high on purpose: it is not a request deadline, and a low value would
+    abort legitimate migrations and large exports.
+    """
+    assert "statement_timeout=" in haldir_db._PG_SERVER_OPTIONS, (
+        f"no statement_timeout backstop: options={haldir_db._PG_SERVER_OPTIONS!r}"
+    )
+
+
+def test_the_postgres_timeouts_are_overridable() -> None:
+    """A deployment with genuinely long migrations needs to raise them."""
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ, HALDIR_PG_LOCK_TIMEOUT_MS="1234",
+               HALDIR_PG_STATEMENT_TIMEOUT_MS="5678")
+    code = (
+        "import haldir_db; "
+        "print(haldir_db._PG_SERVER_OPTIONS)"
+    )
+    out = subprocess.run([sys.executable, "-c", code], env=env,
+                         capture_output=True, text=True,
+                         cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    assert out.returncode == 0, out.stderr
+    assert "lock_timeout=1234" in out.stdout, out.stdout
+    assert "statement_timeout=5678" in out.stdout, out.stdout

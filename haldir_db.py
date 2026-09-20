@@ -47,6 +47,29 @@ DEFAULT_DB_PATH = os.environ.get("HALDIR_DB_PATH", "/data/haldir.db" if os.path.
 # Pool bounds. Callers that need to override per-process (tests) can
 # also set _pg_pool_min / _pg_pool_max directly — they're read at
 # pool-construction time.
+# Server-side timeouts, applied to every pooled connection.
+#
+# Postgres waits for a row lock forever by default. SQLite does not have this
+# problem — sqlite3.connect(timeout=...) covers it — so the behaviour only
+# shows up on the backend the docs tell enterprises to run.
+#
+# What it looks like when it bites: one transaction stalls holding a lock, and
+# every other writer that needs that row queues behind it with no upper bound.
+# In a request-serving process that is a total stall from a single stuck
+# query, and in the test suite it presented as a job that ran for 15 minutes
+# and produced no output at all, because the whole run was parked on a lock
+# nobody would release.
+#
+# lock_timeout is the one that matters: it bounds the wait for a lock, which
+# is the unbounded case. statement_timeout is set high on purpose — it is a
+# backstop against a runaway query, not a request deadline, and setting it low
+# would abort legitimate migrations and large exports. Both are overridable
+# per deployment.
+_PG_SERVER_OPTIONS = " ".join((
+    f"-c lock_timeout={os.environ.get('HALDIR_PG_LOCK_TIMEOUT_MS', '10000')}",
+    f"-c statement_timeout={os.environ.get('HALDIR_PG_STATEMENT_TIMEOUT_MS', '120000')}",
+))
+
 _pg_pool_min = int(os.environ.get("HALDIR_PG_POOL_MIN", "2"))
 _pg_pool_max = int(os.environ.get("HALDIR_PG_POOL_MAX", "20"))
 _pg_pool = None
@@ -93,6 +116,7 @@ def _get_pg():
     if _pg_pool is None:
         _pg_pool = psycopg2.pool.ThreadedConnectionPool(
             _pg_pool_min, _pg_pool_max, DATABASE_URL,
+            options=_PG_SERVER_OPTIONS,
         )
 
     try:
@@ -107,6 +131,7 @@ def _get_pg():
             pass
         _pg_pool = psycopg2.pool.ThreadedConnectionPool(
             _pg_pool_min, _pg_pool_max, DATABASE_URL,
+            options=_PG_SERVER_OPTIONS,
         )
         conn = _pg_pool.getconn()
         conn.autocommit = False
