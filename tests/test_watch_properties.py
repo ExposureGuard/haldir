@@ -106,11 +106,20 @@ def test_subsecond_jitter_does_not_change_hash(cost, jitter) -> None:
 
 @_SETTINGS
 @given(cost_a=costs, cost_b=costs)
-def test_costs_within_one_cent_have_equal_hashes(cost_a: float, cost_b: float) -> None:
-    """Two costs that round to the same `.2f` formatted string must hash
-    identically (the format string is `{cost_usd:.2f}`)."""
-    if f"{cost_a:.2f}" != f"{cost_b:.2f}":
-        return  # not the same when rounded — skip
+def test_costs_equal_at_the_hashed_precision_have_equal_hashes(
+    cost_a: float, cost_b: float
+) -> None:
+    """Two costs that format to the same string must hash identically.
+
+    The precision is six decimals, matching what the hash covers and what
+    _build_entry stores. It was two, which kept chains stable against float
+    drift while money was stored as a 4-byte REAL — and also made $1.50 and
+    $1.504 indistinguishable in the chain. The columns are DOUBLE PRECISION
+    now, so the drift this guards against is sub-microdollar rather than
+    sub-cent, and the property is the same one at the finer precision.
+    """
+    if f"{cost_a:.6f}" != f"{cost_b:.6f}":
+        return  # not the same at the hashed precision — skip
     e1 = _entry(cost_usd=cost_a)
     e2 = _entry(cost_usd=cost_b)
     assert e1.compute_hash() == e2.compute_hash()

@@ -39,8 +39,9 @@ APPEND_RETRY_BASE_S = 0.002
 
 # Which fields the entry hash covers.
 #
-#   v1  everything except flag_reason
-#   v2  additionally covers flag_reason
+#   v1  everything except flag_reason, cost at 2 decimals
+#   v2  additionally covers flag_reason, cost at 2 decimals
+#   v3  additionally records cost at 6 decimals
 #
 # v1 entries were written before `flag_reason` was included, so editing the
 # stated reason an action was flagged left the entry verifying. Including the
@@ -49,11 +50,25 @@ APPEND_RETRY_BASE_S = 0.002
 # tampered reads as a catastrophic breach rather than a format change. The
 # version is stored per entry so verification uses the rule that wrote it.
 #
-# New entries are v2. A v1 entry stays verifiable as a v1 entry forever, and
-# the one thing it does not protect — its flag_reason — is exactly what the
-# entry predates.
+# v3 exists because cost was rounded to cents, which is not a precision the
+# product can afford. x402 settles micropayments — the payment path scales to
+# 6 decimals on purpose — and `round(cost_usd, 2)` in _build_entry discarded
+# that downstream: three of five ordinary micro-settlements recorded as
+# exactly $0.00, and the trail's own total disagreed with what was actually
+# spent. For an audit product, a trail that reports a real payment as zero is
+# worse than one that reports nothing, because it looks authoritative.
+#
+# Note the version each *field* was introduced at, and gate on that rather
+# than on HASH_VERSION_CURRENT. Bumping CURRENT while the flag_reason check
+# still read `>= HASH_VERSION_CURRENT` silently stopped appending flag_reason
+# to v2 entries, which would have made every one of them report as tampered.
+#
+# New entries are v3. A v1 or v2 entry stays verifiable under its own rule
+# forever, and what each does not protect is exactly what it predates.
 HASH_VERSION_LEGACY = 1
-HASH_VERSION_CURRENT = 2
+HASH_VERSION_FLAG_REASON = 2
+HASH_VERSION_COST_PRECISION = 3
+HASH_VERSION_CURRENT = HASH_VERSION_COST_PRECISION
 
 
 def _is_retryable_append_conflict(exc: BaseException) -> bool:
@@ -128,13 +143,17 @@ class AuditEntry:
         extended.
         """
         ts_int = int(self.timestamp)
+        # Cost is formatted at the precision its version recorded it with, and
+        # must match what _build_entry stored: hashing a value the row does not
+        # hold would make every entry fail its own verification.
+        cost_dp = 2 if self.hash_version < HASH_VERSION_COST_PRECISION else 6
         payload = (
             f"{self.entry_id}|{self.session_id}|{self.agent_id}|{self.action}|"
             f"{self.tool}|{json.dumps(self.details, sort_keys=True)}|"
-            f"{self.cost_usd:.2f}|{ts_int}|"
+            f"{self.cost_usd:.{cost_dp}f}|{ts_int}|"
             f"{1 if self.flagged else 0}|{self.prev_hash}"
         )
-        if self.hash_version >= HASH_VERSION_CURRENT:
+        if self.hash_version >= HASH_VERSION_FLAG_REASON:
             # Appended, not inserted, so a v1 payload is a prefix of the v2 one
             # for the same entry and the two can never collide.
             payload += f"|{self.flag_reason}"
@@ -254,7 +273,15 @@ class Watch:
             action=action,
             tool=tool,
             details=details or {},
-            cost_usd=round(cost_usd, 2),
+            # 6 decimals, to match the precision compute_hash formats at for
+            # this version. The two must agree exactly: the hash is taken over
+            # the stored value, so rounding to a different precision here than
+            # compute_hash formats would make every entry fail verification
+            # against itself.
+            #
+            # This was 2, which is a cents-only view of a product that settles
+            # micropayments — see the version constants above.
+            cost_usd=round(cost_usd, 6),
             timestamp=time.time(),  # sub-second precision; hash uses int()
             tenant_id=tenant_id,
             prev_hash=prev_hash,

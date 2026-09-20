@@ -103,10 +103,32 @@ def test_different_whole_second_changes_hash() -> None:
 
 # ── Cost normalization ───────────────────────────────────────────────────
 
-def test_cost_is_rounded_to_two_decimals_in_hash() -> None:
-    """Cost is formatted as '.2f' in the hash, so float drift doesn't break chains."""
+def test_cost_is_hashed_at_six_decimals() -> None:
+    """Cost is formatted as '.6f' in the hash.
+
+    It was '.2f', which meant these two entries — $1.50 and $1.504 — hashed
+    identically and the chain could not tell them apart. The rounding existed
+    to stop float drift breaking chains while money was stored as REAL, which
+    Postgres reads as a 4-byte float; the columns are DOUBLE PRECISION now, so
+    the precision can be recorded instead of discarded.
+    """
     e1 = _make_entry(cost_usd=1.50)
-    e2 = _make_entry(cost_usd=1.504)  # same when rounded to 2 decimals
+    e2 = _make_entry(cost_usd=1.504)
+    assert e1.compute_hash() != e2.compute_hash(), (
+        "two different costs hashed the same, so the chain does not cover the "
+        "difference"
+    )
+
+
+def test_costs_equal_at_six_decimals_still_hash_the_same() -> None:
+    """The drift protection the old rounding provided, kept.
+
+    Two values that are the same once formatted must produce the same hash,
+    or a float that round-trips through storage as 1.5000000000000002 against
+    one that returns 1.5 would read as tampering.
+    """
+    e1 = _make_entry(cost_usd=1.5)
+    e2 = _make_entry(cost_usd=1.5000000000000002)
     assert e1.compute_hash() == e2.compute_hash()
 
 
