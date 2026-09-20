@@ -392,7 +392,11 @@ jobs:
         # cheapest way to fix a failing coverage gate is to lower the number,
         # and that is exactly the move this forbids.
         run: |
-          set -euo pipefail
+          # `-x` because this check's failure mode is silence: it opens with
+          # `set -e`, so the first failing command aborts it, and the step has
+          # been reporting exit code 1 with no output at all. A trace turns
+          # that into a named command.
+          set -euxo pipefail
 
           # Make the base ref resolvable before depending on it. With
           # `set -e`, a failing command substitution aborts the step

@@ -647,8 +647,33 @@ def _exec(conn_or_cursor: Any, sql: str, params: Any = None) -> Any:
     if hasattr(conn_or_cursor, "execute"):
         return conn_or_cursor.execute(sql, params) if params is not None \
             else conn_or_cursor.execute(sql)
-    return conn_or_cursor.cursor().execute(sql, params) if params is not None \
-        else conn_or_cursor.cursor().execute(sql)
+    cursor = conn_or_cursor.cursor()
+    try:
+        return cursor.execute(sql, params) if params is not None \
+            else cursor.execute(sql)
+    except Exception:
+        # Roll back, or the failure poisons everything after it.
+        #
+        # Postgres aborts the whole transaction on any statement error, and
+        # every later statement then fails with "current transaction is
+        # aborted" until somebody rolls back. On a *coroutine* that is merely
+        # annoying; here it was silent and load-bearing: the guard probes
+        # SQLite's catalogue first, which raises on Postgres, which aborted
+        # the transaction — so the migration's column-adds were swallowed by
+        # their own `except: pass`, and its `SELECT 1 FROM audit_log WHERE
+        # seq = 0` raised, which is the branch that returns early. The
+        # function therefore did nothing at all on Postgres, quietly, and the
+        # unique index that keeps the audit chain from forking was never
+        # created. Nothing was logged, because the line that logs is past the
+        # point it had already returned from.
+        #
+        # PgConnectionWrapper.execute already rolls back for exactly this
+        # reason; this is the same precaution on the raw-connection path.
+        try:
+            conn_or_cursor.rollback()
+        except Exception:
+            pass
+        raise
 
 
 def _migrate_audit_seq(conn):

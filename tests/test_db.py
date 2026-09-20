@@ -542,3 +542,87 @@ def test_exec_works_on_both_shapes(tmp_path) -> None:
     fake = Psycopg2LikeConn()
     haldir_db._exec(fake, "SELECT 1")
     assert fake.statements == ["SELECT 1"]
+
+
+# ── A failed statement must not poison the transaction ───────────────
+#
+# Postgres aborts the whole transaction on any statement error, and every
+# statement after that fails with "current transaction is aborted" until
+# somebody rolls back. This is the mechanism behind the last Postgres-only
+# failure: the audit-seq guard probes SQLite's catalogue first, which raises
+# on Postgres and aborted the transaction, so the migration's own ALTERs and
+# its SELECT were swallowed and it returned early — silently, and before the
+# line that would have reported anything.
+
+class AbortingCursor:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=None):
+        if self._conn.aborted:
+            raise RuntimeError("current transaction is aborted, commands "
+                               "ignored until end of transaction block")
+        self._conn.statements.append(sql)
+        if "pragma_table_info" in sql:
+            self._conn.aborted = True
+            raise RuntimeError('relation "pragma_table_info" does not exist')
+        return self
+
+    def fetchall(self):
+        return []
+
+    def fetchone(self):
+        return None
+
+    def close(self):
+        pass
+
+
+class AbortingConn:
+    """A connection with Postgres's transaction-abort semantics."""
+
+    def __init__(self):
+        self.aborted = False
+        self.statements: list[str] = []
+
+    def cursor(self):
+        return AbortingCursor(self)
+
+    def rollback(self):
+        self.aborted = False
+
+    def commit(self):
+        pass
+
+
+def test_a_failed_statement_does_not_leave_the_transaction_aborted() -> None:
+    """The regression.
+
+    Without the rollback in _exec, one failed probe — and the guard's first
+    probe is SQLite SQL that always fails on Postgres — makes every
+    subsequent statement fail, so the migration silently does nothing.
+    """
+    conn = AbortingConn()
+    with pytest.raises(Exception):
+        haldir_db._exec(conn, "SELECT name FROM pragma_table_info('audit_log')")
+
+    assert conn.aborted is False, (
+        "the failed statement left the transaction aborted, so everything "
+        "after it fails — which is how the audit-seq migration came to do "
+        "nothing at all on Postgres without logging anything"
+    )
+    # And the connection is usable again.
+    haldir_db._exec(conn, "SELECT 1")
+    assert conn.statements[-1] == "SELECT 1"
+
+
+def test_the_migration_completes_on_a_connection_that_aborts() -> None:
+    """End to end: the guard's SQLite probe fails, and the migration still
+    reaches the index."""
+    conn = AbortingConn()
+    haldir_db._migrate_audit_seq(conn)
+    joined = " ".join(conn.statements)
+    assert "CREATE UNIQUE INDEX" in joined, (
+        f"the migration never reached the constraint. Statements that ran: "
+        f"{conn.statements}"
+    )
