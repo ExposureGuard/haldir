@@ -24,8 +24,27 @@ That loop is the whole idea, running live. Someone rewrites a row in the audit l
 - **Human approvals** — pause a run on a spend threshold and get a webhook.
 
 ```bash
-pip install haldir && haldir overview
+pip install haldir
+haldir serve
 ```
+
+That starts a real Haldir on this machine — SQLite, no Docker, no Postgres, no account. It generates an encryption key, applies the schema, mints an API key, and points the CLI at itself, so the next command just works:
+
+```text
+$ haldir serve
+
+  Haldir is running  http://127.0.0.1:8000
+  data: ~/.haldir
+
+  Your API key (saved to the Haldir CLI config):
+    hld_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+  Try it:
+    haldir overview
+    haldir session create --agent my-agent --scopes read
+```
+
+From there, point anything at it — the CLI, the Python SDK, an MCP client — or read the API reference at `/docs` on the instance you started. When you want Postgres and containers, `haldir init && haldir dev` scaffolds and runs that instead; [SELF_HOSTING.md](SELF_HOSTING.md) covers the rest.
 
 Works with Claude Code, Cursor, LangChain, CrewAI, AutoGen, LlamaIndex and the Vercel AI SDK — anything that can make an HTTP call or speak MCP. MIT licensed: self-host it, or point at [haldir.xyz](https://haldir.xyz) (free tier, no signup).
 
