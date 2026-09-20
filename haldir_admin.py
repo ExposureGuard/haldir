@@ -273,6 +273,21 @@ def _audit(db_path: str, tenant_id: str, *, watch: Any = None) -> dict[str, Any]
             "SELECT MAX(timestamp) FROM audit_log WHERE tenant_id = ?",
             (tenant_id,),
         ).fetchone()
+        # The most recent entries, so the dashboard can show what agents are
+        # actually doing rather than only how much they have done. Bounded by
+        # LIMIT for the same reason every other query here is: the cost must
+        # not grow with the size of the log.
+        #
+        # Ordered by (timestamp, entry_id) rather than timestamp alone. Two
+        # entries written in the same clock tick would otherwise come back in
+        # an arbitrary order and the feed would reshuffle between refreshes.
+        recent_rows = conn.execute(
+            "SELECT entry_id, session_id, agent_id, action, tool, "
+            "cost_usd, timestamp, flagged, flag_reason "
+            "FROM audit_log WHERE tenant_id = ? "
+            "ORDER BY timestamp DESC, entry_id DESC LIMIT 20",
+            (tenant_id,),
+        ).fetchall()
     finally:
         conn.close()
     last_ts = last_row[0] if last_row else None
@@ -292,6 +307,20 @@ def _audit(db_path: str, tenant_id: str, *, watch: Any = None) -> dict[str, Any]
         "flagged_7d":     int(flagged_row[0]) if flagged_row else 0,
         "last_entry_at":  last_iso,
         "chain_verified": chain_verified,
+        "recent": [
+            {
+                "entry_id":    r["entry_id"],
+                "session_id":  r["session_id"],
+                "agent_id":    r["agent_id"],
+                "action":      r["action"],
+                "tool":        r["tool"],
+                "cost_usd":    float(r["cost_usd"] or 0.0),
+                "timestamp":   float(r["timestamp"] or 0.0),
+                "flagged":     bool(r["flagged"]),
+                "flag_reason": r["flag_reason"] or "",
+            }
+            for r in recent_rows
+        ],
     }
 
 
