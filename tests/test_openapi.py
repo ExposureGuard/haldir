@@ -165,3 +165,40 @@ def test_swagger_ui_endpoint_renders_html(haldir_client) -> None:
     body = r.data.decode()
     assert "swagger-ui" in body.lower()
     assert "/openapi.json" in body
+
+
+def test_committed_spec_matches_the_generated_one() -> None:
+    """The openapi.json in the repo is a published artifact, not a by-product.
+
+    The served spec is generated from `app.url_map` on every request, so it
+    is always right. The committed file is not: nobody regenerates it, and it
+    had been five months stale — documenting 24 of the 80 live paths, with
+    the whole `.well-known/` discovery surface and `/cloud` missing.
+
+    That matters because the file is what a reader gets who fetches the
+    repository rather than the URL: agent registries, submission tooling, and
+    anyone browsing. They would be working from an API description that is
+    quietly wrong, which is worse than one that is obviously missing.
+
+    Regenerate after adding or removing a route:
+
+        python - <<'EOF'
+        import json, api, haldir_openapi
+        json.dump(haldir_openapi.generate_openapi(api.app),
+                  open("openapi.json", "w"), indent=2)
+        EOF
+    """
+    import json
+    from pathlib import Path
+
+    committed = json.loads((Path(__file__).resolve().parent.parent / "openapi.json").read_text())
+    generated = generate_openapi(api.app)
+
+    assert set(committed["paths"]) == set(generated["paths"]), (
+        "openapi.json has drifted from the live routes — regenerate it "
+        "(added: %s, removed: %s)" % (
+            sorted(set(generated["paths"]) - set(committed["paths"]))[:8],
+            sorted(set(committed["paths"]) - set(generated["paths"]))[:8],
+        )
+    )
+    assert committed == generated, "openapi.json differs beyond its path list"

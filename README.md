@@ -27,7 +27,7 @@ That loop is the whole idea, running live. Someone rewrites a row in the audit l
 pip install haldir && haldir overview
 ```
 
-Works with Claude Code, Cursor, LangChain, CrewAI, AutoGen and the Vercel AI SDK — anything that can make an HTTP call or speak MCP. MIT licensed: self-host it, or point at [haldir.xyz](https://haldir.xyz) (free tier, no signup).
+Works with Claude Code, Cursor, LangChain, CrewAI, AutoGen, LlamaIndex and the Vercel AI SDK — anything that can make an HTTP call or speak MCP. MIT licensed: self-host it, or point at [haldir.xyz](https://haldir.xyz) (free tier, no signup).
 
 ## See it in action
 

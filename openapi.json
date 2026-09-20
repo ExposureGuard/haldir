@@ -1,51 +1,2200 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Haldir API — Governance for AI Agents",
-    "version": "0.1.0",
-    "description": "Haldir is a security and governance layer for AI agents, composed of three modules:\n\n- **Gate** — Session-scoped permissions. Create short-lived sessions with explicit scopes (read, write, admin, spend:N) and TTLs. Every privileged operation must pass through Gate first.\n- **Vault** — Encrypted secret storage with access control. Secrets are AES-encrypted at rest and only released to sessions that hold the required scope. Vault also manages spend budgets and payment authorization.\n- **Watch** — Tamper-evident audit logging with automatic anomaly detection. Every tool call, payment, and decision is recorded. Suspicious patterns (rapid-fire actions, high-cost operations, unusual tools) are flagged in real time.\n\nAuthenticate with `Authorization: Bearer hld_...` or `X-API-Key: hld_...`. Create your first key via `POST /v1/keys` (no auth required for the bootstrap key).",
+    "title": "Haldir",
+    "version": "0.3.0",
+    "description": "Identity, secrets, spend, and audit for AI agents. Every mutating POST accepts an optional Idempotency-Key header for safe retries.",
     "contact": {
-      "name": "0xN0rD",
-      "url": "https://haldir.xyz"
+      "name": "Haldir",
+      "url": "https://haldir.xyz",
+      "email": "sterling@haldir.xyz"
     },
     "license": {
-      "name": "MIT",
-      "url": "https://opensource.org/licenses/MIT"
+      "name": "MIT"
     }
   },
   "servers": [
     {
-      "url": "https://haldir.xyz",
-      "description": "Production"
+      "url": "https://api.haldir.xyz"
     }
   ],
+  "components": {
+    "schemas": {
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "request_id"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Human-readable message"
+          },
+          "code": {
+            "type": "string",
+            "description": "Machine-readable error code"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Correlate with server logs"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "securitySchemes": {
+      "ApiKeyBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "hld_...",
+        "description": "Haldir API key. Obtain via POST /v1/keys (bootstrap) or your tenant admin."
+      },
+      "IdempotencyKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Idempotency-Key",
+        "description": "Optional UUID; safe retries on every mutating POST."
+      }
+    },
+    "responses": {
+      "ValidationError": {
+        "description": "Request body failed schema validation",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing or invalid API key",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Valid caller, denied action",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Endpoint or resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "Request body exceeded 1 MiB limit",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "IdempotencyMismatch": {
+        "description": "Idempotency-Key reused with a different body",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Rate-limit exceeded (tier-dependent). Carries full X-RateLimit-* surface plus a Retry-After header so clients can back off deterministically.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        },
+        "headers": {
+          "X-RateLimit-Limit": {
+            "description": "Hourly request ceiling for the caller's tier.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "X-RateLimit-Remaining": {
+            "description": "Requests left in the current hourly window.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "X-RateLimit-Used": {
+            "description": "Requests consumed in the current hourly window.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "X-RateLimit-Reset": {
+            "description": "Unix epoch (seconds) when the hourly window resets.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "X-RateLimit-Reset-After": {
+            "description": "Seconds until the hourly window resets.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "X-RateLimit-Resource": {
+            "description": "Which bucket pertains to this response: 'hourly' or 'monthly'.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "hourly",
+                "monthly"
+              ]
+            }
+          },
+          "X-RateLimit-Monthly-Limit": {
+            "description": "Monthly action quota for the tenant's subscription tier.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "X-RateLimit-Monthly-Remaining": {
+            "description": "Actions left in the current calendar month.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "X-RateLimit-Monthly-Used": {
+            "description": "Actions consumed so far in the current calendar month.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "X-RateLimit-Monthly-Reset": {
+            "description": "Unix epoch (seconds) at the start of next month.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "X-RateLimit-Monthly-Reset-After": {
+            "description": "Seconds until the monthly quota resets.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "Retry-After": {
+            "description": "RFC 7231 seconds-until-retry. Present only on 429 responses.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "Unhandled server error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "IdempotencyKeyHeader": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Client-generated UUID to make this POST safe to retry. Replays with the same key and body return the cached response; replays with the same key but a different body return 422.",
+        "schema": {
+          "type": "string",
+          "maxLength": 128
+        }
+      }
+    }
+  },
   "security": [
-    { "BearerAuth": [] },
-    { "ApiKeyAuth": [] }
-  ],
-  "tags": [
-    { "name": "gate", "description": "Session management and permission checks" },
-    { "name": "vault", "description": "Encrypted secret storage and retrieval" },
-    { "name": "watch", "description": "Audit logging and spend tracking" },
-    { "name": "proxy", "description": "Governance proxy for upstream MCP servers" },
-    { "name": "audit", "description": "Query audit trail and spend summaries" },
-    { "name": "approvals", "description": "Human-in-the-loop approval workflows" },
-    { "name": "webhooks", "description": "Webhook registration for real-time alerts" }
+    {
+      "ApiKeyBearer": []
+    }
   ],
   "paths": {
     "/v1/keys": {
       "post": {
-        "operationId": "createApiKey",
-        "summary": "Create an API key",
-        "description": "Create a new API key. The very first key requires no authentication. Subsequent keys require either a valid API key or the HALDIR_BOOTSTRAP_TOKEN.",
-        "tags": ["gate"],
-        "security": [
-          {},
-          { "BearerAuth": [] },
-          { "ApiKeyAuth": [] }
+        "operationId": "post_create_api_key",
+        "summary": "Create an API key. First key requires HALDIR_BOOTSTRAP_TOKEN env var.",
+        "tags": [
+          "gate"
         ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "get": {
+        "operationId": "get_list_api_keys",
+        "summary": "List every API key registered against the authed tenant.",
+        "tags": [
+          "gate"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/keys/{prefix}": {
+      "delete": {
+        "operationId": "delete_revoke_api_key",
+        "summary": "Revoke a key by its 12-char prefix.",
+        "tags": [
+          "gate"
+        ],
+        "parameters": [
+          {
+            "name": "prefix",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/demo/key": {
+      "post": {
+        "operationId": "post_create_demo_key",
+        "summary": "Create a temporary demo API key for the landing page. No auth required.",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/sessions": {
+      "post": {
+        "operationId": "post_create_session",
+        "summary": "",
+        "tags": [
+          "gate"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
         "requestBody": {
-          "required": false,
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agent_id": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "scopes": {
+                    "type": "array",
+                    "items": {},
+                    "default": [
+                      "read",
+                      "browse"
+                    ]
+                  },
+                  "ttl": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2592000,
+                    "default": 3600
+                  },
+                  "spend_limit": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "parent_session_id": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "default": ""
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "agent_id"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "get_list_sessions",
+        "summary": "List sessions for the caller's tenant.",
+        "tags": [
+          "gate"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/sessions/{session_id}": {
+      "get": {
+        "operationId": "get_get_session",
+        "summary": "",
+        "tags": [
+          "gate"
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_revoke_session",
+        "summary": "",
+        "tags": [
+          "gate"
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/sessions/{session_id}/descendants": {
+      "get": {
+        "operationId": "get_get_session_descendants",
+        "summary": "The delegation subtree beneath a session, nested, with cost rolled up.",
+        "tags": [
+          "gate"
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/sessions/{session_id}/check": {
+      "post": {
+        "operationId": "post_check_permission",
+        "summary": "",
+        "tags": [
+          "gate"
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/secrets": {
+      "post": {
+        "operationId": "post_store_secret",
+        "summary": "",
+        "tags": [
+          "vault"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "get": {
+        "operationId": "get_list_secrets",
+        "summary": "",
+        "tags": [
+          "vault"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/secrets/{name}": {
+      "get": {
+        "operationId": "get_get_secret",
+        "summary": "",
+        "tags": [
+          "vault"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_delete_secret",
+        "summary": "",
+        "tags": [
+          "vault"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/payments/authorize": {
+      "post": {
+        "operationId": "post_authorize_payment",
+        "summary": "",
+        "tags": [
+          "vault"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "amount": {
+                    "type": "number",
+                    "minimum": 0.01,
+                    "maximum": 1000000
+                  },
+                  "currency": {
+                    "type": "string",
+                    "maxLength": 8,
+                    "default": "USD"
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "default": ""
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "session_id",
+                  "amount"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/audit": {
+      "post": {
+        "operationId": "post_log_action",
+        "summary": "",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "get": {
+        "operationId": "get_get_audit_trail",
+        "summary": "",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/spend": {
+      "get": {
+        "operationId": "get_get_spend",
+        "summary": "",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/stats": {
+      "get": {
+        "operationId": "get_get_audit_stats",
+        "summary": "Lightweight aggregate overview of the tenant's audit trail and system state.",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/verify": {
+      "get": {
+        "operationId": "get_verify_audit_chain",
+        "summary": "Verify the cryptographic integrity of the audit log hash chain.",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/export": {
+      "get": {
+        "operationId": "get_export_audit_trail",
+        "summary": "Stream the caller's audit trail for ingest into a SIEM, data",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/export/manifest": {
+      "get": {
+        "operationId": "get_export_audit_manifest",
+        "summary": "Return the chain-verification manifest for the same filter set",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/tree-head": {
+      "get": {
+        "operationId": "get_get_audit_tree_head",
+        "summary": "Current Signed Tree Head (STH) for the caller's audit log.",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/inclusion-proof/{entry_id}": {
+      "get": {
+        "operationId": "get_get_audit_inclusion_proof",
+        "summary": "RFC 6962 inclusion proof for a single audit entry.",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/sth-log": {
+      "get": {
+        "operationId": "get_get_audit_sth_log",
+        "summary": "Self-published log of every Signed Tree Head Haldir has issued",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/sth-log/mirror/receipts": {
+      "get": {
+        "operationId": "get_get_sth_mirror_receipts",
+        "summary": "Every external-transparency-log receipt Haldir recorded for",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/sth-log/mirror/receipts/{receipt_id}/verify": {
+      "get": {
+        "operationId": "get_verify_sth_mirror_receipt",
+        "summary": "Cryptographically verify a single Rekor receipt against",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [
+          {
+            "name": "receipt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/sth-log/verify": {
+      "get": {
+        "operationId": "get_verify_audit_sth_log",
+        "summary": "Anti-equivocation verifier: an auditor pins (tree_size, root_hash)",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/audit/consistency-proof": {
+      "get": {
+        "operationId": "get_get_audit_consistency_proof",
+        "summary": "RFC 6962 consistency proof between two tree sizes.",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/usage": {
+      "get": {
+        "operationId": "get_get_usage",
+        "summary": "Get usage stats for billing.",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/approvals/rules": {
+      "post": {
+        "operationId": "post_add_approval_rule",
+        "summary": "",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/approvals/request": {
+      "post": {
+        "operationId": "post_request_approval",
+        "summary": "",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/approvals/{request_id}": {
+      "get": {
+        "operationId": "get_check_approval",
+        "summary": "",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/approvals/{request_id}/approve": {
+      "post": {
+        "operationId": "post_approve_request",
+        "summary": "",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/approvals/{request_id}/deny": {
+      "post": {
+        "operationId": "post_deny_request",
+        "summary": "",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/approvals/pending": {
+      "get": {
+        "operationId": "get_pending_approvals",
+        "summary": "",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/webhooks": {
+      "post": {
+        "operationId": "post_register_webhook",
+        "summary": "",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "get": {
+        "operationId": "get_list_webhooks",
+        "summary": "",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{webhook_id}/rotate-secret": {
+      "post": {
+        "operationId": "post_rotate_webhook_secret",
+        "summary": "Mint a new HMAC secret for the webhook + demote the current",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [
+          {
+            "name": "webhook_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/admin/overview": {
+      "get": {
+        "operationId": "get_admin_overview",
+        "summary": "Single-call dashboard: tier + usage + sessions + vault + audit",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/compliance/evidence": {
+      "get": {
+        "operationId": "get_compliance_evidence",
+        "summary": "Auditor-ready proof-of-control pack: identity, access control,",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/compliance/schedules": {
+      "post": {
+        "operationId": "post_create_compliance_schedule",
+        "summary": "Register a recurring evidence-pack delivery. Cadence + delivery",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -53,1417 +2202,2136 @@
                 "properties": {
                   "name": {
                     "type": "string",
-                    "default": "default",
-                    "description": "Human-readable name for this key"
+                    "maxLength": 128
                   },
-                  "tier": {
+                  "cadence": {
                     "type": "string",
-                    "enum": ["free", "pro", "enterprise"],
-                    "default": "free",
-                    "description": "Pricing tier (affects rate limits)"
+                    "enum": [
+                      "daily",
+                      "weekly",
+                      "monthly",
+                      "quarterly"
+                    ]
                   },
-                  "bootstrap_token": {
+                  "delivery": {
                     "type": "string",
-                    "description": "HALDIR_BOOTSTRAP_TOKEN value, required when creating additional keys without an existing API key"
+                    "maxLength": 256
                   }
-                }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "cadence",
+                  "delivery"
+                ]
               }
             }
           }
-        },
-        "responses": {
-          "201": {
-            "description": "API key created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "key": { "type": "string", "description": "Full API key (shown only once)" },
-                    "prefix": { "type": "string", "description": "Key prefix for identification" },
-                    "name": { "type": "string" },
-                    "tier": { "type": "string" },
-                    "message": { "type": "string" }
-                  },
-                  "required": ["key", "prefix", "name", "tier", "message"]
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
-        }
-      }
-    },
-    "/v1/sessions": {
-      "post": {
-        "operationId": "createSession",
-        "summary": "Create an agent session",
-        "description": "Create a scoped session for an AI agent with explicit permissions, TTL, and optional spend budget.",
-        "tags": ["gate"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["agent_id"],
-                "properties": {
-                  "agent_id": { "type": "string", "description": "Unique agent identifier" },
-                  "scopes": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "default": ["read", "browse"],
-                    "description": "Permission scopes to grant"
-                  },
-                  "ttl": {
-                    "type": "integer",
-                    "default": 3600,
-                    "description": "Session time-to-live in seconds"
-                  },
-                  "spend_limit": {
-                    "type": "number",
-                    "nullable": true,
-                    "description": "Maximum USD spend for this session"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Session created",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/SessionCreated" }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/sessions/{session_id}": {
-      "get": {
-        "operationId": "getSession",
-        "summary": "Get session info",
-        "description": "Retrieve the current state of a session including scopes, spend, remaining budget, and validity.",
-        "tags": ["gate"],
-        "parameters": [
-          { "$ref": "#/components/parameters/SessionIdPath" }
-        ],
-        "responses": {
-          "200": {
-            "description": "Session details",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/SessionDetail" }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      },
-      "delete": {
-        "operationId": "revokeSession",
-        "summary": "Revoke a session",
-        "description": "Immediately revoke a session, permanently disabling all permissions.",
-        "tags": ["gate"],
-        "parameters": [
-          { "$ref": "#/components/parameters/SessionIdPath" }
-        ],
-        "responses": {
-          "200": {
-            "description": "Session revoked",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "revoked": { "type": "boolean", "const": true },
-                    "session_id": { "type": "string" }
-                  },
-                  "required": ["revoked", "session_id"]
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/sessions/{session_id}/check": {
-      "post": {
-        "operationId": "checkPermission",
-        "summary": "Check a session permission",
-        "description": "Check whether a session holds a specific scope. Use before sensitive operations to avoid 403 errors.",
-        "tags": ["gate"],
-        "parameters": [
-          { "$ref": "#/components/parameters/SessionIdPath" }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["scope"],
-                "properties": {
-                  "scope": { "type": "string", "description": "The scope to check (e.g. read, write, admin)" }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Permission check result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "allowed": { "type": "boolean" },
-                    "session_id": { "type": "string" },
-                    "scope": { "type": "string" }
-                  },
-                  "required": ["allowed", "session_id", "scope"]
-                }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/secrets": {
-      "post": {
-        "operationId": "storeSecret",
-        "summary": "Store an encrypted secret",
-        "description": "Store a secret in the Vault, encrypted at rest with AES. Optionally require a specific scope for retrieval.",
-        "tags": ["vault"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["name", "value"],
-                "properties": {
-                  "name": { "type": "string", "description": "Unique secret name" },
-                  "value": { "type": "string", "description": "Secret value to encrypt" },
-                  "scope_required": {
-                    "type": "string",
-                    "default": "read",
-                    "description": "Minimum scope a session must hold to read this secret"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Secret stored",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "stored": { "type": "boolean", "const": true },
-                    "name": { "type": "string" }
-                  },
-                  "required": ["stored", "name"]
-                }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       },
       "get": {
-        "operationId": "listSecrets",
-        "summary": "List secret names",
-        "description": "List all stored secret names (never values).",
-        "tags": ["vault"],
-        "responses": {
-          "200": {
-            "description": "List of secret names",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "secrets": {
-                      "type": "array",
-                      "items": { "type": "string" }
-                    },
-                    "count": { "type": "integer" }
-                  },
-                  "required": ["secrets", "count"]
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/secrets/{name}": {
-      "get": {
-        "operationId": "getSecret",
-        "summary": "Retrieve a secret",
-        "description": "Retrieve a decrypted secret. Pass X-Session-ID header or session_id query param for scope-based access control.",
-        "tags": ["vault"],
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Secret name"
-          },
-          {
-            "name": "session_id",
-            "in": "query",
-            "required": false,
-            "schema": { "type": "string" },
-            "description": "Session ID for scope enforcement"
-          },
-          {
-            "name": "X-Session-ID",
-            "in": "header",
-            "required": false,
-            "schema": { "type": "string" },
-            "description": "Session ID for scope enforcement (alternative to query param)"
-          }
+        "operationId": "get_list_compliance_schedules",
+        "summary": "Return every schedule registered for the authed tenant \u2014",
+        "tags": [
+          "platform"
         ],
+        "parameters": [],
         "responses": {
           "200": {
-            "description": "Secret value",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "name": { "type": "string" },
-                    "value": { "type": "string" }
-                  },
-                  "required": ["name", "value"]
-                }
-              }
-            }
+            "description": "Success"
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      },
-      "delete": {
-        "operationId": "deleteSecret",
-        "summary": "Delete a secret",
-        "description": "Permanently delete a secret from the Vault.",
-        "tags": ["vault"],
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Secret name"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Secret deleted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "deleted": { "type": "boolean", "const": true },
-                    "name": { "type": "string" }
-                  },
-                  "required": ["deleted", "name"]
-                }
-              }
-            }
+          "201": {
+            "description": "Created"
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/payments/authorize": {
-      "post": {
-        "operationId": "authorizePayment",
-        "summary": "Authorize a payment",
-        "description": "Authorize a payment against a session's spend budget. Denied if insufficient budget remains.",
-        "tags": ["vault"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["session_id", "amount"],
-                "properties": {
-                  "session_id": { "type": "string" },
-                  "amount": { "type": "number", "description": "Amount to authorize" },
-                  "currency": { "type": "string", "default": "USD", "description": "ISO 4217 currency code" },
-                  "description": { "type": "string", "default": "", "description": "What the payment is for" }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Payment authorized",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/PaymentResult" }
-              }
-            }
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
           "403": {
-            "description": "Payment denied (budget exceeded)",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/PaymentResult" }
-              }
-            }
+            "$ref": "#/components/responses/Forbidden"
           },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
-    "/v1/audit": {
-      "post": {
-        "operationId": "logAction",
-        "summary": "Log an agent action",
-        "description": "Log an action to the tamper-evident audit trail. Watch automatically flags anomalous patterns.",
-        "tags": ["watch", "audit"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["session_id", "action"],
-                "properties": {
-                  "session_id": { "type": "string" },
-                  "tool": { "type": "string", "default": "", "description": "Tool or service name" },
-                  "action": { "type": "string", "description": "Description of the action" },
-                  "details": { "type": "string", "nullable": true, "description": "Additional context" },
-                  "cost_usd": { "type": "number", "default": 0, "description": "Cost in USD" }
-                }
-              }
+    "/v1/compliance/schedules/{schedule_id}": {
+      "delete": {
+        "operationId": "delete_delete_compliance_schedule",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
-        },
+        ],
         "responses": {
-          "201": {
-            "description": "Action logged",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "logged": { "type": "boolean", "const": true },
-                    "entry_id": { "type": "string" },
-                    "flagged": { "type": "boolean", "description": "Whether the action was flagged as anomalous" },
-                    "flag_reason": { "type": "string", "nullable": true }
-                  },
-                  "required": ["logged", "entry_id", "flagged", "flag_reason"]
-                }
-              }
-            }
+          "200": {
+            "description": "Success"
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/compliance/score": {
+      "get": {
+        "operationId": "get_compliance_score",
+        "summary": "Live 0-100 readiness score + per-control pass/warn/fail detail.",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/compliance/evidence/manifest": {
+      "get": {
+        "operationId": "get_compliance_evidence_manifest",
+        "summary": "Just the signature block \u2014 used by an auditor verifying an",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/webhooks/deliveries": {
+      "get": {
+        "operationId": "get_list_webhook_deliveries",
+        "summary": "Return the most recent delivery attempts for the authed tenant.",
+        "tags": [
+          "watch"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/mcp": {
+      "post": {
+        "operationId": "post_mcp_jsonrpc",
+        "summary": "MCP JSON-RPC 2.0 endpoint for Smithery.ai and MCP clients.",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       },
       "get": {
-        "operationId": "getAuditTrail",
-        "summary": "Query the audit trail",
-        "description": "Retrieve audit log entries with optional filters by session, agent, tool, or flagged status.",
-        "tags": ["watch", "audit"],
-        "parameters": [
-          { "name": "session_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by session" },
-          { "name": "agent_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by agent" },
-          { "name": "tool", "in": "query", "schema": { "type": "string" }, "description": "Filter by tool name" },
-          { "name": "flagged", "in": "query", "schema": { "type": "string", "enum": ["true", "false"] }, "description": "Only flagged entries" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 100 }, "description": "Max entries to return" }
+        "operationId": "get_mcp_info",
+        "summary": "GET /mcp \u2014 server info for discovery.",
+        "tags": [
+          "platform"
         ],
+        "parameters": [],
         "responses": {
           "200": {
-            "description": "Audit entries",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "count": { "type": "integer" },
-                    "entries": {
-                      "type": "array",
-                      "items": { "$ref": "#/components/schemas/AuditEntry" }
-                    }
-                  },
-                  "required": ["count", "entries"]
-                }
-              }
-            }
+            "description": "Success"
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/audit/spend": {
-      "get": {
-        "operationId": "getSpend",
-        "summary": "Get spend summary",
-        "description": "Get aggregated spend data, optionally filtered by session or agent.",
-        "tags": ["watch", "audit"],
-        "parameters": [
-          { "name": "session_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by session" },
-          { "name": "agent_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by agent" }
-        ],
-        "responses": {
-          "200": {
-            "description": "Spend summary",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "Spend breakdown returned by Watch.get_spend()",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/usage": {
-      "get": {
-        "operationId": "getUsage",
-        "summary": "Get usage stats",
-        "description": "Get API usage count for the current tenant, optionally for a specific month.",
-        "tags": ["watch"],
-        "parameters": [
-          { "name": "month", "in": "query", "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}$" }, "description": "Month in YYYY-MM format (defaults to current month)" }
-        ],
-        "responses": {
-          "200": {
-            "description": "Usage data",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "tenant_id": { "type": "string" },
-                    "month": { "type": "string" },
-                    "action_count": { "type": "integer" },
-                    "tier": { "type": "string" }
-                  },
-                  "required": ["tenant_id", "month", "action_count"]
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/approvals/rules": {
-      "post": {
-        "operationId": "addApprovalRule",
-        "summary": "Add an approval rule",
-        "description": "Add a rule that triggers human-in-the-loop approval for matching actions.",
-        "tags": ["approvals"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["type"],
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": ["spend_over", "tool_blocked", "destructive", "all"],
-                    "description": "Rule type"
-                  },
-                  "threshold": { "type": "number", "default": 0, "description": "Threshold for spend_over rules (USD)" },
-                  "tools": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "nullable": true,
-                    "description": "Tool names for tool_blocked rules"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
           "201": {
-            "description": "Rule added",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "added": { "type": "boolean", "const": true },
-                    "type": { "type": "string" }
-                  },
-                  "required": ["added", "type"]
-                }
-              }
-            }
+            "description": "Created"
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
-    "/v1/approvals/request": {
-      "post": {
-        "operationId": "requestApproval",
-        "summary": "Request human approval",
-        "description": "Submit an action for human approval. The agent polls the approval status until it is approved or denied.",
-        "tags": ["approvals"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["session_id"],
-                "properties": {
-                  "session_id": { "type": "string" },
-                  "tool": { "type": "string", "default": "" },
-                  "action": { "type": "string", "default": "" },
-                  "amount": { "type": "number", "default": 0 },
-                  "reason": { "type": "string", "default": "" },
-                  "details": { "type": "string", "nullable": true },
-                  "ttl": { "type": "integer", "default": 3600, "description": "Time before the request expires (seconds)" }
-                }
-              }
-            }
-          }
-        },
+    "/.well-known/mcp/mcp.json": {
+      "get": {
+        "operationId": "get_mcp_discovery",
+        "summary": "Lightweight MCP discovery metadata.",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
         "responses": {
+          "200": {
+            "description": "Success"
+          },
           "201": {
-            "description": "Approval requested",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "request_id": { "type": "string" },
-                    "status": { "type": "string" },
-                    "expires_at": { "type": "number" }
-                  },
-                  "required": ["request_id", "status", "expires_at"]
-                }
-              }
-            }
+            "description": "Created"
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
-    "/v1/approvals/{request_id}": {
+    "/.well-known/mcp/server-card.json": {
       "get": {
-        "operationId": "checkApproval",
-        "summary": "Check approval status",
-        "description": "Poll the status of a pending approval request.",
-        "tags": ["approvals"],
-        "parameters": [
-          {
-            "name": "request_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" }
-          }
+        "operationId": "get_mcp_server_card",
+        "summary": "MCP server card for automated discovery and Smithery listing.",
+        "tags": [
+          "platform"
         ],
+        "parameters": [],
         "responses": {
           "200": {
-            "description": "Approval status",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ApprovalDetail" }
-              }
-            }
+            "description": "Success"
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/approvals/{request_id}/approve": {
-      "post": {
-        "operationId": "approveRequest",
-        "summary": "Approve a pending request",
-        "description": "Approve a pending approval request, allowing the agent to proceed.",
-        "tags": ["approvals"],
-        "parameters": [
-          {
-            "name": "request_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "decided_by": { "type": "string", "default": "", "description": "Who approved (e.g. human operator name)" },
-                  "note": { "type": "string", "default": "", "description": "Optional note on the decision" }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Request approved",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "approved": { "type": "boolean", "const": true },
-                    "request_id": { "type": "string" }
-                  },
-                  "required": ["approved", "request_id"]
-                }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/approvals/{request_id}/deny": {
-      "post": {
-        "operationId": "denyRequest",
-        "summary": "Deny a pending request",
-        "description": "Deny a pending approval request, blocking the agent's action.",
-        "tags": ["approvals"],
-        "parameters": [
-          {
-            "name": "request_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "decided_by": { "type": "string", "default": "" },
-                  "note": { "type": "string", "default": "" }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Request denied",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "denied": { "type": "boolean", "const": true },
-                    "request_id": { "type": "string" }
-                  },
-                  "required": ["denied", "request_id"]
-                }
-              }
-            }
-          },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/approvals/pending": {
-      "get": {
-        "operationId": "listPendingApprovals",
-        "summary": "List pending approvals",
-        "description": "List all approval requests that are still pending a decision.",
-        "tags": ["approvals"],
-        "parameters": [
-          { "name": "agent_id", "in": "query", "schema": { "type": "string" }, "description": "Filter by agent" }
-        ],
-        "responses": {
-          "200": {
-            "description": "Pending approval requests",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "count": { "type": "integer" },
-                    "requests": {
-                      "type": "array",
-                      "items": { "$ref": "#/components/schemas/PendingApproval" }
-                    }
-                  },
-                  "required": ["count", "requests"]
-                }
-              }
-            }
-          },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      }
-    },
-    "/v1/webhooks": {
-      "post": {
-        "operationId": "registerWebhook",
-        "summary": "Register a webhook",
-        "description": "Register a URL to receive real-time event notifications (anomaly, approval_requested, budget_exhausted).",
-        "tags": ["webhooks"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["url"],
-                "properties": {
-                  "url": { "type": "string", "format": "uri", "description": "Webhook endpoint URL" },
-                  "name": { "type": "string", "default": "", "description": "Human-readable name" },
-                  "events": {
-                    "type": "array",
-                    "items": { "type": "string", "enum": ["all", "anomaly", "approval_requested", "budget_exhausted"] },
-                    "nullable": true,
-                    "description": "Events to subscribe to (defaults to all)"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
           "201": {
-            "description": "Webhook registered",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "registered": { "type": "boolean", "const": true },
-                    "url": { "type": "string" },
-                    "events": {
-                      "type": "array",
-                      "items": { "type": "string" },
-                      "nullable": true
-                    }
-                  },
-                  "required": ["registered", "url", "events"]
-                }
-              }
-            }
+            "description": "Created"
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
-        }
-      },
-      "get": {
-        "operationId": "listWebhooks",
-        "summary": "List registered webhooks",
-        "description": "List all webhooks registered for this account.",
-        "tags": ["webhooks"],
-        "responses": {
-          "200": {
-            "description": "Webhook list",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "webhooks": { "type": "array", "items": { "type": "object" } }
-                  },
-                  "required": ["webhooks"]
-                }
-              }
-            }
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
     "/v1/proxy/upstreams": {
       "post": {
-        "operationId": "registerUpstream",
-        "summary": "Register an upstream MCP server",
-        "description": "Register an upstream MCP server to proxy through Haldir. Haldir discovers the server's tools automatically.",
-        "tags": ["proxy"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["name", "url"],
-                "properties": {
-                  "name": { "type": "string", "description": "Unique name for this upstream" },
-                  "url": { "type": "string", "format": "uri", "description": "MCP server URL" }
-                }
-              }
-            }
-          }
-        },
+        "operationId": "post_register_upstream",
+        "summary": "Register an upstream MCP server to proxy through Haldir.",
+        "tags": [
+          "proxy"
+        ],
+        "parameters": [],
         "responses": {
-          "201": {
-            "description": "Upstream registered",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "registered": { "type": "boolean", "const": true },
-                    "name": { "type": "string" },
-                    "url": { "type": "string" },
-                    "healthy": { "type": "boolean" },
-                    "tools_discovered": { "type": "integer" },
-                    "tool_names": { "type": "array", "items": { "type": "string" } },
-                    "error": { "type": "string", "description": "Present if upstream had errors during discovery" },
-                    "upstream_status": { "type": "integer", "description": "HTTP status from upstream (debug)" },
-                    "upstream_body": { "type": "string", "description": "Truncated response body from upstream (debug)" }
-                  },
-                  "required": ["registered", "name", "url", "healthy", "tools_discovered", "tool_names"]
-                }
-              }
-            }
+          "200": {
+            "description": "Success"
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       },
       "get": {
-        "operationId": "listUpstreams",
-        "summary": "List upstream servers",
-        "description": "List all registered upstream MCP servers and their health status.",
-        "tags": ["proxy"],
+        "operationId": "get_list_upstreams",
+        "summary": "List all registered upstream servers and their status.",
+        "tags": [
+          "proxy"
+        ],
+        "parameters": [],
         "responses": {
           "200": {
-            "description": "Upstream server stats",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "Stats object from HaldirProxy.get_stats()",
-                  "additionalProperties": true
-                }
-              }
-            }
+            "description": "Success"
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
     "/v1/proxy/tools": {
       "get": {
-        "operationId": "listProxyTools",
-        "summary": "List all proxied tools",
-        "description": "List all tools available through the proxy, aggregated from all registered upstreams.",
-        "tags": ["proxy"],
+        "operationId": "get_proxy_tools",
+        "summary": "List all tools available through the proxy (from all upstreams).",
+        "tags": [
+          "proxy"
+        ],
+        "parameters": [],
         "responses": {
           "200": {
-            "description": "Proxied tools",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "count": { "type": "integer" },
-                    "tools": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "name": { "type": "string" },
-                          "description": { "type": "string" },
-                          "upstream": { "type": "string" }
-                        },
-                        "required": ["name", "description", "upstream"]
-                      }
-                    }
-                  },
-                  "required": ["count", "tools"]
-                }
-              }
-            }
+            "description": "Success"
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
     "/v1/proxy/call": {
       "post": {
-        "operationId": "proxyCall",
-        "summary": "Call a tool through the proxy",
-        "description": "Call a tool on an upstream MCP server through Haldir's governance layer. The session is validated, permissions checked, policies enforced, and the call is logged to the audit trail.",
-        "tags": ["proxy"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["tool", "session_id"],
-                "properties": {
-                  "tool": { "type": "string", "description": "Tool name to call" },
-                  "arguments": { "type": "object", "additionalProperties": true, "description": "Arguments to pass to the tool" },
-                  "session_id": { "type": "string", "description": "Active session ID" }
-                }
-              }
-            }
-          }
-        },
+        "operationId": "post_proxy_call",
+        "summary": "Call a tool through the Haldir proxy.",
+        "tags": [
+          "proxy"
+        ],
+        "parameters": [],
         "responses": {
           "200": {
-            "description": "Tool call result from upstream",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "description": "MCP tool result with content array",
-                  "properties": {
-                    "content": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "type": { "type": "string" },
-                          "text": { "type": "string" }
-                        }
-                      }
-                    },
-                    "isError": { "type": "boolean" }
-                  }
-                }
-              }
-            }
+            "description": "Success"
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
           "403": {
-            "description": "Blocked by policy or insufficient permissions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "isError": { "type": "boolean", "const": true },
-                    "content": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "type": { "type": "string" },
-                          "text": { "type": "string" }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
+            "$ref": "#/components/responses/Forbidden"
           },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
     "/v1/proxy/policies": {
       "post": {
-        "operationId": "addProxyPolicy",
-        "summary": "Add a governance policy",
-        "description": "Add a policy to the proxy that controls which tools agents can use. Supported types: block_tool, allow_list, deny_list, spend_limit, rate_limit, time_window.",
-        "tags": ["proxy"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["type"],
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": ["block_tool", "allow_list", "deny_list", "spend_limit", "rate_limit", "time_window"],
-                    "description": "Policy type"
-                  },
-                  "tool": { "type": "string", "description": "Tool name (for block_tool)" },
-                  "tools": { "type": "array", "items": { "type": "string" }, "description": "Tool list (for allow_list / deny_list)" },
-                  "max": { "type": "number", "description": "Max USD (spend_limit)" },
-                  "max_per_minute": { "type": "integer", "description": "Max calls per minute (rate_limit)" },
-                  "start_hour": { "type": "integer", "description": "Start hour UTC (time_window)" },
-                  "end_hour": { "type": "integer", "description": "End hour UTC (time_window)" }
-                }
-              }
-            }
-          }
-        },
+        "operationId": "post_add_proxy_policy",
+        "summary": "Add a governance policy to the proxy.",
+        "tags": [
+          "proxy"
+        ],
+        "parameters": [],
         "responses": {
-          "201": {
-            "description": "Policy added",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "added": { "type": "boolean", "const": true },
-                    "type": { "type": "string" }
-                  },
-                  "required": ["added", "type"]
-                }
-              }
-            }
+          "200": {
+            "description": "Success"
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       },
       "get": {
-        "operationId": "listProxyPolicies",
-        "summary": "List governance policies",
-        "description": "List all active proxy governance policies.",
-        "tags": ["proxy"],
+        "operationId": "get_list_proxy_policies",
+        "summary": "",
+        "tags": [
+          "proxy"
+        ],
+        "parameters": [],
         "responses": {
           "200": {
-            "description": "Active policies",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "policies": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
-                    "count": { "type": "integer" }
-                  },
-                  "required": ["policies", "count"]
-                }
-              }
-            }
+            "description": "Success"
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
     "/v1/metrics": {
       "get": {
-        "operationId": "getMetrics",
-        "summary": "Get platform metrics",
-        "description": "Full platform metrics including API keys, sessions, actions, spend, secrets, payments, approvals, and top tools/agents.",
-        "tags": ["watch", "audit"],
+        "operationId": "get_metrics",
+        "summary": "Full platform metrics \u2014 users, sessions, actions, spend, secrets, upstreams.",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
         "responses": {
           "200": {
-            "description": "Platform metrics",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "total_api_keys": { "type": "integer" },
-                    "total_sessions": { "type": "integer" },
-                    "active_sessions": { "type": "integer" },
-                    "unique_agents": { "type": "integer" },
-                    "total_actions": { "type": "integer" },
-                    "flagged_actions": { "type": "integer" },
-                    "actions_today": { "type": "integer" },
-                    "total_spend_usd": { "type": "number" },
-                    "total_secrets": { "type": "integer" },
-                    "total_payments": { "type": "integer" },
-                    "total_payment_volume_usd": { "type": "number" },
-                    "pending_approvals": { "type": "integer" },
-                    "total_approvals": { "type": "integer" },
-                    "top_tools": { "type": "object", "additionalProperties": { "type": "integer" } },
-                    "top_agents": { "type": "object", "additionalProperties": { "type": "integer" } },
-                    "usage_this_month": { "type": "object", "additionalProperties": { "type": "integer" } }
-                  }
-                }
-              }
-            }
+            "description": "Success"
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/gallery": {
+      "get": {
+        "operationId": "get_demo_gallery_page",
+        "summary": "Every product screenshot on one page \u2014 the visual tour without the",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/x402/tree-head": {
+      "get": {
+        "operationId": "get_x402_tree_head",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/x402/inclusion-proof/{entry_id}": {
+      "get": {
+        "operationId": "get_x402_inclusion_proof",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/x402/evidence-pack": {
+      "get": {
+        "operationId": "get_x402_evidence_pack",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/x402/manifest": {
+      "get": {
+        "operationId": "get_x402_manifest",
+        "summary": "Discovery endpoint \u2014 lists every x402 resource this server",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/.well-known/x402.json": {
+      "get": {
+        "operationId": "get_x402_well_known",
+        "summary": "Same content as /v1/x402/manifest at the well-known path. Some",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/billing/checkout": {
+      "post": {
+        "operationId": "post_billing_checkout",
+        "summary": "Create a Stripe Checkout session for Pro or Enterprise.",
+        "tags": [
+          "billing"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/billing/webhook": {
+      "post": {
+        "operationId": "post_billing_webhook",
+        "summary": "Handle Stripe webhook events for subscription lifecycle.",
+        "tags": [
+          "billing"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/billing/portal": {
+      "get": {
+        "operationId": "get_billing_portal",
+        "summary": "Return a Stripe Customer Portal URL for managing subscription.",
+        "tags": [
+          "billing"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "operationId": "get_dashboard",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/blog/": {
+      "get": {
+        "operationId": "get_blog_index",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/blog": {
+      "get": {
+        "operationId": "get_blog_index",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/blog/{slug}": {
+      "get": {
+        "operationId": "get_blog_post",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/.well-known/security.txt": {
+      "get": {
+        "operationId": "get_security_txt",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/.well-known/ai.txt": {
+      "get": {
+        "operationId": "get_ai_txt",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/.well-known/ai-plugin.json": {
+      "get": {
+        "operationId": "get_ai_plugin",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/.well-known/agent.json": {
+      "get": {
+        "operationId": "get_agent_json",
+        "summary": "Single-entry-point manifest for agents doing capability",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/.well-known/jwks.json": {
+      "get": {
+        "operationId": "get_jwks_json",
+        "summary": "JSON Web Key Set \u2014 publishes the Ed25519 public key used to",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/AGENTS.md": {
+      "get": {
+        "operationId": "get_agents_md",
+        "summary": "Emerging convention \u2014 AI coding agents (Cursor, Codex, Aider,",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/THREAT_MODEL.md": {
+      "get": {
+        "operationId": "get_threat_model_md",
+        "summary": "Public threat-model document \u2014 STRIDE per component, named",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/icon.svg": {
+      "get": {
+        "operationId": "get_icon_svg",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
     "/healthz": {
       "get": {
-        "operationId": "healthCheck",
-        "summary": "Health check",
-        "description": "Returns service status. No authentication required.",
-        "tags": ["gate"],
-        "security": [],
+        "operationId": "get_healthz",
+        "summary": "Back-compat alias for /livez. New consumers should target the",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
         "responses": {
           "200": {
-            "description": "Service healthy",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": { "type": "string", "const": "ok" },
-                    "service": { "type": "string", "const": "haldir" },
-                    "version": { "type": "string" }
-                  },
-                  "required": ["status", "service", "version"]
-                }
-              }
-            }
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/livez": {
+      "get": {
+        "operationId": "get_livez",
+        "summary": "Liveness probe \u2014 process is responsive. Always 200 if Flask",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "get_readyz",
+        "summary": "Readiness probe \u2014 should this pod receive traffic right now?",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "get_prometheus_metrics",
+        "summary": "Prometheus scrape endpoint.",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "get_openapi_spec",
+        "summary": "OpenAPI 3.1 spec, generated directly from the live Flask route",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/swagger": {
+      "get": {
+        "operationId": "get_swagger_ui",
+        "summary": "Interactive API explorer (Swagger UI served from jsdelivr CDN).",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "operationId": "get_status_json",
+        "summary": "Machine-readable status snapshot. Cheap enough to be polled by",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
     },
     "/v1": {
       "get": {
-        "operationId": "apiIndex",
-        "summary": "API index",
-        "description": "Returns service info and available endpoint groups. No authentication required.",
-        "tags": ["gate"],
-        "security": [],
+        "operationId": "get_api_index",
+        "summary": "",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
         "responses": {
           "200": {
-            "description": "API index",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "service": { "type": "string" },
-                    "version": { "type": "string" },
-                    "docs": { "type": "string", "format": "uri" },
-                    "endpoints": {
-                      "type": "object",
-                      "additionalProperties": { "type": "string" }
-                    }
-                  }
-                }
-              }
-            }
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/cloud/login": {
+      "get": {
+        "operationId": "get_cloud_login_page",
+        "summary": "Minimal sign-in for the cloud dashboard. Mirrors the style of",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/cloud/overview": {
+      "get": {
+        "operationId": "get_cloud_overview_page",
+        "summary": "Server-rendered shell for the cloud dashboard. The page owns the",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/dashboard.js": {
+      "get": {
+        "operationId": "get_serve_dashboard_js",
+        "summary": "Serve the cloud dashboard client script. The dashboard shell at",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/cloud": {
+      "get": {
+        "operationId": "get_cloud_root",
+        "summary": "Cloud landing: redirect to login if no key, to overview if a key",
+        "tags": [
+          "platform"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/IdempotencyMismatch"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
     }
   },
-  "components": {
-    "securitySchemes": {
-      "BearerAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "description": "Pass your Haldir API key as a Bearer token: `Authorization: Bearer hld_...`"
-      },
-      "ApiKeyAuth": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-API-Key",
-        "description": "Pass your Haldir API key via the X-API-Key header"
-      }
+  "tags": [
+    {
+      "name": "gate",
+      "description": "Sessions, scopes, identity"
     },
-    "parameters": {
-      "SessionIdPath": {
-        "name": "session_id",
-        "in": "path",
-        "required": true,
-        "schema": { "type": "string" },
-        "description": "Session ID"
-      }
+    {
+      "name": "vault",
+      "description": "Encrypted secrets + payments"
     },
-    "schemas": {
-      "Error": {
-        "type": "object",
-        "properties": {
-          "error": { "type": "string", "description": "Human-readable error message" }
-        },
-        "required": ["error"]
-      },
-      "RateLimitError": {
-        "type": "object",
-        "properties": {
-          "error": { "type": "string" },
-          "limit": { "type": "integer", "description": "Requests allowed per hour" },
-          "tier": { "type": "string" },
-          "retry_after": { "type": "integer", "description": "Seconds until the rate limit window resets" }
-        },
-        "required": ["error", "limit", "tier", "retry_after"]
-      },
-      "SessionCreated": {
-        "type": "object",
-        "properties": {
-          "session_id": { "type": "string" },
-          "agent_id": { "type": "string" },
-          "scopes": { "type": "array", "items": { "type": "string" } },
-          "spend_limit": { "type": "number", "nullable": true },
-          "expires_at": { "type": "number", "description": "Unix timestamp" },
-          "ttl": { "type": "integer" }
-        },
-        "required": ["session_id", "agent_id", "scopes", "spend_limit", "expires_at", "ttl"]
-      },
-      "SessionDetail": {
-        "type": "object",
-        "properties": {
-          "session_id": { "type": "string" },
-          "agent_id": { "type": "string" },
-          "scopes": { "type": "array", "items": { "type": "string" } },
-          "spend_limit": { "type": "number", "nullable": true },
-          "spent": { "type": "number" },
-          "remaining_budget": { "type": "number", "nullable": true },
-          "is_valid": { "type": "boolean" },
-          "created_at": { "type": "number", "description": "Unix timestamp" },
-          "expires_at": { "type": "number", "description": "Unix timestamp" }
-        },
-        "required": ["session_id", "agent_id", "scopes", "spend_limit", "spent", "remaining_budget", "is_valid", "created_at", "expires_at"]
-      },
-      "PaymentResult": {
-        "type": "object",
-        "properties": {
-          "authorized": { "type": "boolean" },
-          "amount": { "type": "number" },
-          "currency": { "type": "string" },
-          "remaining_budget": { "type": "number", "nullable": true },
-          "reason": { "type": "string" }
-        },
-        "required": ["authorized"]
-      },
-      "AuditEntry": {
-        "type": "object",
-        "properties": {
-          "entry_id": { "type": "string" },
-          "session_id": { "type": "string" },
-          "agent_id": { "type": "string" },
-          "tool": { "type": "string" },
-          "action": { "type": "string" },
-          "cost_usd": { "type": "number" },
-          "flagged": { "type": "boolean" },
-          "flag_reason": { "type": "string", "nullable": true },
-          "timestamp": { "type": "number", "description": "Unix timestamp" },
-          "details": { "type": "string", "nullable": true }
-        },
-        "required": ["entry_id", "session_id", "agent_id", "tool", "action", "cost_usd", "flagged", "flag_reason", "timestamp"]
-      },
-      "ApprovalDetail": {
-        "type": "object",
-        "properties": {
-          "request_id": { "type": "string" },
-          "status": { "type": "string", "description": "pending, approved, or denied" },
-          "agent_id": { "type": "string" },
-          "tool": { "type": "string" },
-          "action": { "type": "string" },
-          "amount": { "type": "number" },
-          "reason": { "type": "string" },
-          "decided_by": { "type": "string", "nullable": true },
-          "decision_note": { "type": "string", "nullable": true }
-        },
-        "required": ["request_id", "status", "agent_id", "tool", "action", "amount", "reason"]
-      },
-      "PendingApproval": {
-        "type": "object",
-        "properties": {
-          "request_id": { "type": "string" },
-          "agent_id": { "type": "string" },
-          "tool": { "type": "string" },
-          "action": { "type": "string" },
-          "amount": { "type": "number" },
-          "reason": { "type": "string" },
-          "created_at": { "type": "number", "description": "Unix timestamp" }
-        },
-        "required": ["request_id", "agent_id", "tool", "action", "amount", "reason", "created_at"]
-      }
+    {
+      "name": "watch",
+      "description": "Audit trail, spend, webhooks"
     },
-    "responses": {
-      "BadRequest": {
-        "description": "Missing or invalid request parameters",
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/Error" }
-          }
-        }
-      },
-      "Unauthorized": {
-        "description": "Missing, invalid, or revoked API key",
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/Error" }
-          }
-        }
-      },
-      "Forbidden": {
-        "description": "Insufficient scope or permission denied",
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/Error" }
-          }
-        }
-      },
-      "NotFound": {
-        "description": "Resource not found",
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/Error" }
-          }
-        }
-      },
-      "RateLimited": {
-        "description": "Rate limit exceeded (per-tier hourly limits: free=100, pro=5000, enterprise=50000)",
-        "content": {
-          "application/json": {
-            "schema": { "$ref": "#/components/schemas/RateLimitError" }
-          }
-        }
-      }
+    {
+      "name": "proxy",
+      "description": "Policy-gated MCP tool calls"
+    },
+    {
+      "name": "billing",
+      "description": "Stripe checkout + webhooks"
+    },
+    {
+      "name": "platform",
+      "description": "Health, metrics, docs"
     }
-  }
+  ]
 }
