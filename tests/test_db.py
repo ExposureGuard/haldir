@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import textwrap
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -318,4 +319,55 @@ def test_existing_postgres_money_columns_get_widened(tmp_path) -> None:
     assert "DOUBLE PRECISION" in src, (
         "_init_pg does not widen existing money columns, so a Postgres "
         "deployment created before this keeps losing precision"
+    )
+
+
+def test_pool_exhaustion_does_not_tear_down_in_flight_connections() -> None:
+    """Saturation must wait, not destroy.
+
+    The previous handler called `closeall()` and rebuilt the pool. That closes
+    connections other threads are actively using, takes the pool's lock while
+    doing it, and — because PgConnectionWrapper.close() swallowed putconn
+    failures — leaked the connections whose pool had just been replaced. Leaks
+    caused exhaustion, exhaustion triggered the rebuild, and the rebuild
+    caused the leak.
+
+    Checked at the source level: driving a real pool to exhaustion needs a
+    Postgres, and what is being asserted is the shape of the handler.
+    """
+    import ast
+    import inspect
+
+    src = inspect.getsource(haldir_db._get_pg)
+    # Parsed, not string-matched: the docstring explains why closeall() was
+    # wrong, and a substring search finds that explanation rather than a call.
+    # Both attribute calls (pool.closeall()) and plain ones
+    # (_wait_for_connection(pool)), or the check only sees half of them.
+    calls = set()
+    for node in ast.walk(ast.parse(textwrap.dedent(src))):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute):
+            calls.add(node.func.attr)
+        elif isinstance(node.func, ast.Name):
+            calls.add(node.func.id)
+    assert "closeall" not in calls, (
+        "_get_pg drains the pool on exhaustion, closing connections other "
+        "threads are mid-query on. Wait for one to come back instead."
+    )
+    assert "_wait_for_connection" in calls, (
+        "_get_pg has no bounded wait for a free connection"
+    )
+
+
+def test_a_connection_that_cannot_be_returned_is_not_leaked() -> None:
+    """PgConnectionWrapper.close() swallowed every failure. A connection whose
+    pool was replaced underneath it was then open, unreachable, and counted
+    against the pool forever."""
+    import inspect
+
+    src = inspect.getsource(haldir_db.PgConnectionWrapper.close)
+    assert "close()" in src, (
+        "close() lets a failed putconn leak the connection instead of "
+        "closing it outright"
     )

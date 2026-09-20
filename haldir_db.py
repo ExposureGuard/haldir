@@ -36,6 +36,8 @@ SQLite pragma choices (applied on every connection open):
 import os
 import re
 import sqlite3
+import threading
+from typing import Any
 
 from haldir_logging import get_logger
 
@@ -65,6 +67,12 @@ DEFAULT_DB_PATH = os.environ.get("HALDIR_DB_PATH", "/data/haldir.db" if os.path.
 # backstop against a runaway query, not a request deadline, and setting it low
 # would abort legitimate migrations and large exports. Both are overridable
 # per deployment.
+# How long a caller waits for a free pooled connection before failing.
+_PG_POOL_WAIT_S = float(os.environ.get("HALDIR_PG_POOL_WAIT_S", "10"))
+
+# Guards construction and rebinding of the module-level pool.
+_pg_pool_lock = threading.Lock()
+
 _PG_SERVER_OPTIONS = " ".join((
     f"-c lock_timeout={os.environ.get('HALDIR_PG_LOCK_TIMEOUT_MS', '10000')}",
     f"-c statement_timeout={os.environ.get('HALDIR_PG_STATEMENT_TIMEOUT_MS', '120000')}",
@@ -104,38 +112,75 @@ def get_db(db_path: str = DEFAULT_DB_PATH):
 def _get_pg():
     """Get a PostgreSQL connection from the pool.
 
-    Pool size is configurable via HALDIR_PG_POOL_MIN / MAX. On
-    exhaustion we drain + rebuild, which drops in-flight connections
-    but gets us back to a healthy state deterministically — preferable
-    to blocking indefinitely while callers stack up."""
+    Size is configurable via HALDIR_PG_POOL_MIN / MAX.
+
+    Exhaustion waits for a connection to come back rather than draining the
+    pool. The previous version called `closeall()` and rebuilt, describing it
+    as "drops in-flight connections but gets us back to a healthy state".
+    Three things were wrong with that, all of them visible in the code:
+
+      * `closeall()` closes connections other threads are *actively using*.
+        A thread mid-query gets its connection closed underneath it, and
+        closeall() itself takes the pool's lock, so it can block behind the
+        very work it is about to destroy.
+
+      * The pool reference is a module global with no lock around it. Two
+        threads that exhaust simultaneously each build a pool; one is
+        orphaned with its connections still open.
+
+      * `PgConnectionWrapper.close()` swallows `putconn` failures. When the
+        pool has been rebuilt underneath a wrapper, that connection is never
+        returned to any pool — it leaks. Leaks cause exhaustion, exhaustion
+        caused the rebuild, and the rebuild caused the leak.
+
+    A bounded wait costs at most `_PG_POOL_WAIT_S` and cannot take down a
+    connection somebody else is holding.
+    """
     global _pg_pool
     import psycopg2
     import psycopg2.extras
     import psycopg2.pool
 
-    if _pg_pool is None:
-        _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-            _pg_pool_min, _pg_pool_max, DATABASE_URL,
-            options=_PG_SERVER_OPTIONS,
-        )
+    with _pg_pool_lock:
+        if _pg_pool is None:
+            _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+                _pg_pool_min, _pg_pool_max, DATABASE_URL,
+                options=_PG_SERVER_OPTIONS,
+            )
+        pool = _pg_pool
 
     try:
-        conn = _pg_pool.getconn()
-        conn.autocommit = False
-        return PgConnectionWrapper(conn, _pg_pool)
+        conn = pool.getconn()
     except psycopg2.pool.PoolError:
-        # Pool exhausted — reset it.
+        conn = _wait_for_connection(pool)
+
+    conn.autocommit = False
+    return PgConnectionWrapper(conn, pool)
+
+
+def _wait_for_connection(pool: Any) -> Any:
+    """Block until the pool returns a connection, or give up with a message
+    that names the actual problem.
+
+    Raising a clear error is strictly better than the old behaviour: a caller
+    told the pool is saturated can be retried or alerted on, whereas one whose
+    connection was closed mid-query cannot.
+    """
+    import psycopg2.pool
+
+    deadline = time.monotonic() + _PG_POOL_WAIT_S
+    while time.monotonic() < deadline:
+        time.sleep(0.02)
         try:
-            _pg_pool.closeall()
-        except Exception:
-            pass
-        _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-            _pg_pool_min, _pg_pool_max, DATABASE_URL,
-            options=_PG_SERVER_OPTIONS,
-        )
-        conn = _pg_pool.getconn()
-        conn.autocommit = False
-        return PgConnectionWrapper(conn, _pg_pool)
+            return pool.getconn()
+        except psycopg2.pool.PoolError:
+            continue
+    raise RuntimeError(
+        f"Postgres connection pool exhausted for {_PG_POOL_WAIT_S:.0f}s "
+        f"(max {_pg_pool_max} connections). A connection is checked out and "
+        f"not being returned — look for a query that never completed or a "
+        f"caller that never closed its connection."
+    )
 
 
 def _sqlite_to_pg(sql):
@@ -221,10 +266,26 @@ class PgConnectionWrapper:
         self._conn.commit()
 
     def close(self):
+        """Return the connection to the pool.
+
+        A failure here used to be swallowed, and that is how connections were
+        lost: when the pool had been rebuilt underneath this wrapper, putconn
+        raised, the exception went nowhere, and the connection stayed open and
+        unreachable. Enough of those and the pool exhausts again — which used
+        to trigger another rebuild. The connection is closed outright rather
+        than left dangling, and the failure is logged.
+        """
         try:
             self._pool.putconn(self._conn)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "could not return a Postgres connection to the pool (%s: %s); "
+                "closing it so it is not leaked", type(e).__name__, e,
+            )
+            try:
+                self._conn.close()
+            except Exception:
+                pass
 
     @property
     def total_changes(self):
