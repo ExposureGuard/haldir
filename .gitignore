@@ -18,6 +18,9 @@ coverage.xml
 
 # Private docs (local only)
 /private/
+# Session handoff notes. Same category as the rest of this block —
+# working notes about a session, not product documentation.
+SESSION_CONTEXT.md
 CONVERSATION_HISTORY.md
 DAILY_REALITY_CHECK.md
 DAILY_PLAYBOOK.md
