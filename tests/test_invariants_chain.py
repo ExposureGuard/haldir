@@ -28,6 +28,7 @@ import os
 import sqlite3
 import sys
 import threading
+import uuid
 
 import pytest
 
@@ -63,11 +64,35 @@ def db(tmp_path):
     return path
 
 
+# A tenant per test.
+#
+# On SQLite `path` above is a fresh temp file, so tests are isolated by
+# construction. On Postgres DATABASE_URL wins and the path is ignored, so
+# every test in the run shares one database — and these tests then write into
+# the default tenant "" alongside everything else that ran before them.
+# `verify_chain` walks that whole tenant, so it sees rows this test never
+# created and reports a broken chain that is nobody's fault.
+_TENANT: dict[str, str] = {"name": ""}
+
+
+@pytest.fixture(autouse=True)
+def _own_tenant():
+    """Give each test its own tenant, so a shared database is still isolated."""
+    _TENANT["name"] = f"chain-{uuid.uuid4().hex[:10]}"
+    yield _TENANT["name"]
+
+
+def tenant() -> str:
+    return _TENANT["name"]
+
+
 def fresh(db, agent="chain-agent", n=1):
     """A gate, a watch, and a session with `n` entries logged."""
     gate, watch = Gate(db_path=db), Watch(db_path=db)
-    session = gate.create_session(agent, scopes=["read"], ttl=3600)
-    entries = [watch.log_action(session, tool="t", action=f"a{i}") for i in range(n)]
+    session = gate.create_session(agent, scopes=["read"], ttl=3600,
+                                  tenant_id=tenant())
+    entries = [watch.log_action(session, tool="t", action=f"a{i}",
+                                   tenant_id=tenant()) for i in range(n)]
     return gate, watch, session, entries
 
 
@@ -148,7 +173,7 @@ def test_modifying_any_field_is_detected(db, field: str) -> None:
     mutate(db, entry.entry_id, field, tampered)
 
     try:
-        verdict = watch.verify_chain(tenant_id="")
+        verdict = watch.verify_chain(tenant_id=tenant())
     except Exception as e:  # noqa: BLE001 — a raise *is* the defect
         pytest.fail(
             f"verify_chain raised {type(e).__name__} instead of reporting "
@@ -231,7 +256,7 @@ def test_verify_chain_never_raises_on_corrupt_data(db) -> None:
                 continue
 
             try:
-                verdict = watch.verify_chain(tenant_id="")
+                verdict = watch.verify_chain(tenant_id=tenant())
             except Exception as e:  # noqa: BLE001
                 pytest.fail(
                     f"verify_chain raised {type(e).__name__} on "
@@ -244,7 +269,7 @@ def test_verify_chain_never_raises_on_corrupt_data(db) -> None:
 
 def test_verify_chain_returns_a_verdict_on_an_empty_log(db) -> None:
     _, watch, _, _ = fresh(db, n=0)
-    verdict = watch.verify_chain(tenant_id="")
+    verdict = watch.verify_chain(tenant_id=tenant())
     assert verdict["verified"] is True
 
 
@@ -258,7 +283,7 @@ def test_deleting_an_entry_is_detected(db) -> None:
     conn.commit()
     conn.close()
 
-    assert watch.verify_chain(tenant_id="")["verified"] is False
+    assert watch.verify_chain(tenant_id=tenant())["verified"] is False
 
 
 def test_inserting_a_fabricated_entry_is_detected(db) -> None:
@@ -270,13 +295,14 @@ def test_inserting_a_fabricated_entry_is_detected(db) -> None:
         "INSERT INTO audit_log (entry_id, tenant_id, session_id, agent_id, action, "
         "tool, details, cost_usd, timestamp, flagged, flag_reason, prev_hash, "
         "entry_hash, seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        ("forged", "", "s", "a", "exfiltrate", "t", "{}", 0.0, 1.0, 0,
+        # Into this test's own tenant, or verification would never look at it.
+        ("forged", tenant(), "s", "a", "exfiltrate", "t", "{}", 0.0, 1.0, 0,
          "", "deadbeef", 99, 99),
     )
     conn.commit()
     conn.close()
 
-    assert watch.verify_chain(tenant_id="")["verified"] is False
+    assert watch.verify_chain(tenant_id=tenant())["verified"] is False
 
 
 def test_reordering_is_detected_by_linkage(db) -> None:
@@ -295,7 +321,7 @@ def test_reordering_is_detected_by_linkage(db) -> None:
     conn.commit()
     conn.close()
 
-    assert watch.verify_chain(tenant_id="")["verified"] is False, (
+    assert watch.verify_chain(tenant_id=tenant())["verified"] is False, (
         "moving an entry to the front of the chain was not detected — ordering "
         "is not actually protected by the linkage walk"
     )
@@ -312,14 +338,14 @@ def test_swapping_two_entries_payloads_is_detected(db) -> None:
     conn.commit()
     conn.close()
 
-    assert watch.verify_chain(tenant_id="")["verified"] is False
+    assert watch.verify_chain(tenant_id=tenant())["verified"] is False
 
 
 def test_an_untouched_log_verifies(db) -> None:
     """The other half: verification must not cry wolf. A detector that fires
     on an intact log is one people learn to ignore."""
     _, watch, _, _ = fresh(db, n=5)
-    verdict = watch.verify_chain(tenant_id="")
+    verdict = watch.verify_chain(tenant_id=tenant())
     assert verdict["verified"] is True
     assert verdict["entries_checked"] == 5
 
@@ -335,13 +361,14 @@ def test_the_chain_is_linear_after_concurrent_appends(db) -> None:
     """
     THREADS = 16
     gate, watch = Gate(db_path=db), Watch(db_path=db)
-    session = gate.create_session("linear", scopes=["read"], ttl=3600)
+    session = gate.create_session("linear", scopes=["read"], ttl=3600,
+                                  tenant_id=tenant())
 
     barrier = threading.Barrier(THREADS)
 
     def writer(i):
         barrier.wait(timeout=10)
-        watch.log_action(session, tool="t", action=f"w{i}")
+        watch.log_action(session, tool="t", action=f"w{i}", tenant_id=tenant())
 
     threads = [threading.Thread(target=writer, args=(i,), daemon=True)
                for i in range(THREADS)]
@@ -376,4 +403,4 @@ def test_the_chain_is_linear_after_concurrent_appends(db) -> None:
         reached += 1
     assert reached == len(rows), f"only {reached} of {len(rows)} entries are in the chain"
 
-    assert watch.verify_chain(tenant_id="")["verified"] is True
+    assert watch.verify_chain(tenant_id=tenant())["verified"] is True

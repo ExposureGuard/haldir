@@ -168,25 +168,27 @@ jobs:
           # using — they would measure the harness, not Postgres. These go
           # through the app's own connection layer, which is the path a
           # deployment actually takes.
-          # Scope: the suites that were green on Postgres before this branch.
+          # The invariant suites belong here: the guarantees they assert are
+          # enforced by the database — the spend cap is a conditional UPDATE,
+          # the chain guard a partial unique index — so running them only on
+          # SQLite tests half of what they claim.
           #
-          # The invariant and concurrency suites are deliberately NOT listed.
-          # They fail on Postgres — a dozen or more failures, visible for the
-          # first time now that the job runs them — and the run then continues
-          # past this job's fifteen-minute ceiling. They are correct against
-          # SQLite; whether they are correct against Postgres is an open
-          # question, and it is not answerable by reading code. Three attempts
-          # to reason it out were wrong: the lock timeout did not explain it,
-          # and neither did the schema-init connection.
-          #
-          # They return here as soon as there is a Postgres to reproduce
-          # against. Until then this job guards what it can actually verify,
-          # rather than sitting red for a reason nobody can act on.
+          # They were failing here, and the cause was isolation, not the
+          # product: on Postgres DATABASE_URL wins and the temp path is
+          # ignored, so every test shares one database while the tests all
+          # used the default tenant "". A prune that should have deleted 3
+          # entries deleted 5, because two belonged to the previous test.
+          # Each test now uses its own tenant, which restores the isolation
+          # SQLite was providing for free.
           pytest tests/test_api.py \
                  tests/test_admin.py \
                  tests/test_delegation.py \
                  tests/test_sth_log.py \
                  tests/test_retention.py \
+                 tests/test_concurrency.py \
+                 tests/test_invariants_chain.py \
+                 tests/test_invariants_spend.py \
+                 tests/test_invariants_secrets.py \
                  -q --tb=short \
                  --timeout=120 --timeout-method=thread
 

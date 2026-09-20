@@ -40,7 +40,41 @@ def db(tmp_path):
     path = str(tmp_path / "retention.db")
     init_db(path)
     haldir_migrate.apply_pending(path)
+
+    # Clear this tenant's rows.
+    #
+    # On SQLite the path above is a fresh temp file, so every test starts from
+    # nothing. On Postgres DATABASE_URL wins and the path is ignored, so every
+    # test in the run shares one database — and the tests below all use the
+    # tenant "t1", which then accumulates rows from everything that ran
+    # before them. A prune that should delete 3 entries deleted 5, because two
+    # of them belonged to the previous test.
+    #
+    # Deleting the tenant's rows here restores the isolation the assertions
+    # assume, without changing what any of them assert.
+    _clear_tenant(path, "t1")
     return path
+
+
+def _clear_tenant(db_path: str, tenant: str) -> None:
+    """Remove a tenant's audit rows, checkpoints and tree heads."""
+    from haldir_db import get_db
+
+    conn = get_db(db_path)
+    try:
+        for table, column in (
+            ("audit_log", "tenant_id"),
+            ("audit_checkpoints", "tenant_id"),
+            ("audit_retention", "tenant_id"),
+            ("sth_log", "tenant_id"),
+        ):
+            try:
+                conn.execute(f"DELETE FROM {table} WHERE {column} = ?", (tenant,))  # noqa: S608 — table names are literals above
+            except Exception:
+                conn.rollback()  # table absent on a build without that migration
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def append(db: str, tenant: str, ts: float, action: str = "act") -> AuditEntry:
