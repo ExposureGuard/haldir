@@ -424,9 +424,14 @@ jobs:
             echo "::error::could not find a merge base against origin/${{ github.base_ref }}"
             exit 1
           }
+          # `grep -m1`, not `grep | head -1`. head exits as soon as it has a
+          # line, so grep takes SIGPIPE and returns 141; with `pipefail` that
+          # is the pipeline's status and `set -e` kills the step — right after
+          # the assignment, so the log ends at "+ old=" with no explanation.
+          # -m1 stops grep itself and avoids the signal entirely.
           old=$(git show "$base:.github/workflows/test.yml" \
-                | grep -oE '\-\-cov-fail-under=[0-9]+' | head -1 | cut -d= -f2)
-          new=$(grep -oE '\-\-cov-fail-under=[0-9]+' .github/workflows/test.yml | head -1 | cut -d= -f2)
+                | grep -m1 -oE '\-\-cov-fail-under=[0-9]+' | cut -d= -f2 || true)
+          new=$(grep -m1 -oE '\-\-cov-fail-under=[0-9]+' .github/workflows/test.yml | cut -d= -f2 || true)
           echo "base floor=${old:-none}  this branch floor=${new:-none}"
           if [ -z "$new" ]; then
             echo "::error::--cov-fail-under was removed from the pytest step"

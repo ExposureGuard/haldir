@@ -468,7 +468,12 @@ class _Cursor:
             self._rows = []
         else:
             self._rows = []
-        return self
+        # psycopg2's Cursor.execute() returns None. Returning `self` here — as
+        # the first version of this fake did — hides exactly the bug these
+        # tests exist for: _exec was returning execute()'s result, which is a
+        # cursor on sqlite3 and None on psycopg2, so every _exec(...).fetchone()
+        # raised AttributeError on Postgres.
+        return None
 
     def fetchall(self):
         return self._rows
@@ -566,7 +571,7 @@ class AbortingCursor:
         if "pragma_table_info" in sql:
             self._conn.aborted = True
             raise RuntimeError('relation "pragma_table_info" does not exist')
-        return self
+        return None   # psycopg2 semantics, see _Cursor.execute
 
     def fetchall(self):
         return []
@@ -625,4 +630,42 @@ def test_the_migration_completes_on_a_connection_that_aborts() -> None:
     assert "CREATE UNIQUE INDEX" in joined, (
         f"the migration never reached the constraint. Statements that ran: "
         f"{conn.statements}"
+    )
+
+
+def test_exec_returns_something_chainable_on_every_shape() -> None:
+    """The second bug the shim introduced.
+
+    sqlite3's Connection.execute() returns the cursor; psycopg2's
+    Cursor.execute() returns None. A shim that returns execute()'s result is
+    therefore chainable on SQLite and None on Postgres, so every
+    `_exec(conn, sql).fetchone()` raised
+    "'NoneType' object has no attribute 'fetchone'".
+
+    That is what made the seq migration stop before creating the uniqueness
+    constraint — silently, because the raise landed in an `except: return`.
+    """
+    sqlite_conn = sqlite3.connect(":memory:")
+    assert hasattr(haldir_db._exec(sqlite_conn, "SELECT 1"), "fetchone")
+    sqlite_conn.close()
+
+    fake = Psycopg2LikeConn()
+    assert hasattr(haldir_db._exec(fake, "SELECT 1"), "fetchone"), (
+        "_exec returned something unchainable for a psycopg2-shaped "
+        "connection, so the next .fetchone() would raise"
+    )
+
+
+def test_the_fakes_model_psycopg2_not_sqlite() -> None:
+    """Guards the guards.
+
+    These fakes exist to catch Postgres-only bugs, and their whole value is
+    fidelity. The first version returned `self` from execute() — sqlite3's
+    behaviour — and so could not have caught the very bug it was written for.
+    """
+    conn = Psycopg2LikeConn()
+    cursor = conn.cursor()
+    assert cursor.execute("SELECT 1") is None, (
+        "the fake's execute() returns a value; real psycopg2 returns None, "
+        "and that difference is exactly what these tests need to catch"
     )

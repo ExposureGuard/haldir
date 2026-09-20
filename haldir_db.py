@@ -645,12 +645,24 @@ def _exec(conn_or_cursor: Any, sql: str, params: Any = None) -> Any:
     indirection is smaller than the blast radius of getting it wrong again.
     """
     if hasattr(conn_or_cursor, "execute"):
-        return conn_or_cursor.execute(sql, params) if params is not None \
+        # sqlite3 returns its cursor here; a psycopg2 cursor returns None.
+        # Normalise, so callers can always chain .fetchone()/.fetchall().
+        result = conn_or_cursor.execute(sql, params) if params is not None \
             else conn_or_cursor.execute(sql)
+        return result if result is not None else conn_or_cursor
     cursor = conn_or_cursor.cursor()
     try:
-        return cursor.execute(sql, params) if params is not None \
-            else cursor.execute(sql)
+        cursor.execute(sql, params) if params is not None else cursor.execute(sql)
+        # Return the CURSOR, not the result of execute.
+        #
+        # sqlite3's Connection.execute() returns the cursor it used;
+        # psycopg2's Cursor.execute() returns None. Returning the latter
+        # makes every `_exec(conn, sql).fetchone()` raise
+        # "'NoneType' object has no attribute 'fetchone'", which is how this
+        # shim — written to fix an AttributeError from calling .execute on a
+        # connection — introduced a second one. Returning the cursor is the
+        # only shape that works for both.
+        return cursor
     except Exception:
         # Roll back, or the failure poisons everything after it.
         #
