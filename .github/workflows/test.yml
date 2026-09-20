@@ -75,6 +75,7 @@ jobs:
             --cov=haldir_watch \
             --cov-report=xml \
             --cov-report=term-missing \
+            --cov-fail-under=78 \
             -v
 
       - name: Upload coverage to Codecov
@@ -209,6 +210,26 @@ jobs:
             SELECT count(*) AS idle_in_transaction
             FROM pg_stat_activity
             WHERE state = 'idle in transaction';"
+          echo
+          echo "=== the constraint the audit chain's integrity rests on ==="
+          # Two writers cannot claim the same (tenant_id, seq) without this
+          # index, so a forked chain on Postgres and not on SQLite is most
+          # likely this constraint being absent rather than the appends being
+          # wrong. Reported directly so the next failure says which.
+          psql -h localhost -U haldir -d haldir -c "
+            SELECT indexname, indexdef FROM pg_indexes
+            WHERE tablename = 'audit_log';"
+          echo
+          echo "=== duplicate sequence numbers, if any ==="
+          psql -h localhost -U haldir -d haldir -c "
+            SELECT tenant_id, seq, count(*) FROM audit_log
+            WHERE seq > 0 GROUP BY tenant_id, seq HAVING count(*) > 1
+            LIMIT 20;"
+          echo
+          echo "=== entries claiming to start the chain ==="
+          psql -h localhost -U haldir -d haldir -c "
+            SELECT tenant_id, count(*) AS chain_roots FROM audit_log
+            WHERE prev_hash = '' GROUP BY tenant_id;"
 
   package:
     name: package (build the wheel and actually run it)

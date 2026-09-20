@@ -693,8 +693,28 @@ def _migrate_audit_seq(conn):
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_seq "
             "ON audit_log(tenant_id, seq) WHERE seq > 0"
         )
-    except Exception:
-        pass  # pre-existing duplicates; appends still retry, index is a backstop
+    except Exception as e:  # noqa: BLE001
+        # Never silent. This is the constraint that makes a forked chain
+        # impossible to commit — the whole of the audit integrity claim rests
+        # on two writers being unable to claim the same sequence number. A
+        # bare `pass` here means the product can be running with that
+        # protection absent and nothing anywhere saying so, which is how a
+        # concurrent-append test came to fail with "2 entries claim to start
+        # the chain" on Postgres while passing on SQLite: the symptom was
+        # three steps away from the cause and the cause had been swallowed.
+        #
+        # The expected reason to land here is pre-existing duplicates in a log
+        # written before the constraint existed, which is recoverable (append
+        # still retries; the index is a backstop). Every other reason is not,
+        # and the operator needs to know which one this is.
+        logger.error(
+            "audit_log: the uniqueness constraint on (tenant_id, seq) could "
+            "NOT be created (%s: %s). A forked audit chain is now possible. "
+            "This is expected only if the log already contained duplicate "
+            "sequence numbers; otherwise investigate before trusting the "
+            "chain's fork protection.",
+            type(e).__name__, e,
+        )
 
 
 def init_db(db_path: str = DEFAULT_DB_PATH):

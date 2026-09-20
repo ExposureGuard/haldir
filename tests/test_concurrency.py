@@ -196,6 +196,37 @@ def test_concurrent_audit_appends_keep_the_chain_linear(db) -> None:
         )
         seen[prev] = r["entry_id"]
 
+    # Before blaming the appends, check the constraint they rely on. Two
+    # writers cannot claim the same sequence number without it, so a fork here
+    # has a specific most-likely cause — and reporting "2 entries claim to
+    # start the chain" sends the reader looking in the wrong place. On
+    # Postgres this failed for exactly this reason while passing on SQLite,
+    # and the constraint's creation was wrapped in a bare `except: pass`, so
+    # nothing anywhere said the protection was absent.
+    conn = get_db(db)
+    try:
+        idx = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND name='idx_audit_seq'"
+        ).fetchone()
+    except Exception:
+        idx = None
+        try:
+            idx = conn.execute(
+                "SELECT indexname FROM pg_indexes WHERE indexname='idx_audit_seq'"
+            ).fetchone()
+        except Exception:
+            idx = None
+    finally:
+        conn.close()
+
+    assert idx is not None or roots <= 1, (
+        f"{roots} entries claim to start the chain, and the unique index on "
+        f"(tenant_id, seq) — the thing that makes this impossible — does not "
+        f"exist in this database. The appends are not at fault; the constraint "
+        f"they depend on was never created."
+    )
+
     assert roots <= 1, f"{roots} entries claim to start the chain"
 
     verdict = watch.verify_chain(tenant_id="")
