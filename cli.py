@@ -203,6 +203,41 @@ class APIClient:
 
 # ── Commands ──
 
+def _read_api_key_interactively() -> str:
+    """Read the key from the terminal, or from stdin when there isn't one.
+
+    `getpass` does not degrade on a non-tty: it raises termios.error, so
+    `haldir login` died with a traceback in exactly the environments where a
+    non-interactive login is the point — CI, a container, a pipe, an editor's
+    run-command. Falling back to stdin makes
+
+        echo "$HALDIR_KEY" | haldir login
+
+    work, which is how anyone scripting this would reach for it first.
+    """
+    if not sys.stdin.isatty():
+        line = sys.stdin.readline().strip()
+        if line:
+            return line
+        error("No API key given, and no terminal to prompt on.")
+        error('Pass --key, or pipe it: echo "$HALDIR_KEY" | haldir login')
+        sys.exit(1)
+
+    try:
+        return getpass.getpass("API key (hld_...): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        # ^C or a closed stdin is a decision to stop, not a crash.
+        print()
+        error("No API key provided.")
+        sys.exit(1)
+    except Exception as e:  # noqa: BLE001 — termios.error on odd ttys, and
+        # whatever else a platform raises. None of it should be a traceback in
+        # front of someone trying to log in.
+        error(f"Could not read the key interactively ({type(e).__name__}).")
+        error("Pass it with --key instead.")
+        sys.exit(1)
+
+
 def cmd_login(args: argparse.Namespace) -> None:
     """Prompt for API key and save to config."""
     config = load_config()
@@ -213,7 +248,7 @@ def cmd_login(args: argparse.Namespace) -> None:
     if args.key:
         api_key = args.key
     else:
-        api_key = getpass.getpass("API key (hld_...): ").strip()
+        api_key = _read_api_key_interactively()
 
     if not api_key:
         error("No API key provided.")
