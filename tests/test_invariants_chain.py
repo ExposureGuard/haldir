@@ -343,7 +343,8 @@ def test_the_chain_is_linear_after_concurrent_appends(db) -> None:
         barrier.wait(timeout=10)
         watch.log_action(session, tool="t", action=f"w{i}")
 
-    threads = [threading.Thread(target=writer, args=(i,)) for i in range(THREADS)]
+    threads = [threading.Thread(target=writer, args=(i,), daemon=True)
+               for i in range(THREADS)]
     for t in threads:
         t.start()
     for t in threads:

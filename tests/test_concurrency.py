@@ -57,7 +57,12 @@ def run_together(fn, count):
         except Exception as e:  # noqa: BLE001 — surfaced by the assertions
             errors[i] = e
 
-    threads = [threading.Thread(target=worker, args=(i,)) for i in range(count)]
+    # daemon=True: a worker stuck in a blocking database call must not be able
+    # to hold the interpreter open. Without it a hang inside one thread becomes
+    # a hang of the whole run, at exit, producing no output at all — a much
+    # harder failure to read than a red test.
+    threads = [threading.Thread(target=worker, args=(i,), daemon=True)
+               for i in range(count)]
     for t in threads:
         t.start()
     for t in threads:
