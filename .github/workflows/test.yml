@@ -168,7 +168,15 @@ jobs:
                  tests/test_invariants_spend.py \
                  tests/test_invariants_secrets.py \
                  -q --tb=short -x \
+                 --log-cli-level=ERROR \
                  --timeout=120 --timeout-method=thread
+          # --log-cli-level=ERROR is not decoration. pytest captures stdout
+          # and stderr, so every logger.error this code emits during import
+          # and schema setup was being swallowed — the CI log contained no
+          # Haldir log lines at all, which is why two rounds of added
+          # diagnostics changed nothing about what could be seen. The
+          # application's own account of what went wrong was being collected
+          # and discarded.
 
       - name: Who is holding the locks?
         # The diagnostic that was missing. This job's failure mode was

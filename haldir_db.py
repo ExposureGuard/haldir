@@ -721,8 +721,18 @@ def _migrate_audit_seq(conn):
 
     try:
         pending = _exec(conn, "SELECT 1 FROM audit_log WHERE seq = 0 LIMIT 1").fetchone()
-    except Exception:
-        return  # table missing; nothing to migrate
+    except Exception as e:  # noqa: BLE001
+        # Expected only when audit_log does not exist yet. Anything else
+        # returning here — and the return is what skips the uniqueness
+        # constraint below — has to be visible, because a silent return from
+        # this function is a chain with no fork protection and no complaint.
+        logger.error(
+            "audit_log: the seq migration could not read the table (%s: %s), "
+            "so it stopped before creating the uniqueness constraint on "
+            "(tenant_id, seq). A forked chain is possible.",
+            type(e).__name__, e,
+        )
+        return
 
     # Backfill only when something needs it, so a large log is not renumbered
     # on every boot. The index below is created either way — skipping it on a
