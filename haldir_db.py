@@ -279,6 +279,25 @@ class PgConnectionWrapper:
     def commit(self):
         self._conn.commit()
 
+    def rollback(self):
+        """Discard the current transaction.
+
+        The wrapper exists to present psycopg2 as sqlite3.Connection, and it
+        had `commit` without `rollback` — so every caller that rolls back on
+        a failed statement raised AttributeError on Postgres instead. The one
+        that mattered was the audit append's retry path (watch.py), which
+        rolls back after a collision before re-reading the tail: on Postgres
+        the retry died instead of retrying, so a concurrent append was
+        dropped or the chain branched — the exact failure the uniqueness
+        constraint had just been made to work in order to prevent.
+
+        haldir_migrate.py already worked around this with
+        `conn.rollback() if hasattr(conn, "rollback") else None`. A wrapper
+        that emulates a DB-API connection is expected to have the method, and
+        callers should not have to check.
+        """
+        self._conn.rollback()
+
     def close(self):
         """Return the connection to the pool, with no transaction open.
 

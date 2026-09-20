@@ -147,3 +147,39 @@ def test_close_is_idempotent_enough_to_be_safe() -> None:
         "a rollback after a commit is a no-op in psycopg2 and must still be "
         "issued, because close() cannot know whether a write is pending"
     )
+
+
+# ── The wrapper must have the DB-API surface callers use ─────────────
+
+def test_the_wrapper_has_every_dbapi_method_callers_use() -> None:
+    """It presents psycopg2 as sqlite3.Connection, so a caller must not have
+    to check which it holds.
+
+    `commit` was there and `rollback` was not. haldir_migrate.py had already
+    grown `conn.rollback() if hasattr(conn, "rollback") else None` to cope;
+    the audit append's retry path had not, so on Postgres a collision — the
+    case the uniqueness constraint exists to create — raised AttributeError
+    instead of re-reading the tail and retrying.
+    """
+    for method in ("execute", "executescript", "commit", "rollback", "close"):
+        assert hasattr(haldir_db.PgConnectionWrapper, method), (
+            f"PgConnectionWrapper is missing {method}, so callers that use it "
+            f"work on SQLite and raise AttributeError on Postgres"
+        )
+
+
+def test_close_and_rollback_are_both_present_on_a_fake() -> None:
+    """The two methods the append path uses together, in order.
+
+    Two rollbacks is the expected count, not one: the caller rolls back to
+    discard its failed insert, and close() rolls back again on the way to the
+    pool. A rollback with nothing pending is a no-op in psycopg2, so the
+    second costs nothing and close() cannot know whether one is needed.
+    """
+    conn, pool = FakeConn(), FakePool()
+    w = haldir_db.PgConnectionWrapper(conn, pool)
+    w.rollback()
+    assert conn.rolled_back == 1, "the explicit rollback should reach the connection"
+    w.close()
+    assert conn.rolled_back == 2, "close() also rolls back, and that is harmless"
+    assert pool.returned == [conn]
