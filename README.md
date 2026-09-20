@@ -19,7 +19,7 @@ That loop is the whole idea, running live. Someone rewrites a row in the audit l
 ## What you get
 
 - **Scoped sessions** — permissions and spend caps per agent, revocable the moment something looks wrong.
-- **Encrypted vault** — AES-256-GCM. Your agent asks for a secret; the model never sees it.
+- **Encrypted vault** — AES-256-GCM. Your agent asks for a secret; the model never sees it. Every ciphertext records which key made it, so you can **rotate the encryption key** without re-entering a single secret — and without downtime.
 - **Tamper-evident audit** — every call logged into an RFC 6962 Merkle tree with signed tree heads, so history can be proven, not just trusted.
 - **Human approvals** — pause a run on a spend threshold and get a webhook.
 

@@ -1091,6 +1091,53 @@ def list_secrets():
     return jsonify({"secrets": names, "count": len(names)})
 
 
+# ── Vault: encryption key management ──
+#
+# Rotating the deployment's encryption key is a different authority from
+# storing a secret, so it has its own scope rather than riding on
+# vault:write. A key granted vault:write can add and remove secrets; only a
+# key granted vault:rotate can re-key the store underneath them.
+
+@app.route("/v1/vault/keys", methods=["GET"])
+@require_api_key
+@require_scope("vault:read")
+def vault_keys():
+    """Which encryption keys the stored ciphertext actually needs, and how
+    many blobs each one covers.
+
+    Answers the question that gates retiring a key: it is safe to remove one
+    exactly when this reports no blobs under its id. The count comes from
+    reading the ciphertext, not from configuration — a key listed in the
+    environment still in use must show up here.
+    """
+    return jsonify(vault.key_census())
+
+
+@app.route("/v1/vault/rotate", methods=["POST"])
+@require_api_key
+@require_scope("vault:rotate")
+def vault_rotate():
+    """Re-encrypt every stored secret under the server's current primary key.
+
+    Takes no key in the request body, deliberately. The new key is installed
+    by pointing HALDIR_ENCRYPTION_KEY at it and listing the outgoing key in
+    HALDIR_ENCRYPTION_KEY_PREVIOUS, then restarting; this endpoint only
+    finishes the job. An endpoint that accepted a key would put it in proxy
+    logs, request captures, and shell history — and would give the server a
+    key it had not already been configured with.
+
+    Interruptible and repeatable: a second call rewrites nothing. Retire the
+    old key only once GET /v1/vault/keys reports no blobs under its id.
+    """
+    dry_run = request.args.get("dry_run") == "true"
+    report = vault.rotate_to_primary(dry_run=dry_run)
+
+    # A rotation that could not read some secrets is not a success. The
+    # caller has to know, because the fix (restore a key) is theirs.
+    status = 207 if report["summary"]["failed"] else 200
+    return jsonify(report), status
+
+
 # ── Vault: Payments ──
 
 @app.route("/v1/payments/authorize", methods=["POST"])
