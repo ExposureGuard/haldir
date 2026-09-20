@@ -184,11 +184,14 @@ jobs:
       - name: Build the wheel and sdist
         run: |
           python -m pip install --upgrade pip build
-          # `python -m build` does not clear its output directory, and a stale
-          # artifact there is indistinguishable from a fresh one — it silently
-          # reinstalls the previous wheel. That cost me an hour of chasing a
-          # phantom missing-module failure locally.
-          rm -rf build dist
+          # `python -m build` is not clean, and stale state there is
+          # indistinguishable from a fresh build. Both `dist/` and
+          # `*.egg-info/` change what gets packaged: with an old egg-info in
+          # place hatchling reuses its file selection, so a wheel built from a
+          # correct pyproject still shipped only three modules. That is why
+          # this job failed twice on the same symptom after two different
+          # fixes to the include list — the list was never the problem here.
+          rm -rf build dist *.egg-info
           python -m build
 
       - name: Install the wheel into a clean environment

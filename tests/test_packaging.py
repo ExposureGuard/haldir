@@ -29,7 +29,10 @@ import glob
 import os
 import re
 import sys
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 import pytest
 
@@ -160,16 +163,47 @@ def test_no_build_target_uses_the_packages_shorthand_alongside_include(pyproject
     )
 
 
-def test_the_sdist_ships_the_modules_too(pyproject) -> None:
-    """A source distribution that omits them is the same failure for anyone
-    who installs from sdist rather than a wheel."""
-    sdist = pyproject["tool"]["hatch"]["build"]["targets"]["sdist"]["include"]
-    for entry in pyproject["project"]["scripts"].values():
-        mod = entry.split(":")[0]
-        assert any(m.startswith(mod) for m in sdist), (
-            f"the sdist include list does not cover the entry-point module "
-            f"{mod!r}"
-        )
+def test_the_sdist_ships_everything_the_wheel_does(pyproject) -> None:
+    """The sdist list is the load-bearing one.
+
+    `python -m build` builds the sdist first and then builds the *wheel from
+    the sdist*. Anything the sdist omits is missing from the wheel too, whatever
+    the wheel target says.
+
+    That is what made this take two rounds to find. The wheel's include list
+    was corrected twice — a glob, then an explicit enumeration — and the CI job
+    failed identically both times, because the wheel was being built out of an
+    sdist that listed three modules. Checking the entry-point modules alone was
+    not enough; haldir_logging.py and haldir_tracing.py are imported by
+    haldir_db and the three packages, not named by a console script.
+    """
+    sdist = set(pyproject["tool"]["hatch"]["build"]["targets"]["sdist"]["include"])
+    wheel = set(_wheel_include(pyproject))
+
+    # Every wheel entry must be reachable from the sdist. Directory globs
+    # cover their contents; explicit files must be named.
+    missing = sorted(
+        entry for entry in wheel
+        if entry not in sdist
+        and not any(entry.startswith(d.rstrip("*").rstrip("/"))
+                    for d in sdist if d.endswith("/**"))
+    )
+    assert not missing, (
+        f"the wheel includes these but the sdist does not, so `python -m "
+        f"build` would produce a wheel missing them — the wheel is built from "
+        f"the sdist: {missing}"
+    )
+
+
+def test_the_sdist_lists_every_module_on_disk(pyproject) -> None:
+    """Same staleness guard as the wheel, for the list that actually decides."""
+    on_disk = {os.path.basename(p) for p in glob.glob(os.path.join(ROOT, "haldir_*.py"))}
+    sdist = set(pyproject["tool"]["hatch"]["build"]["targets"]["sdist"]["include"])
+    missing = sorted(on_disk - sdist)
+    assert not missing, (
+        f"these modules are not in the sdist include list, so a wheel built "
+        f"from the sdist would not contain them: {missing}"
+    )
 
 
 # ── The two manifests must agree ─────────────────────────────────────

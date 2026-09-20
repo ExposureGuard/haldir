@@ -153,14 +153,52 @@ include = [
 ]
 
 [tool.hatch.build.targets.sdist]
+# The same modules as the wheel, and this list is the load-bearing one.
+#
+# `python -m build` builds the sdist first and then builds the *wheel from the
+# sdist*. So anything missing here is missing from the wheel too, no matter
+# what the wheel target says — which is why two rounds of fixing the wheel's
+# include list changed nothing: the wheel was being built out of an
+# incomplete sdist, and the two files that kept going missing
+# (haldir_logging.py, haldir_tracing.py) were exactly the ones this list
+# lacked.
+#
+# It also matters on its own: an sdist that cannot build a complete wheel is
+# broken for anyone installing from source rather than from a wheel.
 include = [
+    "haldir_admin.py",
+    "haldir_audit_tree.py",
+    "haldir_compliance.py",
+    "haldir_compliance_scheduler.py",
+    "haldir_compliance_score.py",
+    "haldir_db.py",
+    "haldir_demo_tamper.py",
+    "haldir_email.py",
+    "haldir_export.py",
+    "haldir_health.py",
+    "haldir_idempotency.py",
+    "haldir_logging.py",
+    "haldir_mcp_proxy.py",
+    "haldir_mcp_server.py",
+    "haldir_merkle.py",
+    "haldir_metrics.py",
+    "haldir_migrate.py",
+    "haldir_openapi.py",
+    "haldir_rekor_verify.py",
+    "haldir_retention.py",
+    "haldir_scopes.py",
+    "haldir_status.py",
+    "haldir_sth_log.py",
+    "haldir_tracing.py",
+    "haldir_transparency_mirror.py",
+    "haldir_validation.py",
+    "haldir_x402.py",
     "haldir_gate/**",
     "haldir_vault/**",
     "haldir_watch/**",
     "sdk/**",
-    "haldir_mcp_server.py",
-    "haldir_db.py",
     "cli.py",
+    "api.py",
     "README.md",
     "pyproject.toml",
 ]
