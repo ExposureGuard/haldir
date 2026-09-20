@@ -35,6 +35,17 @@ from haldir_watch.webhooks import (  # noqa: E402
 
 # ── verify_signature with multi-secret ───────────────────────────────
 
+
+@pytest.fixture(autouse=True)
+def _allow_local_webhook_receiver(monkeypatch):
+    """These tests stand up a real HTTP receiver on 127.0.0.1 and point a
+    webhook at it. The address half of safe_outbound_url exists to stop a
+    *hosted* tenant reaching the internal network; here the operator is the
+    test, so the opt-in is the honest way to say so. Scoped to this module on
+    purpose — the guard's default behaviour is what test_outbound_url.py
+    asserts, and setting it globally would quietly disable that coverage."""
+    monkeypatch.setenv("HALDIR_ALLOW_PRIVATE_WEBHOOKS", "1")
+
 def _sign(payload: bytes, secret: str, ts: int | None = None) -> tuple[str, str]:
     """Helper: returns (signature_header, timestamp_header) for a
     payload signed with `secret`."""

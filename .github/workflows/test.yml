@@ -69,12 +69,17 @@ jobs:
           # including every merkle / STH / transparency test — the modules
           # behind the audit-integrity claim. A new test file is now gated the
           # moment it lands, instead of when someone remembers to add it.
+          # --cov-fail-under is a ratchet, not a target: coverage was being
+          # measured and uploaded but never enforced, so it could fall
+          # silently forever. Set just below the current figure so the only
+          # direction it can move is up. Raise it when you raise coverage.
           pytest tests/ \
             --cov=haldir_gate \
             --cov=haldir_vault \
             --cov=haldir_watch \
             --cov-report=xml \
             --cov-report=term-missing \
+            --cov-fail-under=78 \
             -v
 
       - name: Upload coverage to Codecov
@@ -146,8 +151,86 @@ jobs:
           # using — they would measure the harness, not Postgres. These go
           # through the app's own connection layer, which is the path a
           # deployment actually takes.
+          # test_concurrency is here deliberately: the spend cap is a
+          # conditional UPDATE and the chain guard is a partial unique index,
+          # and both are evaluated by the *database*. SQLite and Postgres
+          # agree on these two, but "they agree" is a claim worth testing
+          # rather than assuming — the assertion that matters is that the cap
+          # still holds and the chain still verifies when the engine doing
+          # the arithmetic changes underneath.
           pytest tests/test_api.py \
                  tests/test_admin.py \
                  tests/test_delegation.py \
                  tests/test_sth_log.py \
+                 tests/test_concurrency.py \
+                 tests/test_retention.py \
                  -q --tb=short
+
+  security:
+    name: security (deps + static analysis)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install scanners
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pip-audit>=2.7,<3" "bandit>=1.7,<2"
+
+      - name: Audit dependencies for known CVEs
+        # Haldir is a security product that moves money and holds secrets; a
+        # CVE in a pinned dependency is a CVE in Haldir. The pins are bounded
+        # but frozen, so this is the only thing that will notice when one of
+        # them is disclosed. Fails the build: a known-vulnerable dependency
+        # shipping to users is worse than a red check.
+        run: pip-audit -r requirements.txt --strict --desc
+
+      - name: Static analysis
+        # Deliberately narrow. A blanket `bandit -r .` on this codebase
+        # reports things that are the product rather than defects: it fires
+        # on `subprocess` in the reverse-shell teaching examples, on the
+        # intentionally-weak hashing in the crypto demos, and on every
+        # `try/except/pass` in the SQLite migration path. A check that is
+        # always red is a check nobody reads, so this runs at medium
+        # severity over the modules that actually enforce something.
+        run: |
+          bandit -ll -r haldir_gate haldir_vault haldir_watch \
+                 --exclude '*/tests/*' \
+                 -f screen
+
+  coverage-floor:
+    name: coverage floor is not lowered
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: The floor in the workflow may not go down
+        # A ratchet only ratchets if something stops it being loosened. The
+        # cheapest way to fix a failing coverage gate is to lower the number,
+        # and that is exactly the move this forbids.
+        run: |
+          set -euo pipefail
+          base="$(git merge-base HEAD origin/${{ github.base_ref }})"
+          old=$(git show "$base:.github/workflows/test.yml" \
+                | grep -oE '\-\-cov-fail-under=[0-9]+' | head -1 | cut -d= -f2)
+          new=$(grep -oE '\-\-cov-fail-under=[0-9]+' .github/workflows/test.yml | head -1 | cut -d= -f2)
+          echo "base floor=${old:-none}  this branch floor=${new:-none}"
+          if [ -z "$new" ]; then
+            echo "::error::--cov-fail-under was removed from the pytest step"
+            exit 1
+          fi
+          if [ -n "$old" ] && [ "$new" -lt "$old" ]; then
+            echo "::error::coverage floor lowered from $old to $new"
+            exit 1
+          fi

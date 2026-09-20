@@ -130,12 +130,20 @@ def test_creation_fails_closed_when_the_audit_write_fails(haldir_client, bootstr
     assert row is not None and int(row["revoked"]) == 1
 
 
-def test_other_admin_changes_are_recorded(haldir_client, bootstrap_key, fresh_counter) -> None:
+def test_other_admin_changes_are_recorded(haldir_client, bootstrap_key,
+                                          fresh_counter, monkeypatch) -> None:
     """Not just the key lifecycle — the config that decides what agents may do.
 
     A webhook is where alerts go and an approval rule decides when a human is
     asked; both are governance-relevant changes, and both used to be silent.
     """
+    # This test is about the audit entry, not URL safety, and it should not
+    # depend on DNS: `example.invalid` is reserved and never resolves, and a
+    # public hostname would make the suite fail on an offline runner. The
+    # opt-in skips the address check and keeps the test hermetic. The guard
+    # itself is covered by test_outbound_url.py and by the API-level tests
+    # there that assert a refused URL is a 400.
+    monkeypatch.setenv("HALDIR_ALLOW_PRIVATE_WEBHOOKS", "1")
     h = {"Authorization": f"Bearer {bootstrap_key}"}
 
     r = haldir_client.post("/v1/webhooks",

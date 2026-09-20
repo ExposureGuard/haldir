@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from haldir_outbound import safe_outbound_url
+
 
 class ApprovalStatus(Enum):
     PENDING = "pending"
@@ -141,7 +143,14 @@ class ApprovalEngine:
         })
 
     def add_webhook(self, url: str) -> None:
-        """Add a webhook URL to notify on new approval requests."""
+        """Add a webhook URL to notify on new approval requests.
+
+        Validated here and again at fire time. `urlopen` honours whatever
+        scheme it is handed, so an unvalidated URL made this a local file
+        read: `file:///etc/passwd` would be fetched and its contents taken
+        as the response. Raises UnsafeURL, which the API surfaces as a 400.
+        """
+        safe_outbound_url(url)
         self._webhooks.append(url)
 
     def needs_approval(self, tool: str, action: str, amount: float = 0.0) -> tuple[bool, str]:
@@ -349,9 +358,13 @@ class ApprovalEngine:
 
         def fire(url: str) -> None:
             try:
+                # Re-checked at fire time: a name that resolved public at
+                # registration can resolve inward later.
+                safe_outbound_url(url)
                 r = urllib.request.Request(url, data=payload,
                                            headers={"Content-Type": "application/json"})
-                urllib.request.urlopen(r, timeout=5)
+                # nosec B310 — the URL passed safe_outbound_url above.
+                urllib.request.urlopen(r, timeout=5)  # nosec B310
             except Exception:
                 pass
 

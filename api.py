@@ -2063,6 +2063,7 @@ def pending_approvals():
 # ── Webhooks ──
 
 from haldir_watch.webhooks import WebhookManager
+from haldir_outbound import UnsafeURL
 webhook_mgr = WebhookManager(db_path=DB_PATH)
 
 # ── Compliance scheduler ──────────────────────────────────────────────
@@ -2092,12 +2093,18 @@ def register_webhook():
     cached = _idempotency_lookup("/v1/webhooks", data, tenant)
     if cached is not None:
         return cached
-    wh = webhook_mgr.register(
-        url=url,
-        name=data.get("name", ""),
-        events=data.get("events"),
-        tenant_id=tenant,
-    )
+    try:
+        wh = webhook_mgr.register(
+            url=url,
+            name=data.get("name", ""),
+            events=data.get("events"),
+            tenant_id=tenant,
+        )
+    except UnsafeURL as e:
+        # A refused URL is the caller's mistake, not a server fault. Without
+        # this it surfaced as a 500 with a traceback in the log, which tells
+        # the caller nothing about which part of the URL was the problem.
+        return jsonify({"error": str(e), "code": "unsafe_url"}), 400
     response = {
         "registered": True,
         "webhook_id": wh.webhook_id,
