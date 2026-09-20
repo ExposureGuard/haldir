@@ -373,3 +373,64 @@ def test_a_connection_that_cannot_be_returned_is_not_leaked() -> None:
         "close() lets a failed putconn leak the connection instead of "
         "closing it outright"
     )
+
+
+# ── The audit-log migration guard ────────────────────────────────────
+
+def _mk(sql: str) -> "sqlite3.Connection":
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(sql)
+    return conn
+
+
+def test_the_migration_guard_notices_a_missing_column() -> None:
+    """The trap this closes.
+
+    The guard used to return True on the presence of idx_audit_seq alone. It
+    happens to be correct today, because the index and the hash_version
+    column were introduced in the same release — but it is correct by
+    coincidence, not by construction. The day hash_version is added later
+    than the index, every database that already has the index would
+    short-circuit here, never get the column, and then fail *every audit
+    write* with "no column named hash_version" on upgrade.
+
+    A schema with the index but not the column is therefore the case that
+    matters, and it must report "not current" so the migration runs.
+    """
+    conn = _mk("""
+        CREATE TABLE audit_log (entry_id TEXT PRIMARY KEY, seq INTEGER, tenant_id TEXT);
+        CREATE UNIQUE INDEX idx_audit_seq ON audit_log(tenant_id, seq);
+    """)
+    assert haldir_db._audit_seq_is_current(conn) is False, (
+        "a half-migrated log reported itself current, so hash_version would "
+        "never be added and every audit write would fail"
+    )
+    conn.close()
+
+
+def test_the_migration_guard_skips_a_fully_migrated_log() -> None:
+    """The reason the guard exists: ADD COLUMN and CREATE INDEX take ACCESS
+    EXCLUSIVE locks, and init_db runs at every start. Once the work is done,
+    nothing may touch the table."""
+    conn = _mk("""
+        CREATE TABLE audit_log (
+            entry_id TEXT PRIMARY KEY, seq INTEGER,
+            hash_version INTEGER, tenant_id TEXT);
+        CREATE UNIQUE INDEX idx_audit_seq ON audit_log(tenant_id, seq);
+    """)
+    assert haldir_db._audit_seq_is_current(conn) is True
+    conn.close()
+
+
+def test_the_migration_guard_runs_on_a_fresh_log() -> None:
+    conn = _mk("CREATE TABLE audit_log (entry_id TEXT PRIMARY KEY, tenant_id TEXT);")
+    assert haldir_db._audit_seq_is_current(conn) is False
+    conn.close()
+
+
+def test_the_migration_guard_runs_when_there_is_no_table_at_all() -> None:
+    """init_db is called against databases that do not have the schema yet."""
+    conn = _mk("CREATE TABLE something_else (x INTEGER);")
+    assert haldir_db._audit_seq_is_current(conn) is False
+    conn.close()

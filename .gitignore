@@ -19,6 +19,7 @@ coverage.xml
 # Private docs (local only)
 /private/
 CONVERSATION_HISTORY.md
+SESSION_CONTEXT.md
 DAILY_REALITY_CHECK.md
 DAILY_PLAYBOOK.md
 FUNDING_PATH.md

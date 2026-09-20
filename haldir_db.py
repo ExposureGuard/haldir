@@ -580,22 +580,39 @@ _SCHEMA_SQLITE = _SCHEMA.replace("BYTEA", "BLOB").replace("SERIAL PRIMARY KEY", 
 
 
 def _audit_seq_is_current(conn) -> bool:
-    """True when audit_log already has seq and its unique index.
+    """True when audit_log has everything _migrate_audit_seq would add.
 
-    Reads the catalogue rather than the table: `sqlite_master` on SQLite,
-    `pg_indexes` on Postgres, by trying each and taking whichever answers.
-    Neither takes a lock on audit_log, which is the whole point — the code
-    this guards takes an ACCESS EXCLUSIVE one.
+    Reads the catalogue rather than the table: `sqlite_master` / `PRAGMA
+    table_info` on SQLite, `pg_indexes` / `information_schema` on Postgres,
+    by trying each and taking whichever answers. Neither takes a lock on
+    audit_log, which is the whole point — the code this guards takes an
+    ACCESS EXCLUSIVE one.
+
+    Deliberately checks the *columns* and not only the index. An earlier
+    version of this returned True on the index alone, which happens to be
+    correct today because the index and the hash_version column were
+    introduced together — but it is a trap rather than a guarantee: the day
+    hash_version is added in a release later than idx_audit_seq, every
+    database that already has the index short-circuits here and never gets
+    the column, and then every audit write fails with "no column named
+    hash_version" on upgrade. Checking both costs one more catalogue read and
+    removes the ordering dependency entirely.
     """
-    for sql in (
-        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_audit_seq'",
-        "SELECT 1 FROM pg_indexes WHERE indexname = 'idx_audit_seq'",
+    for cols_sql, idx_sql in (
+        ("SELECT name FROM pragma_table_info('audit_log')",
+         "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_audit_seq'"),
+        ("SELECT column_name FROM information_schema.columns "
+         "WHERE table_name = 'audit_log'",
+         "SELECT 1 FROM pg_indexes WHERE indexname = 'idx_audit_seq'"),
     ):
         try:
-            if conn.execute(sql).fetchone() is not None:
-                return True
+            columns = {row[0] for row in conn.execute(cols_sql).fetchall()}
+            has_index = conn.execute(idx_sql).fetchone() is not None
         except Exception:
             continue  # not this backend's catalogue
+        if not columns:
+            continue  # this backend answered nothing; try the next
+        return has_index and {"seq", "hash_version"} <= columns
     return False
 
 
