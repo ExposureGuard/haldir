@@ -20,4 +20,6 @@ pytest-asyncio>=1.0.0,<2.0.0
 # Property-based tests: test_merkle_properties.py, test_vault_properties.py,
 # test_watch_properties.py.
 hypothesis>=6.0.0,<7.0.0
+# Turns a hung test into a failure with a traceback of every thread.
+pytest-timeout>=2.3,<3
 mypy>=2.0.0,<3.0.0

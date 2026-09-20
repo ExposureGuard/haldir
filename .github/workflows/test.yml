@@ -152,6 +152,11 @@ jobs:
 
       - name: Run tests against Postgres
         env:
+          # Progress reaches the log as it happens. Python block-buffers
+          # stdout into a pipe, so a run that never exits never flushes — and
+          # this job has twice now shown the step starting and then absolutely
+          # nothing for fifteen minutes.
+          PYTHONUNBUFFERED: "1"
           DATABASE_URL: postgresql://haldir:haldir@localhost:5432/haldir
           # Fixed key so the run is reproducible; the app otherwise
           # generates a throwaway one and warns.
@@ -172,6 +177,12 @@ jobs:
           # NaN and infinity where SQLite rejects them, so the fuzz cases in
           # test_invariants_chain only run in full here.
           #
+          # --timeout with the thread-dump method: when a test exceeds it,
+          # pytest prints the stack of every thread rather than just not
+          # returning. A deadlock then names the line it is stuck on, which is
+          # the difference between a diagnosis and another fifteen minutes of
+          # silence. Set well above the slowest legitimate test.
+          #
           # test_concurrency is here deliberately: the spend cap is a
           # conditional UPDATE and the chain guard is a partial unique index,
           # and both are evaluated by the *database*. SQLite and Postgres
@@ -188,7 +199,8 @@ jobs:
                  tests/test_invariants_chain.py \
                  tests/test_invariants_spend.py \
                  tests/test_invariants_secrets.py \
-                 -q --tb=short
+                 -q --tb=short \
+                 --timeout=120 --timeout-method=thread
 
   security:
     name: security (deps + static analysis)
