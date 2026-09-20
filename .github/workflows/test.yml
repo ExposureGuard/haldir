@@ -151,3 +151,108 @@ jobs:
                  tests/test_delegation.py \
                  tests/test_sth_log.py \
                  -q --tb=short
+
+  package:
+    name: package (build the wheel and actually run it)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Every other job runs against the source tree, where `import cli` simply
+    # works because cli.py is sitting right there. That is why two separate
+    # breakages reached PyPI while CI stayed green:
+    #
+    #   * the wheel shipped no cli.py, haldir_db.py or haldir_mcp_server.py,
+    #     so `pip install haldir && haldir overview` — the first line of the
+    #     README — died on ModuleNotFoundError. Nobody who ever installed
+    #     from PyPI could start it.
+    #   * pyproject.toml declared `mcp>=1.27.0` with no upper bound while
+    #     requirements.txt bounded it below 2.0, so PyPI users resolved mcp
+    #     2.x and the MCP server died on `'Server' object has no attribute
+    #     'list_tools'`.
+    #
+    # Both were invisible from inside the checkout and obvious from outside
+    # it. This job is the outside.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build the wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build
+          # `python -m build` is not clean, and stale state there is
+          # indistinguishable from a fresh build. Both `dist/` and
+          # `*.egg-info/` change what gets packaged: with an old egg-info in
+          # place hatchling reuses its file selection, so a wheel built from a
+          # correct pyproject still shipped only three modules. That is why
+          # this job failed twice on the same symptom after two different
+          # fixes to the include list — the list was never the problem here.
+          rm -rf build dist *.egg-info
+          python -m build
+
+      - name: Install the wheel into a clean environment
+        # Not `pip install -e .`, and the next steps run from /tmp, so nothing
+        # can be satisfied by the source tree. This is what a user gets.
+        run: |
+          python -m venv /tmp/pkg-venv
+          /tmp/pkg-venv/bin/pip install --upgrade pip
+          /tmp/pkg-venv/bin/pip install dist/*.whl
+
+      - name: The console scripts must start
+        working-directory: /tmp
+        run: |
+          set -euo pipefail
+
+          # Proves the script resolves its module and that the dependency
+          # graph is complete enough to import.
+          /tmp/pkg-venv/bin/haldir --help > /dev/null
+          echo "haldir --help: ok"
+
+          # haldir-mcp speaks stdio and exits when stdin closes. What matters
+          # is that it builds the server rather than dying on an import, so a
+          # traceback naming our own modules or a missing attribute fails and
+          # a clean exit does not.
+          set +e
+          /tmp/pkg-venv/bin/haldir-mcp < /dev/null 2>/tmp/mcp.err
+          set -e
+          if grep -qE "ModuleNotFoundError|ImportError|AttributeError" /tmp/mcp.err; then
+            echo "::error::haldir-mcp could not start"
+            sed -n '1,40p' /tmp/mcp.err
+            exit 1
+          fi
+          echo "haldir-mcp: started without an import error"
+
+      - name: Every shipped module must import
+        working-directory: /tmp
+        run: |
+          # Catches a module that is included in the wheel but whose
+          # dependencies are not declared — `api.py` imports flask at module
+          # level, and flask was missing from pyproject.toml entirely.
+          /tmp/pkg-venv/bin/python - <<'PY'
+          import importlib
+          import pkgutil
+          import site
+          import sys
+
+          failures = []
+          for root in site.getsitepackages():
+              for mod in sorted(pkgutil.iter_modules([root])):
+                  name = mod.name
+                  if not (name.startswith("haldir") or name in ("cli", "api")):
+                      continue
+                  try:
+                      importlib.import_module(name)
+                  except Exception as e:
+                      failures.append(f"{name}: {type(e).__name__}: {e}")
+
+          if failures:
+              print("::error::shipped modules that cannot be imported:")
+              for f in failures:
+                  print("   ", f)
+              sys.exit(1)
+          print("all shipped modules import")
+          PY
