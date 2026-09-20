@@ -168,12 +168,14 @@ jobs:
           # using — they would measure the harness, not Postgres. These go
           # through the app's own connection layer, which is the path a
           # deployment actually takes.
-          # The invariant suites, but not test_concurrency.py.
+          # Everything, including the concurrency suite.
           #
-          # With everything listed, this job hangs for fifteen minutes. That is
-          # one of the heavier suites and not a reason anyone can act on, so it
-          # is being bisected with the fast feedback the scoped job gives:
-          # these three first, then concurrency on its own.
+          # Bisected here: with the whole suite listed this job hung for
+          # fifteen minutes, and removing test_concurrency.py brought it back
+          # to a minute. The cause was that suite's queries — three of them
+          # walked every tenant's audit_log, which is free on SQLite (a fresh
+          # file per test) and wrong on Postgres (one shared database). Scoped
+          # to a module tenant now.
           #
           # Two things had to be fixed before they could run here, and neither
           # was a product bug:
@@ -194,6 +196,7 @@ jobs:
                  tests/test_delegation.py \
                  tests/test_sth_log.py \
                  tests/test_retention.py \
+                 tests/test_concurrency.py \
                  tests/test_invariants_chain.py \
                  tests/test_invariants_spend.py \
                  tests/test_invariants_secrets.py \
