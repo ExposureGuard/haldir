@@ -49,8 +49,8 @@ cp .env.example .env
 docker compose up -d
 
 # 5. Verify
-curl http://localhost:8000/health
-# → {"ok": true}
+curl http://localhost:8000/healthz
+# → {"alive": true, "status": "ok", "service": "haldir", ...}
 ```
 
 You now have Haldir running on `http://localhost:8000`.
@@ -59,14 +59,17 @@ You now have Haldir running on `http://localhost:8000`.
 
 ## Create your first API key
 
-If you set a `HALDIR_BOOTSTRAP_TOKEN` in `.env`:
+If you set a `HALDIR_BOOTSTRAP_TOKEN` in `.env`, send it in the **body** as
+`bootstrap_token`:
 
 ```bash
 curl -X POST http://localhost:8000/v1/keys \
   -H "Content-Type: application/json" \
-  -H "X-Bootstrap-Token: $HALDIR_BOOTSTRAP_TOKEN" \
-  -d '{"name": "my-first-key"}'
+  -d "{\"name\": \"my-first-key\", \"bootstrap_token\": \"$HALDIR_BOOTSTRAP_TOKEN\"}"
 ```
+
+(An `X-Bootstrap-Token` header looks like the obvious spelling, but nothing
+reads it — the server returns 401 and the key is not created.)
 
 If you left it empty, the first key creation is open:
 
@@ -95,7 +98,7 @@ curl -X POST http://localhost:8000/v1/sessions \
 Or point the Python SDK at your instance:
 
 ```python
-from haldir import HaldirClient
+from sdk.client import HaldirClient
 
 client = HaldirClient(
     api_key="hld_...",
@@ -138,11 +141,23 @@ Standard Postgres backups. Audit entries are written-once hash-chained — prese
 
 ### 5. Horizontal scaling
 
-The API is stateless. Run as many replicas as you want behind a load balancer — they all point at the same Postgres. Use `--workers 4 --threads 8` on gunicorn for per-instance throughput.
+The API holds no session state — every request resolves its tenant from the
+database — so you can run as many replicas as you want behind a load
+balancer, all pointed at the same Postgres. Use `--workers 4 --threads 8` on
+gunicorn for per-instance throughput.
+
+**One caveat worth knowing before you size it:** the hourly per-key rate
+limiter keeps its counters in process memory, so each replica enforces its
+own. Run four replicas and a key gets four times the quota before anything
+is refused. Audit entries, spend caps, session state and idempotency keys
+are all database-backed and unaffected — this is the rate limiter only. If
+you are relying on the tier limits as a hard ceiling rather than a
+best-effort throttle, run a single replica or front it with a shared limiter
+at the load balancer.
 
 ### 6. Monitoring
 
-Haldir exposes `/health` (liveness) and `/v1/metrics` (platform metrics). Wire these into your monitoring stack.
+Haldir exposes `/healthz` (liveness) and `/v1/metrics` (platform metrics). Wire these into your monitoring stack.
 
 ---
 
@@ -171,6 +186,20 @@ spec:
               valueFrom: { secretKeyRef: { name: haldir-secrets, key: database_url } }
             - name: HALDIR_ENCRYPTION_KEY
               valueFrom: { secretKeyRef: { name: haldir-secrets, key: encryption_key } }
+          # Liveness: restart the pod if the process wedges.
+          # Readiness: withhold traffic until migrations have run.
+          # These are the two questions /livez and /readyz exist to answer
+          # separately — a pod that is alive but still migrating should not
+          # be receiving requests.
+          livenessProbe:
+            httpGet: { path: /livez, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 6
 ---
 apiVersion: v1
 kind: Service

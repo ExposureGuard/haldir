@@ -22,7 +22,7 @@ python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).de
 docker compose up -d
 
 # 4. Verify
-curl http://localhost:8000/health
+curl http://localhost:8000/healthz
 ```
 
 Hot-reload during development:
@@ -46,7 +46,7 @@ Good first contributions:
 - **Tests** — add test cases for edge cases we haven't covered
 - **Docs polish** — typos, clarity, better examples
 - **New framework integration** — AutoGen, LlamaIndex, Semantic Kernel, Pydantic AI, etc. (follow the `integrations/langchain-haldir/` pattern)
-- **New MCP tools** — Haldir as an MCP server exposes 10 tools today; more is better
+- **New MCP tools** — `mcp_server.py` registers 9 today; more is better. It is not the only MCP surface: `haldir_mcp_server.py` registers a larger `haldir_*` set, and `POST /mcp` answers with its own. Add to the one you mean.
 - **SDK ergonomics** — sync/async helpers, typed convenience methods
 
 Check [open issues](https://github.com/ExposureGuard/haldir/issues) for items labelled `good first issue` or `help wanted`.
@@ -91,7 +91,7 @@ Run the smoke test before opening a PR:
 python -m pytest tests/
 ```
 
-For framework integrations, there's a live-API smoke test pattern — see `tmp/haldir_smoke_test.py` in recent commits for an example.
+For framework integrations, `examples/` holds runnable versions of each — `langchain_agent.py`, `crewai_crew.py`, `vercel_ai_sdk.ts` — alongside `quickstart.py`, `proxy_mode.py`, `human_in_the_loop.py` and `webhook_alerts.py`. Point one at your instance with `HALDIR_BASE_URL` and it exercises the real API.
 
 ---
 
@@ -100,7 +100,7 @@ For framework integrations, there's a live-API smoke test pattern — see `tmp/h
 Before opening a PR:
 
 - [ ] Tests pass (`python -m pytest tests/`)
-- [ ] Self-host still works (`docker compose up -d` + hit `/health`)
+- [ ] Self-host still works (`docker compose up -d` + hit `/healthz`)
 - [ ] Docs updated if you added a feature
 - [ ] `CHANGELOG.md` entry under `## [Unreleased]`
 - [ ] Commit messages are tidy (squash if you made experimental commits)

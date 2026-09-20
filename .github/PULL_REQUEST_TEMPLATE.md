@@ -23,7 +23,7 @@ linked issue.
 ## How I tested
 
 - [ ] Ran `pytest tests/` locally — all pass
-- [ ] Self-host still works (`docker compose up -d` + `curl localhost:8000/health` returns 200)
+- [ ] Self-host still works (`docker compose up -d` + `curl localhost:8000/healthz` returns 200)
 - [ ] Relevant integration example still runs (langchain_agent.py / crewai_crew.py / vercel_ai_sdk.ts)
 
 <!-- Paste any new test output or a repro here if useful. -->
