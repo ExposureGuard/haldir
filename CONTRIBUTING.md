@@ -45,7 +45,7 @@ Good first contributions:
 - **Bug reports with repros** — even without a fix, a reproducible bug report is massively helpful
 - **Tests** — add test cases for edge cases we haven't covered
 - **Docs polish** — typos, clarity, better examples
-- **New framework integration** — AutoGen, LlamaIndex, Semantic Kernel, Pydantic AI, etc. (follow the `integrations/langchain-haldir/` pattern)
+- **New framework integration** — LangChain, CrewAI, AutoGen, LlamaIndex and the Vercel AI SDK already exist under `integrations/`; Semantic Kernel, Pydantic AI, Mastra and the OpenAI Agents SDK are wanted (follow the `integrations/langchain-haldir/` pattern)
 - **New MCP tools** — `mcp_server.py` registers 9 today; more is better. It is not the only MCP surface: `haldir_mcp_server.py` registers a larger `haldir_*` set, and `POST /mcp` answers with its own. Add to the one you mean.
 - **SDK ergonomics** — sync/async helpers, typed convenience methods
 
