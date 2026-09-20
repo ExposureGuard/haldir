@@ -214,6 +214,19 @@ class PgCursorWrapper:
     def __init__(self, cursor):
         self._cursor = cursor
 
+    @property
+    def rowcount(self):
+        """sqlite3 cursors expose this; callers use it to tell whether a write
+        changed anything.
+
+        vault.delete_secret reads it to report whether a secret was removed,
+        and haldir_sth_log.record uses it to decide whether a Signed Tree Head
+        was newly recorded. Without it both raised AttributeError, and because
+        record() swallows exceptions by design the STH log failed *silently* —
+        the anti-equivocation layer recorded nothing on Postgres at all.
+        """
+        return self._cursor.rowcount
+
     def fetchone(self):
         row = self._cursor.fetchone()
         if row is None:

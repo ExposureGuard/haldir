@@ -1660,8 +1660,12 @@ def track_usage(response):
         try:
             conn = get_db(DB_PATH)
             conn.execute(
+                # The target column is table-qualified because Postgres cannot
+                # resolve a bare `action_count` here — both the existing row and
+                # EXCLUDED have one, so it raises AmbiguousColumn. SQLite accepts
+                # the qualification too, so one string serves both engines.
                 "INSERT INTO usage (tenant_id, month, action_count) VALUES (?, ?, 1) "
-                "ON CONFLICT(tenant_id, month) DO UPDATE SET action_count = action_count + 1",
+                "ON CONFLICT(tenant_id, month) DO UPDATE SET action_count = usage.action_count + 1",
                 (tenant, month)
             )
             conn.commit()

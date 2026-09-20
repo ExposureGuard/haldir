@@ -38,6 +38,22 @@ import haldir_sth_log  # noqa: E402
 
 
 def _isolated_db(tmp_path) -> str:
+    """A migrated scratch SQLite database of our own.
+
+    Skipped when DATABASE_URL points at Postgres: haldir_db.get_db() ignores
+    the path we hand it in that case and talks to the server instead, so these
+    tests would be operating on the shared database while asserting against a
+    file nobody wrote to. That is not a Postgres bug to fix — the tests are
+    SQLite-only by construction — but it is worth saying out loud rather than
+    leaving a confusing failure for whoever sets DATABASE_URL locally.
+
+    The endpoint tests in this file go through the app and do run against
+    Postgres.
+    """
+    import os
+    if os.environ.get("DATABASE_URL", "").startswith("postgres"):
+        pytest.skip("explicit SQLite path; the app routes through DATABASE_URL")
+
     import haldir_migrate
     db = str(tmp_path / "sth_log.db")
     haldir_migrate.apply_pending(db)

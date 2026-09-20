@@ -521,6 +521,23 @@ def _section_signatures(pack: dict[str, Any]) -> dict[str, Any]:
                           "public_key", "key_id"):
             te.pop(volatile, None)
         hashable["tamper_evidence"] = te
+    # Normalize access_control: `last_used` is request telemetry, not evidence
+    # of control, and require_api_key stamps it on every authenticated call —
+    # including the call asking for this pack. Leaving it in meant the digest
+    # changed simply because someone read it: two consecutive requests
+    # disagreed, and an auditor re-verifying an archived pack later would get
+    # a divergent digest and false-flag tampering, which is the exact failure
+    # this digest exists to prevent. Key identity (prefix, name, tier, scopes,
+    # created_at, revoked) stays in; the pack still *displays* last_used.
+    if "access_control" in hashable and isinstance(hashable["access_control"], dict):
+        ac = dict(hashable["access_control"])
+        if isinstance(ac.get("keys"), list):
+            ac["keys"] = [
+                {k: v for k, v in row.items() if k != "last_used"}
+                if isinstance(row, dict) else row
+                for row in ac["keys"]
+            ]
+        hashable["access_control"] = ac
     canonical = json.dumps(
         hashable,
         sort_keys=True, separators=(",", ":"),
