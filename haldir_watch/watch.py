@@ -8,6 +8,7 @@ If any past entry is modified, all subsequent hashes break.
 
 import hashlib
 import json
+import random
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -17,10 +18,24 @@ from haldir_tracing import traced_span
 
 
 # How many times an append re-reads the chain tail after losing a race for a
-# sequence number. Each retry means a concurrent writer beat us; a handful is
-# generous for any realistic write rate, and the loop raises rather than
-# spinning forever if the contention is genuinely pathological.
-APPEND_ATTEMPTS = 8
+# sequence number.
+#
+# Eight was too few. Sixteen concurrent appenders in the test suite produced
+# "could not append to the audit chain after 8 attempts" — one writer losing
+# eight races in a row — and the failure mode of a too-small budget is a
+# *dropped audit entry*, which is the worst possible outcome for the thing
+# this module exists to guarantee. Fifty is still bounded, so genuinely
+# pathological contention raises rather than hanging, but it is far past what
+# contention should ever cost.
+APPEND_ATTEMPTS = 50
+
+# Base delay between attempts, in seconds, jittered per attempt.
+#
+# Without a pause, writers that just collided retry at the same instant and
+# collide again — the retries stay in lockstep and the budget is spent
+# re-losing the same race. The jitter spreads them out; the growth keeps a
+# busy chain from paying a long sleep once it is nearly free.
+APPEND_RETRY_BASE_S = 0.002
 
 # Which fields the entry hash covers.
 #
@@ -214,6 +229,10 @@ class Watch:
                     if not _is_retryable_append_conflict(e):
                         raise
                     conn.rollback()
+                    # Back off a little before re-reading the tail, with
+                    # jitter so colliding writers do not simply collide again.
+                    delay = APPEND_RETRY_BASE_S * (1 + _attempt)
+                    time.sleep(random.uniform(delay, delay * 2))
 
             raise RuntimeError(
                 f"could not append to the audit chain after {APPEND_ATTEMPTS} "
