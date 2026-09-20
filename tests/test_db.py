@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest  # noqa: E402
 
 import haldir_db  # noqa: E402
+from haldir_db import get_db, init_db  # noqa: E402
 
 
 # ── SQLite pragma application ─────────────────────────────────────────
@@ -203,3 +204,54 @@ def test_the_postgres_timeouts_are_overridable() -> None:
     assert out.returncode == 0, out.stderr
     assert "lock_timeout=1234" in out.stdout, out.stdout
     assert "statement_timeout=5678" in out.stdout, out.stdout
+
+
+def test_the_audit_seq_migration_is_skipped_once_applied(tmp_path) -> None:
+    """init_db runs at every application start, and the audit-seq migration
+    takes an ACCESS EXCLUSIVE lock on audit_log to ADD COLUMN and CREATE
+    INDEX. Re-applying DDL that is already in place means N replicas booting
+    together each queue for that lock — which is where the Postgres CI job
+    hung, inside init_db, before any test body ran.
+
+    So the second call must not touch the table. The catalogue probe answers
+    that without taking a lock; this pins both halves.
+    """
+    import haldir_db
+
+    db = str(tmp_path / "seq.db")
+
+    conn = get_db(db)
+    try:
+        # Nothing applied yet — the probe must say so, or the first real
+        # migration would be skipped and the chain would go unguarded.
+        assert haldir_db._audit_seq_is_current(conn) is False
+    finally:
+        conn.close()
+
+    init_db(db)
+
+    conn = get_db(db)
+    try:
+        assert haldir_db._audit_seq_is_current(conn) is True
+    finally:
+        conn.close()
+
+    # And a repeat init is a no-op rather than an error or a second DDL pass.
+    init_db(db)
+
+
+def test_the_columns_the_migration_adds_really_exist(tmp_path) -> None:
+    """The probe checks the index; the migration also adds two columns. If it
+    short-circuits on a database that has the index but not the columns, the
+    chain writes fail at runtime instead."""
+    db = str(tmp_path / "cols.db")
+    init_db(db)
+
+    conn = get_db(db)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(audit_log)").fetchall()}
+    conn.close()
+
+    assert {"seq", "hash_version"} <= cols, (
+        f"init_db reported the audit-log migration as applied while these "
+        f"columns are missing: {sorted({'seq', 'hash_version'} - cols)}"
+    )

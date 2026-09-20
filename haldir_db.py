@@ -466,6 +466,26 @@ _SCHEMA = """
 _SCHEMA_SQLITE = _SCHEMA.replace("BYTEA", "BLOB").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
 
 
+def _audit_seq_is_current(conn) -> bool:
+    """True when audit_log already has seq and its unique index.
+
+    Reads the catalogue rather than the table: `sqlite_master` on SQLite,
+    `pg_indexes` on Postgres, by trying each and taking whichever answers.
+    Neither takes a lock on audit_log, which is the whole point — the code
+    this guards takes an ACCESS EXCLUSIVE one.
+    """
+    for sql in (
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_audit_seq'",
+        "SELECT 1 FROM pg_indexes WHERE indexname = 'idx_audit_seq'",
+    ):
+        try:
+            if conn.execute(sql).fetchone() is not None:
+                return True
+        except Exception:
+            continue  # not this backend's catalogue
+    return False
+
+
 def _migrate_audit_seq(conn):
     """Give every audit row a per-tenant sequence number, then make it unique.
 
@@ -484,6 +504,19 @@ def _migrate_audit_seq(conn):
     unique index are portable, and `ADD COLUMN` is wrapped because neither
     engine offers `IF NOT EXISTS` for it.
     """
+    # If the work is already done, do not touch the table at all.
+    #
+    # Everything below needs an ACCESS EXCLUSIVE lock — ADD COLUMN and
+    # CREATE INDEX both take one — and init_db runs at every application
+    # start. On a deployment of N replicas, N boots queue for a lock on
+    # audit_log to re-apply DDL that is already in place. That is slow at
+    # best, and when any other transaction is open it is a wait with no end:
+    # this is where the Postgres CI job was hanging, in init_db, before any
+    # test body ran. Checking the catalogue first costs one read and takes no
+    # lock on the table.
+    if _audit_seq_is_current(conn):
+        return
+
     for column_ddl in (
         "ALTER TABLE audit_log ADD COLUMN seq INTEGER NOT NULL DEFAULT 0",
         # Defaults to 1, not to the current version: existing rows were hashed
