@@ -24,8 +24,13 @@ Returned shape (build_overview):
       "usage": {
           "actions_this_month":    int,
           "actions_limit":         int,
-          "actions_pct_used":      float,    # 0.0..1.0
+          "actions_pct_used":      float,    # 0.0..1.0, may exceed 1.0 when
+                                             # over the allowance on a
+                                             # metered plan
           "spend_usd_this_month":  float,
+          "overage_actions":       int,      # past the allowance, 0 if none
+          "overage_usd":           float | None,  # None = not billable
+          "metered":               bool,     # overage billed rather than refused
       },
       "sessions": {
           "active_count":  int,
@@ -68,16 +73,14 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-
-# Default tier ceilings, mirroring api.py:TIER_LIMITS. Duplicated as a
-# fallback so this module can run in tests without importing api (which
-# pulls in the whole Flask app). Callers that care about the live tier
-# table pass it as `tier_limits=`.
-_DEFAULT_TIER_LIMITS = {
-    "free":       {"agents": 1,        "actions_per_month": 1_000},
-    "pro":        {"agents": 10,       "actions_per_month": 50_000},
-    "enterprise": {"agents": 999_999,  "actions_per_month": 999_999_999},
-}
+# The plan table, from its single definition. This used to be a local copy
+# "mirroring api.py:TIER_LIMITS" so the module could run without importing
+# the Flask app — and the copy is exactly what drifted: the marketing site
+# said Pro allowed 25 agents while both dicts said 10, and nothing compared
+# them. haldir_tiers imports nothing but typing, so the reason for
+# duplicating it does not apply.
+import haldir_tiers
+from haldir_tiers import TIERS as _DEFAULT_TIER_LIMITS
 
 
 def build_overview(
@@ -150,11 +153,23 @@ def _usage(db_path: str, tenant_id: str, tier_caps: dict[str, int]) -> dict[str,
     spend = float(row["total_spend_usd"]) if row else 0.0
     cap = int(tier_caps.get("actions_per_month", 0))
     pct = (actions / cap) if cap else 0.0
+
+    # Usage past the allowance is billed on metered plans rather than refused,
+    # so it has to be visible — a customer who cannot see what they are
+    # accruing cannot make a decision about it, and an overage that only
+    # appears on an invoice a month later reads as a billing error.
+    over = max(0, actions - cap) if cap else 0
+    tier = _tier(db_path, tenant_id)
+    overage_usd = haldir_tiers.overage_cost(tier, over)
+
     return {
         "actions_this_month":   actions,
         "actions_limit":        cap,
         "actions_pct_used":     round(pct, 4),
         "spend_usd_this_month": round(spend, 2),
+        "overage_actions":      over,
+        "overage_usd":          overage_usd,
+        "metered":              haldir_tiers.is_metered(tier),
     }
 
 
@@ -273,6 +288,21 @@ def _audit(db_path: str, tenant_id: str, *, watch: Any = None) -> dict[str, Any]
             "SELECT MAX(timestamp) FROM audit_log WHERE tenant_id = ?",
             (tenant_id,),
         ).fetchone()
+        # The most recent entries, so the dashboard can show what agents are
+        # actually doing rather than only how much they have done. Bounded by
+        # LIMIT for the same reason every other query here is: the cost must
+        # not grow with the size of the log.
+        #
+        # Ordered by (timestamp, entry_id) rather than timestamp alone. Two
+        # entries written in the same clock tick would otherwise come back in
+        # an arbitrary order and the feed would reshuffle between refreshes.
+        recent_rows = conn.execute(
+            "SELECT entry_id, session_id, agent_id, action, tool, "
+            "cost_usd, timestamp, flagged, flag_reason "
+            "FROM audit_log WHERE tenant_id = ? "
+            "ORDER BY timestamp DESC, entry_id DESC LIMIT 20",
+            (tenant_id,),
+        ).fetchall()
     finally:
         conn.close()
     last_ts = last_row[0] if last_row else None
@@ -292,6 +322,20 @@ def _audit(db_path: str, tenant_id: str, *, watch: Any = None) -> dict[str, Any]
         "flagged_7d":     int(flagged_row[0]) if flagged_row else 0,
         "last_entry_at":  last_iso,
         "chain_verified": chain_verified,
+        "recent": [
+            {
+                "entry_id":    r["entry_id"],
+                "session_id":  r["session_id"],
+                "agent_id":    r["agent_id"],
+                "action":      r["action"],
+                "tool":        r["tool"],
+                "cost_usd":    float(r["cost_usd"] or 0.0),
+                "timestamp":   float(r["timestamp"] or 0.0),
+                "flagged":     bool(r["flagged"]),
+                "flag_reason": r["flag_reason"] or "",
+            }
+            for r in recent_rows
+        ],
     }
 
 

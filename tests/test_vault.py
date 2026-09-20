@@ -99,7 +99,14 @@ def test_cross_name_ciphertext_swap_rejected(vault: Vault) -> None:
 
 # ── Wrong key ────────────────────────────────────────────────────────────
 
-def test_decrypt_with_wrong_key_raises_invalid_tag() -> None:
+def test_decrypt_with_wrong_key_raises() -> None:
+    """A vault holding a different key must not hand back the plaintext.
+
+    This used to surface as InvalidTag out of AES-GCM. Now that a blob names
+    the key that made it, the vault sees it does not hold that key and says
+    so — a more useful failure than an authentication error. The property
+    under test is unchanged: it raises, and it does not return the value.
+    """
     v1 = Vault(encryption_key=Vault.generate_key())
     original = v1.store_secret(name="k", value="v", tenant_id="t")
 
@@ -109,8 +116,25 @@ def test_decrypt_with_wrong_key_raises_invalid_tag() -> None:
         encrypted_value=original.encrypted_value,
         tenant_id="t",
     )
-    with pytest.raises(InvalidTag):
+    with pytest.raises((InvalidTag, ValueError)):
         v2.get_secret(name="k", tenant_id="t")
+
+
+def test_tampered_ciphertext_under_the_right_key_raises_invalid_tag() -> None:
+    """InvalidTag is still the right failure for the other case — the blob
+    names a key we hold, but the bytes are not what that key produced. This
+    is corruption or tampering rather than a rotation mistake, and the two
+    are worth telling apart."""
+    v = Vault(encryption_key=Vault.generate_key())
+    entry = v.store_secret(name="k", value="v", tenant_id="t")
+
+    tampered = bytearray(entry.encrypted_value)
+    tampered[-1] ^= 0x01  # flip a bit inside the authentication tag
+    v._secrets["t:k"] = SecretEntry(
+        name="k", encrypted_value=bytes(tampered), tenant_id="t",
+    )
+    with pytest.raises(InvalidTag):
+        v.get_secret(name="k", tenant_id="t")
 
 
 # ── Key input formats ────────────────────────────────────────────────────

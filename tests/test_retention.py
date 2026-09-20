@@ -40,7 +40,41 @@ def db(tmp_path):
     path = str(tmp_path / "retention.db")
     init_db(path)
     haldir_migrate.apply_pending(path)
+
+    # Clear this tenant's rows.
+    #
+    # On SQLite the path above is a fresh temp file, so every test starts from
+    # nothing. On Postgres DATABASE_URL wins and the path is ignored, so every
+    # test in the run shares one database — and the tests below all use the
+    # tenant "t1", which then accumulates rows from everything that ran
+    # before them. A prune that should delete 3 entries deleted 5, because two
+    # of them belonged to the previous test.
+    #
+    # Deleting the tenant's rows here restores the isolation the assertions
+    # assume, without changing what any of them assert.
+    _clear_tenant(path, "t1")
     return path
+
+
+def _clear_tenant(db_path: str, tenant: str) -> None:
+    """Remove a tenant's audit rows, checkpoints and tree heads."""
+    from haldir_db import get_db
+
+    conn = get_db(db_path)
+    try:
+        for table, column in (
+            ("audit_log", "tenant_id"),
+            ("audit_checkpoints", "tenant_id"),
+            ("audit_retention", "tenant_id"),
+            ("sth_log", "tenant_id"),
+        ):
+            try:
+                conn.execute(f"DELETE FROM {table} WHERE {column} = ?", (tenant,))  # noqa: S608 — table names are literals above
+            except Exception:
+                conn.rollback()  # table absent on a build without that migration
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def append(db: str, tenant: str, ts: float, action: str = "act") -> AuditEntry:
@@ -63,10 +97,12 @@ def append(db: str, tenant: str, ts: float, action: str = "act") -> AuditEntry:
     entry.entry_hash = entry.compute_hash()
     conn.execute(
         "INSERT INTO audit_log (entry_id, tenant_id, session_id, agent_id, action, "
-        "tool, details, cost_usd, timestamp, flagged, flag_reason, prev_hash, entry_hash) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "tool, details, cost_usd, timestamp, flagged, flag_reason, prev_hash, "
+        "entry_hash, hash_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (entry.entry_id, tenant, entry.session_id, entry.agent_id, entry.action,
-         entry.tool, "{}", 0.0, entry.timestamp, 0, "", entry.prev_hash, entry.entry_hash),
+         entry.tool, "{}", 0.0, entry.timestamp, 0, "", entry.prev_hash,
+         entry.entry_hash, entry.hash_version),
     )
     conn.commit()
     conn.close()
@@ -219,10 +255,20 @@ def test_a_pruned_log_still_detects_tampering(db) -> None:
     assert Watch(db_path=db).verify_chain(tenant_id="t1")["verified"] is True
 
     # Rewrite a surviving entry's action without recomputing its hash.
+    #
+    # The row is chosen by a subquery rather than `UPDATE ... ORDER BY ... LIMIT 1`.
+    # SQLite accepts ORDER BY and LIMIT on an UPDATE as an extension; Postgres
+    # does not, and rejects the statement with "syntax error at or near ORDER".
+    # Selecting the id first is valid on both.
     from haldir_db import get_db
     conn = get_db(db)
-    conn.execute("UPDATE audit_log SET action = 'exfiltrate' WHERE tenant_id = ? "
-                 "ORDER BY timestamp ASC LIMIT 1", ("t1",))
+    conn.execute(
+        "UPDATE audit_log SET action = 'exfiltrate' WHERE entry_id = ("
+        "  SELECT entry_id FROM audit_log WHERE tenant_id = ? "
+        "  ORDER BY timestamp ASC LIMIT 1"
+        ")",
+        ("t1",),
+    )
     conn.commit()
     conn.close()
 

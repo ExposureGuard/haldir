@@ -138,7 +138,10 @@ def test_overview_renders_every_section(mock_transport, capsys) -> None:
     for marker in (
         "tenant overview", "t1", "pro",
         "Status", "ok",
-        "Actions", "42", "50,000",
+        # Labelled "API calls", not "Actions": the meter counts API calls to
+        # /v1/*, and "actions" reads as audited operations, a different and
+        # much smaller number.
+        "API calls", "42", "50,000",
         "Spend", "$  1.23",
         "Sessions", "3 active",
         "Vault", "5 secrets",

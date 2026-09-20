@@ -36,6 +36,9 @@ SQLite pragma choices (applied on every connection open):
 import os
 import re
 import sqlite3
+import threading
+import time
+from typing import Any
 
 from haldir_logging import get_logger
 
@@ -47,6 +50,48 @@ DEFAULT_DB_PATH = os.environ.get("HALDIR_DB_PATH", "/data/haldir.db" if os.path.
 # Pool bounds. Callers that need to override per-process (tests) can
 # also set _pg_pool_min / _pg_pool_max directly — they're read at
 # pool-construction time.
+# Server-side timeouts, applied to every pooled connection.
+#
+# Postgres waits for a row lock forever by default. SQLite does not have this
+# problem — sqlite3.connect(timeout=...) covers it — so the behaviour only
+# shows up on the backend the docs tell enterprises to run.
+#
+# What it looks like when it bites: one transaction stalls holding a lock, and
+# every other writer that needs that row queues behind it with no upper bound.
+# In a request-serving process that is a total stall from a single stuck
+# query, and in the test suite it presented as a job that ran for 15 minutes
+# and produced no output at all, because the whole run was parked on a lock
+# nobody would release.
+#
+# lock_timeout is the one that matters: it bounds the wait for a lock, which
+# is the unbounded case. statement_timeout is set high on purpose — it is a
+# backstop against a runaway query, not a request deadline, and setting it low
+# would abort legitimate migrations and large exports. Both are overridable
+# per deployment.
+# How long a caller waits for a free pooled connection before failing.
+_PG_POOL_WAIT_S = float(os.environ.get("HALDIR_PG_POOL_WAIT_S", "10"))
+
+# Guards construction and rebinding of the module-level pool.
+_pg_pool_lock = threading.Lock()
+
+_PG_SERVER_OPTIONS = " ".join((
+    f"-c lock_timeout={os.environ.get('HALDIR_PG_LOCK_TIMEOUT_MS', '10000')}",
+    f"-c statement_timeout={os.environ.get('HALDIR_PG_STATEMENT_TIMEOUT_MS', '120000')}",
+))
+
+# Advisory-lock key that serializes schema initialization across processes.
+# The value is arbitrary; what matters is that every Haldir process uses the
+# same one. Spelled as ASCII "HALD" so it is recognisable in pg_locks.
+_SCHEMA_INIT_LOCK_KEY = 0x48414C44
+
+# How long to wait for another process to finish initializing the schema
+# before giving up. Generous: the wait is bounded by how long one process
+# takes to run the schema, which is a few seconds, and the alternative to
+# waiting is starting up against a half-created schema.
+_SCHEMA_INIT_LOCK_WAIT_S = float(
+    os.environ.get("HALDIR_PG_SCHEMA_LOCK_WAIT_S", "60")
+)
+
 _pg_pool_min = int(os.environ.get("HALDIR_PG_POOL_MIN", "2"))
 _pg_pool_max = int(os.environ.get("HALDIR_PG_POOL_MAX", "20"))
 _pg_pool = None
@@ -81,36 +126,75 @@ def get_db(db_path: str = DEFAULT_DB_PATH):
 def _get_pg():
     """Get a PostgreSQL connection from the pool.
 
-    Pool size is configurable via HALDIR_PG_POOL_MIN / MAX. On
-    exhaustion we drain + rebuild, which drops in-flight connections
-    but gets us back to a healthy state deterministically — preferable
-    to blocking indefinitely while callers stack up."""
+    Size is configurable via HALDIR_PG_POOL_MIN / MAX.
+
+    Exhaustion waits for a connection to come back rather than draining the
+    pool. The previous version called `closeall()` and rebuilt, describing it
+    as "drops in-flight connections but gets us back to a healthy state".
+    Three things were wrong with that, all of them visible in the code:
+
+      * `closeall()` closes connections other threads are *actively using*.
+        A thread mid-query gets its connection closed underneath it, and
+        closeall() itself takes the pool's lock, so it can block behind the
+        very work it is about to destroy.
+
+      * The pool reference is a module global with no lock around it. Two
+        threads that exhaust simultaneously each build a pool; one is
+        orphaned with its connections still open.
+
+      * `PgConnectionWrapper.close()` swallows `putconn` failures. When the
+        pool has been rebuilt underneath a wrapper, that connection is never
+        returned to any pool — it leaks. Leaks cause exhaustion, exhaustion
+        caused the rebuild, and the rebuild caused the leak.
+
+    A bounded wait costs at most `_PG_POOL_WAIT_S` and cannot take down a
+    connection somebody else is holding.
+    """
     global _pg_pool
     import psycopg2
     import psycopg2.extras
     import psycopg2.pool
 
-    if _pg_pool is None:
-        _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-            _pg_pool_min, _pg_pool_max, DATABASE_URL,
-        )
+    with _pg_pool_lock:
+        if _pg_pool is None:
+            _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+                _pg_pool_min, _pg_pool_max, DATABASE_URL,
+                options=_PG_SERVER_OPTIONS,
+            )
+        pool = _pg_pool
 
     try:
-        conn = _pg_pool.getconn()
-        conn.autocommit = False
-        return PgConnectionWrapper(conn, _pg_pool)
+        conn = pool.getconn()
     except psycopg2.pool.PoolError:
-        # Pool exhausted — reset it.
+        conn = _wait_for_connection(pool)
+
+    conn.autocommit = False
+    return PgConnectionWrapper(conn, pool)
+
+
+def _wait_for_connection(pool: Any) -> Any:
+    """Block until the pool returns a connection, or give up with a message
+    that names the actual problem.
+
+    Raising a clear error is strictly better than the old behaviour: a caller
+    told the pool is saturated can be retried or alerted on, whereas one whose
+    connection was closed mid-query cannot.
+    """
+    import psycopg2.pool
+
+    deadline = time.monotonic() + _PG_POOL_WAIT_S
+    while time.monotonic() < deadline:
+        time.sleep(0.02)
         try:
-            _pg_pool.closeall()
-        except Exception:
-            pass
-        _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-            _pg_pool_min, _pg_pool_max, DATABASE_URL,
-        )
-        conn = _pg_pool.getconn()
-        conn.autocommit = False
-        return PgConnectionWrapper(conn, _pg_pool)
+            return pool.getconn()
+        except psycopg2.pool.PoolError:
+            continue
+    raise RuntimeError(
+        f"Postgres connection pool exhausted for {_PG_POOL_WAIT_S:.0f}s "
+        f"(max {_pg_pool_max} connections). A connection is checked out and "
+        f"not being returned — look for a query that never completed or a "
+        f"caller that never closed its connection."
+    )
 
 
 def _sqlite_to_pg(sql):
@@ -195,11 +279,69 @@ class PgConnectionWrapper:
     def commit(self):
         self._conn.commit()
 
+    def rollback(self):
+        """Discard the current transaction.
+
+        The wrapper exists to present psycopg2 as sqlite3.Connection, and it
+        had `commit` without `rollback` — so every caller that rolls back on
+        a failed statement raised AttributeError on Postgres instead. The one
+        that mattered was the audit append's retry path (watch.py), which
+        rolls back after a collision before re-reading the tail: on Postgres
+        the retry died instead of retrying, so a concurrent append was
+        dropped or the chain branched — the exact failure the uniqueness
+        constraint had just been made to work in order to prevent.
+
+        haldir_migrate.py already worked around this with
+        `conn.rollback() if hasattr(conn, "rollback") else None`. A wrapper
+        that emulates a DB-API connection is expected to have the method, and
+        callers should not have to check.
+        """
+        self._conn.rollback()
+
     def close(self):
+        """Return the connection to the pool, with no transaction open.
+
+        A failure here used to be swallowed, and that is how connections were
+        lost: when the pool had been rebuilt underneath this wrapper, putconn
+        raised, the exception went nowhere, and the connection stayed open and
+        unreachable. Enough of those and the pool exhausts again — which used
+        to trigger another rebuild. The connection is closed outright rather
+        than left dangling, and the failure is logged.
+
+        The rollback is not tidiness. psycopg2 connections are not autocommit,
+        so a write that was never committed leaves the connection handed back
+        to the pool mid-transaction, still holding its row locks; the next
+        borrower inherits them, and the transaction stays open for as long as
+        nobody commits it. When the uncommitted write touched audit_log that
+        is a ROW EXCLUSIVE lock held indefinitely, and CREATE INDEX takes
+        SHARE, which conflicts — so every later `CREATE INDEX IF NOT EXISTS
+        idx_audit_*` blocks until lock_timeout cancels it. That is what the
+        Postgres CI job was doing for fifteen minutes at a time.
+
+        SQLite never showed it: sqlite3.close() discards uncommitted work, and
+        every get_db on SQLite hands back a brand-new connection rather than
+        recycling one. Rolling back here is what makes the two backends agree
+        — and it matches DB-API convention, where close() discards rather than
+        persists. Callers that mean to keep a write already call commit().
+        """
+        if not getattr(self._conn, "closed", 0):
+            try:
+                self._conn.rollback()
+            except Exception:  # noqa: BLE001 — a dead connection has no
+                # transaction, and failing to roll one back must not stop it
+                # from being returned or closed below.
+                pass
         try:
             self._pool.putconn(self._conn)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "could not return a Postgres connection to the pool (%s: %s); "
+                "closing it so it is not leaked", type(e).__name__, e,
+            )
+            try:
+                self._conn.close()
+            except Exception:
+                pass
 
     @property
     def total_changes(self):
@@ -270,6 +412,21 @@ class PgRow:
 # ── Schema ──
 
 _SCHEMA = """
+-- Money is DOUBLE PRECISION, not REAL, and that is not a style choice.
+--
+-- In Postgres REAL is a 4-byte float: about seven significant decimal digits.
+-- In SQLite REAL is 8-byte, like DOUBLE PRECISION. So `REAL` meant two
+-- different things on the two backends, and 1234.56 round-tripped through
+-- Postgres as 1234.56005859375.
+--
+-- Every column below that holds money — spend_limit, spent, max_spend,
+-- amount, cost_usd — was declared REAL, so on the backend SELF_HOSTING.md and
+-- docker-compose tell enterprises to run, budgets and audit costs were
+-- silently imprecise. The spend cap is the product's central promise.
+--
+-- DOUBLE PRECISION is 8-byte on Postgres and keeps REAL affinity on SQLite,
+-- so this makes the two agree instead of changing either.
+
     CREATE TABLE IF NOT EXISTS api_keys (
         key_hash TEXT PRIMARY KEY,
         key_prefix TEXT NOT NULL,
@@ -288,7 +445,7 @@ _SCHEMA = """
         agent_id TEXT NOT NULL,
         tenant_id TEXT NOT NULL DEFAULT '',
         default_scopes TEXT NOT NULL DEFAULT '["read","browse"]',
-        max_spend REAL NOT NULL DEFAULT 0.0,
+        max_spend DOUBLE PRECISION NOT NULL DEFAULT 0.0,
         metadata TEXT NOT NULL DEFAULT '{}',
         created_at REAL NOT NULL,
         PRIMARY KEY (agent_id, tenant_id)
@@ -299,8 +456,8 @@ _SCHEMA = """
         tenant_id TEXT NOT NULL DEFAULT '',
         agent_id TEXT NOT NULL,
         scopes TEXT NOT NULL DEFAULT '[]',
-        spend_limit REAL NOT NULL DEFAULT 0.0,
-        spent REAL NOT NULL DEFAULT 0.0,
+        spend_limit DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+        spent DOUBLE PRECISION NOT NULL DEFAULT 0.0,
         created_at REAL NOT NULL,
         expires_at REAL NOT NULL DEFAULT 0.0,
         revoked INTEGER NOT NULL DEFAULT 0,
@@ -332,7 +489,7 @@ _SCHEMA = """
         tenant_id TEXT NOT NULL DEFAULT '',
         session_id TEXT NOT NULL,
         agent_id TEXT NOT NULL,
-        amount REAL NOT NULL,
+        amount DOUBLE PRECISION NOT NULL,
         currency TEXT NOT NULL DEFAULT 'USD',
         description TEXT NOT NULL DEFAULT '',
         remaining_budget REAL NOT NULL DEFAULT 0.0,
@@ -350,12 +507,14 @@ _SCHEMA = """
         action TEXT NOT NULL,
         tool TEXT NOT NULL DEFAULT '',
         details TEXT NOT NULL DEFAULT '{}',
-        cost_usd REAL NOT NULL DEFAULT 0.0,
+        cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0,
         timestamp DOUBLE PRECISION NOT NULL,
         flagged INTEGER NOT NULL DEFAULT 0,
         flag_reason TEXT NOT NULL DEFAULT '',
         prev_hash TEXT NOT NULL DEFAULT '',
-        entry_hash TEXT NOT NULL DEFAULT ''
+        entry_hash TEXT NOT NULL DEFAULT '',
+        seq INTEGER NOT NULL DEFAULT 0,
+        hash_version INTEGER NOT NULL DEFAULT 1
     );
 
     CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id);
@@ -382,7 +541,7 @@ _SCHEMA = """
         tool TEXT NOT NULL DEFAULT '',
         details TEXT NOT NULL DEFAULT '{}',
         reason TEXT NOT NULL DEFAULT '',
-        amount REAL NOT NULL DEFAULT 0.0,
+        amount DOUBLE PRECISION NOT NULL DEFAULT 0.0,
         status TEXT NOT NULL DEFAULT 'pending',
         created_at REAL NOT NULL,
         expires_at REAL NOT NULL DEFAULT 0.0,
@@ -439,6 +598,226 @@ _SCHEMA = """
 _SCHEMA_SQLITE = _SCHEMA.replace("BYTEA", "BLOB").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
 
 
+def _audit_seq_is_current(conn) -> bool:
+    """True when audit_log has everything _migrate_audit_seq would add.
+
+    Reads the catalogue rather than the table: `sqlite_master` / `PRAGMA
+    table_info` on SQLite, `pg_indexes` / `information_schema` on Postgres,
+    by trying each and taking whichever answers. Neither takes a lock on
+    audit_log, which is the whole point — the code this guards takes an
+    ACCESS EXCLUSIVE one.
+
+    Deliberately checks the *columns* and not only the index. An earlier
+    version of this returned True on the index alone, which happens to be
+    correct today because the index and the hash_version column were
+    introduced together — but it is a trap rather than a guarantee: the day
+    hash_version is added in a release later than idx_audit_seq, every
+    database that already has the index short-circuits here and never gets
+    the column, and then every audit write fails with "no column named
+    hash_version" on upgrade. Checking both costs one more catalogue read and
+    removes the ordering dependency entirely.
+    """
+    for cols_sql, idx_sql in (
+        ("SELECT name FROM pragma_table_info('audit_log')",
+         "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_audit_seq'"),
+        ("SELECT column_name FROM information_schema.columns "
+         "WHERE table_name = 'audit_log'",
+         "SELECT 1 FROM pg_indexes WHERE indexname = 'idx_audit_seq'"),
+    ):
+        try:
+            columns = {row[0] for row in _exec(conn, cols_sql).fetchall()}
+            has_index = _exec(conn, idx_sql).fetchone() is not None
+        except Exception:
+            continue  # not this backend's catalogue
+        if not columns:
+            continue  # this backend answered nothing; try the next
+        return has_index and {"seq", "hash_version"} <= columns
+    return False
+
+
+def _exec(conn_or_cursor: Any, sql: str, params: Any = None) -> Any:
+    """Execute on a connection or a cursor, whichever this is.
+
+    psycopg2 connections have no `.execute` — only cursors do. sqlite3
+    connections have both. Code written against the sqlite3 shape therefore
+    runs correctly on SQLite and raises `AttributeError: 'psycopg2.extensions.
+    connection' object has no attribute 'execute'` on Postgres.
+
+    That is not hypothetical. Both callers of _migrate_audit_seq passed a
+    connection, which is fine from _init_sqlite and broken from
+    _apply_pg_schema, which hands over the raw psycopg2 connection built in
+    _init_pg. The AttributeError landed in a `except Exception` that logged a
+    warning, so on Postgres this migration never ran: no `seq`, no
+    `hash_version`, and — the part that matters — no unique index over
+    (tenant_id, seq). The index is the only thing preventing two concurrent
+    appends from claiming the same sequence number, so the audit chain could
+    fork, and did:
+
+        FAILED test_concurrent_audit_appends_keep_the_chain_linear
+        AssertionError: 2 entries claim to start the chain
+
+    ...while the same test passed on SQLite, where the connection happened to
+    support the call.
+
+    A shim rather than threading a cursor through every caller, because the
+    difference between the two objects is exactly this one method and the
+    indirection is smaller than the blast radius of getting it wrong again.
+    """
+    if hasattr(conn_or_cursor, "execute"):
+        # sqlite3 returns its cursor here; a psycopg2 cursor returns None.
+        # Normalise, so callers can always chain .fetchone()/.fetchall().
+        result = conn_or_cursor.execute(sql, params) if params is not None \
+            else conn_or_cursor.execute(sql)
+        return result if result is not None else conn_or_cursor
+    cursor = conn_or_cursor.cursor()
+    try:
+        cursor.execute(sql, params) if params is not None else cursor.execute(sql)
+        # Return the CURSOR, not the result of execute.
+        #
+        # sqlite3's Connection.execute() returns the cursor it used;
+        # psycopg2's Cursor.execute() returns None. Returning the latter
+        # makes every `_exec(conn, sql).fetchone()` raise
+        # "'NoneType' object has no attribute 'fetchone'", which is how this
+        # shim — written to fix an AttributeError from calling .execute on a
+        # connection — introduced a second one. Returning the cursor is the
+        # only shape that works for both.
+        return cursor
+    except Exception:
+        # Roll back, or the failure poisons everything after it.
+        #
+        # Postgres aborts the whole transaction on any statement error, and
+        # every later statement then fails with "current transaction is
+        # aborted" until somebody rolls back. On a *coroutine* that is merely
+        # annoying; here it was silent and load-bearing: the guard probes
+        # SQLite's catalogue first, which raises on Postgres, which aborted
+        # the transaction — so the migration's column-adds were swallowed by
+        # their own `except: pass`, and its `SELECT 1 FROM audit_log WHERE
+        # seq = 0` raised, which is the branch that returns early. The
+        # function therefore did nothing at all on Postgres, quietly, and the
+        # unique index that keeps the audit chain from forking was never
+        # created. Nothing was logged, because the line that logs is past the
+        # point it had already returned from.
+        #
+        # PgConnectionWrapper.execute already rolls back for exactly this
+        # reason; this is the same precaution on the raw-connection path.
+        try:
+            conn_or_cursor.rollback()
+        except Exception:
+            pass
+        raise
+
+
+def _migrate_audit_seq(conn):
+    """Give every audit row a per-tenant sequence number, then make it unique.
+
+    The chain's tail was selected with `ORDER BY timestamp DESC LIMIT 1` and
+    no tiebreak, and nothing stopped two rows from naming the same
+    predecessor. Under concurrency that forks the log: eight simultaneous
+    appends produced eight entries, of which exactly one was reachable by
+    walking from the head. The rest were on branches, and a log that is not a
+    single chain proves nothing about its own history.
+
+    A per-tenant sequence makes "the tail" a fact rather than a guess, and
+    the unique index makes a fork impossible to commit — a racing writer
+    collides and retries instead of silently branching.
+
+    Runs on both backends: the correlated subquery and the partial-free
+    unique index are portable, and `ADD COLUMN` is wrapped because neither
+    engine offers `IF NOT EXISTS` for it.
+    """
+    # If the work is already done, do not touch the table at all.
+    #
+    # Everything below needs an ACCESS EXCLUSIVE lock — ADD COLUMN and
+    # CREATE INDEX both take one — and init_db runs at every application
+    # start. On a deployment of N replicas, N boots queue for a lock on
+    # audit_log to re-apply DDL that is already in place. That is slow at
+    # best, and when any other transaction is open it is a wait with no end:
+    # this is where the Postgres CI job was hanging, in init_db, before any
+    # test body ran. Checking the catalogue first costs one read and takes no
+    # lock on the table.
+    if _audit_seq_is_current(conn):
+        return
+
+    for column_ddl in (
+        "ALTER TABLE audit_log ADD COLUMN seq INTEGER NOT NULL DEFAULT 0",
+        # Defaults to 1, not to the current version: existing rows were hashed
+        # by the older rule and must keep verifying under it. New rows are
+        # written with the current version by Watch.
+        "ALTER TABLE audit_log ADD COLUMN hash_version INTEGER NOT NULL DEFAULT 1",
+    ):
+        try:
+            _exec(conn, column_ddl)
+        except Exception:
+            pass  # column already exists
+
+    try:
+        pending = _exec(conn, "SELECT 1 FROM audit_log WHERE seq = 0 LIMIT 1").fetchone()
+    except Exception as e:  # noqa: BLE001
+        # Expected only when audit_log does not exist yet. Anything else
+        # returning here — and the return is what skips the uniqueness
+        # constraint below — has to be visible, because a silent return from
+        # this function is a chain with no fork protection and no complaint.
+        logger.error(
+            "audit_log: the seq migration could not read the table (%s: %s), "
+            "so it stopped before creating the uniqueness constraint on "
+            "(tenant_id, seq). A forked chain is possible.",
+            type(e).__name__, e,
+        )
+        return
+
+    # Backfill only when something needs it, so a large log is not renumbered
+    # on every boot. The index below is created either way — skipping it on a
+    # fresh database (where the table is empty, so *nothing* has seq = 0)
+    # would leave every new deployment with an unguarded chain, which is
+    # exactly the bug this function exists to close.
+    if pending:
+        # (timestamp, entry_id) is a total order: entry_id is the primary
+        # key, so no two rows tie. Counting predecessors yields 1..N.
+        _exec(conn, 
+            "UPDATE audit_log SET seq = ("
+            "  SELECT COUNT(*) FROM audit_log AS a2"
+            "  WHERE a2.tenant_id = audit_log.tenant_id"
+            "    AND (a2.timestamp < audit_log.timestamp"
+            "         OR (a2.timestamp = audit_log.timestamp"
+            "             AND a2.entry_id <= audit_log.entry_id))"
+            ") WHERE seq = 0"
+        )
+    try:
+        # Partial on seq > 0. Appends through Watch.log_action always number
+        # their row (the tail's seq plus one), so the guard covers every
+        # entry that joins the chain — while leaving rows written raw, with
+        # seq left at its 0 default, free of a constraint they were never
+        # part of. The tamper demo rewrites history on purpose, and test
+        # fixtures plant rows with hand-picked hashes; neither should have
+        # to fabricate a sequence number to do it.
+        _exec(conn, 
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_seq "
+            "ON audit_log(tenant_id, seq) WHERE seq > 0"
+        )
+    except Exception as e:  # noqa: BLE001
+        # Never silent. This is the constraint that makes a forked chain
+        # impossible to commit — the whole of the audit integrity claim rests
+        # on two writers being unable to claim the same sequence number. A
+        # bare `pass` here means the product can be running with that
+        # protection absent and nothing anywhere saying so, which is how a
+        # concurrent-append test came to fail with "2 entries claim to start
+        # the chain" on Postgres while passing on SQLite: the symptom was
+        # three steps away from the cause and the cause had been swallowed.
+        #
+        # The expected reason to land here is pre-existing duplicates in a log
+        # written before the constraint existed, which is recoverable (append
+        # still retries; the index is a backstop). Every other reason is not,
+        # and the operator needs to know which one this is.
+        logger.error(
+            "audit_log: the uniqueness constraint on (tenant_id, seq) could "
+            "NOT be created (%s: %s). A forked audit chain is now possible. "
+            "This is expected only if the log already contained duplicate "
+            "sequence numbers; otherwise investigate before trusting the "
+            "chain's fork protection.",
+            type(e).__name__, e,
+        )
+
+
 def init_db(db_path: str = DEFAULT_DB_PATH):
     """Create all tables if they don't exist."""
     if _is_postgres():
@@ -478,6 +857,7 @@ def _init_sqlite(db_path: str):
         )
     except Exception:
         pass  # index already exists; fine
+    _migrate_audit_seq(conn)
     # Compliance scheduler table (migration 004). Belt-and-suspenders
     # for environments that don't run HALDIR_AUTO_MIGRATE.
     try:
@@ -536,10 +916,92 @@ def _init_sqlite(db_path: str):
     conn.close()
 
 
+def _is_lock_cancellation(exc: BaseException) -> bool:
+    """True when Postgres cancelled a statement because it waited for a lock.
+
+    Checked by exception class first — psycopg2 surfaces this as
+    LockNotAvailable (SQLSTATE 55P03) — with the message as a fallback for
+    the wrapped or re-raised forms that reach here, and for backends that
+    report it as plain OperationalError.
+    """
+    for cls in type(exc).__mro__:
+        if cls.__name__ in ("LockNotAvailable", "LockTimeout"):
+            return True
+    text = str(exc).lower()
+    return "lock timeout" in text or "canceling statement" in text
+
+
+def _acquire_schema_init_lock(cursor) -> None:
+    """Wait our turn to run schema DDL.
+
+    `CREATE INDEX IF NOT EXISTS` is not concurrency-safe. The existence check
+    happens outside any lock, so two processes starting together both see the
+    index as missing and both go to create it; one takes the lock and the
+    other queues behind it. That was survivable while the wait was unbounded —
+    the loser finished second and found the work already done — but with
+    lock_timeout set it is cancelled instead, and a cancelled CREATE INDEX
+    leaves the index absent. So the fix for "startup can hang forever" turned
+    into "startup quietly never creates its indexes", which is worse: on a
+    deployment of N replicas booting at once, the DDL is retried by every one
+    of them and none of them reliably finishes.
+
+    The CI symptom was a Postgres job that burned its full 15-minute budget
+    emitting nothing but alternating lock-timeout cancellations on
+    idx_audit_*, from connections that kept taking turns losing.
+
+    An advisory lock makes the question "who initializes the schema" have one
+    answer. The winner creates everything; everyone else waits, then finds it
+    all present and does no DDL at all. Try-lock rather than blocking lock so
+    the wait is bounded here, in code, instead of depending on how advisory
+    locks interact with lock_timeout.
+    """
+    deadline = time.monotonic() + _SCHEMA_INIT_LOCK_WAIT_S
+    while True:
+        cursor.execute("SELECT pg_try_advisory_lock(%s)", (_SCHEMA_INIT_LOCK_KEY,))
+        if cursor.fetchone()[0]:
+            return
+        if time.monotonic() >= deadline:
+            # Refusing to start is deliberate: the alternative is coming up
+            # against a schema another process is still halfway through
+            # changing. Raising the limit is the operator's call, hence the
+            # env var in the message — a large ALTER can legitimately outrun
+            # the default.
+            raise RuntimeError(
+                f"another process held the schema-init lock for more than "
+                f"{_SCHEMA_INIT_LOCK_WAIT_S:.0f}s; raise "
+                f"HALDIR_PG_SCHEMA_LOCK_WAIT_S if that process is applying a "
+                f"large migration"
+            )
+        time.sleep(0.1)
+
+
 def _init_pg():
     import psycopg2
-    conn = psycopg2.connect(DATABASE_URL)
+    # With the same server-side timeouts as every pooled connection. This one
+    # connects directly rather than via the pool, and it is the path that
+    # needs them most: it runs the whole schema, and CREATE INDEX / ALTER
+    # TABLE / CREATE TABLE IF NOT EXISTS all take locks. Without a
+    # lock_timeout, a single open transaction anywhere blocks startup with no
+    # end — and init_db runs at every application start, so two replicas
+    # booting together can each wait on the other forever.
+    #
+    # This is where the Postgres CI job was hanging. The thread dump put the
+    # main thread in tests/test_concurrency.py's `db` fixture, inside init_db.
+    # _apply_pg_schema below is what runs the statements that were waiting.
+    conn = psycopg2.connect(DATABASE_URL, options=_PG_SERVER_OPTIONS)
+    try:
+        _apply_pg_schema(conn)
+    finally:
+        # Also releases the schema-init advisory lock: it is session-scoped,
+        # and the session ends here. Doing it in a finally is what keeps a
+        # crash mid-schema from blocking every other replica's startup, since
+        # the lock would otherwise live until the server reaped the socket.
+        conn.close()
+
+
+def _apply_pg_schema(conn):
     cursor = conn.cursor()
+    _acquire_schema_init_lock(cursor)
     # Execute each statement separately
     statements = [s.strip() for s in _SCHEMA.split(";") if s.strip()]
     for stmt in statements:
@@ -548,7 +1010,21 @@ def _init_pg():
             conn.commit()
         except Exception as e:
             conn.rollback()
-            if "already exists" not in str(e):
+            if "already exists" in str(e):
+                continue  # idempotent DDL; expected on every start but the first
+            if _is_lock_cancellation(e):
+                # Cancelled is not the same as rejected. A lock timeout means
+                # the statement never ran, so whatever it creates is now
+                # missing and stays missing for the life of this process —
+                # and a bare warning buries that. On idx_audit_seq, which is
+                # the unique index that makes a forked audit chain impossible
+                # to commit, "missing" means the fork protection is not in
+                # force and the log can branch without anything objecting.
+                logger.error(
+                    "DB init: statement cancelled waiting for a lock, so its "
+                    "object was NOT created: %s", e,
+                )
+            else:
                 logger.warning("DB init warning: %s", e)
 
     # Idempotent column-add for legacy api_keys tables that pre-date
@@ -590,6 +1066,44 @@ def _init_pg():
     except Exception as e:
         conn.rollback()
         logger.warning("idx_sessions_parent CREATE skipped: %s", e)
+
+    # Widen money columns that were created as REAL, which Postgres reads as
+    # a 4-byte float. `CREATE TABLE IF NOT EXISTS` does not touch existing
+    # columns, so a deployment created before this needs the type changed in
+    # place or it keeps losing precision. SQLite is unaffected — its REAL is
+    # already 8-byte — and the ALTER is skipped there because the syntax
+    # differs.
+    for table, column in (
+        ("agents", "max_spend"),
+        ("sessions", "spend_limit"),
+        ("sessions", "spent"),
+        ("payments", "amount"),
+        ("payments", "remaining_budget"),
+        ("audit_log", "cost_usd"),
+        ("approval_requests", "amount"),
+    ):
+        try:
+            # A cursor, not the connection: conn here is the raw psycopg2
+            # connection from _init_pg, which has no .execute — so this ALTER
+            # raised AttributeError on Postgres, was swallowed by the except
+            # below, and the money columns were never widened. The fix that
+            # made them DOUBLE PRECISION had never actually run.
+            cursor.execute(
+                f"ALTER TABLE {table} ALTER COLUMN {column} TYPE DOUBLE PRECISION"
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()  # already the right type, or not a Postgres column
+
+    # Chain sequencing for audit_log — see _migrate_audit_seq. Postgres
+    # supports ADD COLUMN IF NOT EXISTS, but the helper's try/except covers
+    # the non-IF-NOT-EXISTS path too, so the same code serves both backends.
+    try:
+        _migrate_audit_seq(conn)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.warning("audit_log seq migration skipped: %s", e)
 
     # Migration 002 (webhook_deliveries table) is normally applied by
     # haldir_migrate at boot. Belt-and-suspenders: emit it here too so
@@ -645,5 +1159,3 @@ def _init_pg():
     except Exception as e:
         conn.rollback()
         logger.warning("compliance_schedules init warning: %s", e)
-
-    conn.close()

@@ -14,12 +14,12 @@
 
 That loop is the whole idea, running live. Someone rewrites a row in the audit log — silently, straight in the database. The entry's inclusion proof no longer matches the live Merkle root, and the verdict flips. Not caught by monitoring, not caught by a diff: caught by arithmetic, because the root is a hash of what the log actually contains and the earlier Signed Tree Head is already pinned somewhere you don't control.
 
-→ **[Try it yourself — no install, runs in your browser](/demo)**
+→ **Try it yourself.** Run `haldir serve` (below) and open **http://127.0.0.1:8000/demo** — the same tamper demo, against an instance on your own machine. It ships inside the package, so there is nothing to download and no account involved.
 
 ## What you get
 
 - **Scoped sessions** — permissions and spend caps per agent, revocable the moment something looks wrong.
-- **Encrypted vault** — AES-256-GCM. Your agent asks for a secret; the model never sees it.
+- **Encrypted vault** — AES-256-GCM. Your agent asks for a secret; the model never sees it. Every ciphertext records which key made it, so you can **rotate the encryption key** without re-entering a single secret — and without downtime.
 - **Tamper-evident audit** — every call logged into an RFC 6962 Merkle tree with signed tree heads, so history can be proven, not just trusted.
 - **Human approvals** — pause a run on a spend threshold and get a webhook.
 
@@ -82,17 +82,19 @@ The sidebar on the left takes you anywhere. The numbered markers point at the pa
 
 Three things run live, no signup, straight from these links:
 
-→ **[The tamper demo](/demo/tamper)** — the one in the GIF above. Rewrite a real log row and watch the inclusion proof stop matching the Merkle root. Nothing is simulated; it is the same Merkle code the API ships.
+All of these ship inside the package and are served by `haldir serve`, so they work on your machine with no account and nothing to deploy:
 
-→ **[The playground](/demo)** — walks you through minting a key, opening a scoped session, checking a permission and writing to the audit trail, against a sandbox tenant of your own.
+→ **The tamper demo** at `/demo/tamper` — the one in the GIF above. Rewrite a real log row and watch the inclusion proof stop matching the Merkle root. Nothing is simulated; it is the same Merkle code the API ships.
 
-→ **[The gallery](/gallery)** — every screenshot on this page in one place, if you'd rather look than read.
+→ **The playground** at `/demo` — walks you through minting a key, opening a scoped session, checking a permission and writing to the audit trail, against a sandbox tenant of your own.
 
-### The rest of the site
+→ **The gallery** at `/gallery` — every screenshot on this page in one place, if you'd rather look than read.
 
-The docs, pricing page, quickstart, compliance evidence pack, and every other page are linked from the nav bar on every page. Below: the full API reference, Python quickstart, performance numbers, and compliance mapping.
+### The rest of the API
 
-Try the real thing at **[haldir.xyz](https://haldir.xyz)** — free tier, no signup, point at it from any agent and go.
+The full reference is at `/docs` and `/openapi.json` on whichever instance you are running. Below: the Python quickstart, performance numbers, and compliance mapping.
+
+There is a hosted option at **[haldir.xyz](https://haldir.xyz)** — free tier, no signup. `haldir serve` is the path that works today, and the one to reach for if the cloud is not what you want anyway.
 
 ---
 
@@ -143,9 +145,9 @@ $ haldir overview
   acct_xyz123  ·  tier pro  ·  2026-04-19T18:42:11+00:00
 
   Status     ● ok
-  Actions      4,217 / 50,000   ████░░░░░░░░░░░░░░░░    8.4%
+  API calls    4,217 / 2,500,000  ░░░░░░░░░░░░░░░░░░░    0.2%
   Spend      $ 47.30 this month
-  Sessions        12 active  ·  3/10 agents
+  Sessions        12 active  ·  3/25 agents
   Vault            8 secrets  ·  62 accesses this month
   Audit        1,847 entries  ·  0 flagged (7d)  ·  chain ✓
   Webhooks         2 registered  ·  541 deliveries (24h)  ·  99.82% success

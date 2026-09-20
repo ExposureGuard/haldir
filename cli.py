@@ -241,6 +241,41 @@ def _looks_like_haldir(body: dict) -> bool:
 
 # ── Commands ──
 
+def _read_api_key_interactively() -> str:
+    """Read the key from the terminal, or from stdin when there isn't one.
+
+    `getpass` does not degrade on a non-tty: it raises termios.error, so
+    `haldir login` died with a traceback in exactly the environments where a
+    non-interactive login is the point — CI, a container, a pipe, an editor's
+    run-command. Falling back to stdin makes
+
+        echo "$HALDIR_KEY" | haldir login
+
+    work, which is how anyone scripting this would reach for it first.
+    """
+    if not sys.stdin.isatty():
+        line = sys.stdin.readline().strip()
+        if line:
+            return line
+        error("No API key given, and no terminal to prompt on.")
+        error('Pass --key, or pipe it: echo "$HALDIR_KEY" | haldir login')
+        sys.exit(1)
+
+    try:
+        return getpass.getpass("API key (hld_...): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        # ^C or a closed stdin is a decision to stop, not a crash.
+        print()
+        error("No API key provided.")
+        sys.exit(1)
+    except Exception as e:  # noqa: BLE001 — termios.error on odd ttys, and
+        # whatever else a platform raises. None of it should be a traceback in
+        # front of someone trying to log in.
+        error(f"Could not read the key interactively ({type(e).__name__}).")
+        error("Pass it with --key instead.")
+        sys.exit(1)
+
+
 def cmd_login(args: argparse.Namespace) -> None:
     """Prompt for API key and save to config."""
     config = load_config()
@@ -251,7 +286,7 @@ def cmd_login(args: argparse.Namespace) -> None:
     if args.key:
         api_key = args.key
     else:
-        api_key = getpass.getpass("API key (hld_...): ").strip()
+        api_key = _read_api_key_interactively()
 
     if not api_key:
         error("No API key provided.")
@@ -819,9 +854,20 @@ def _render_overview(o: dict) -> None:
 
     u = o.get("usage", {})
     pct = float(u.get("actions_pct_used", 0.0))
-    print(f"  {Color.DIM}Actions{Color.RESET}    {Color.WHITE}{u.get('actions_this_month', 0):>7,}{Color.RESET}"
+    # Labelled "API calls", not "Actions": the meter counts API calls to
+    # /v1/*, and "actions" reads as audited operations, which is a different
+    # and much smaller number.
+    print(f"  {Color.DIM}API calls{Color.RESET}  {Color.WHITE}{u.get('actions_this_month', 0):>7,}{Color.RESET}"
           f" {Color.DIM}/{Color.RESET} {u.get('actions_limit', 0):,}"
           f"   {_bar(pct)}  {Color.DIM}{pct * 100:5.1f}%{Color.RESET}")
+    # Overage, when the plan is metered and the tenant is past its
+    # allowance. Shown here rather than only on an invoice, because a
+    # customer who cannot see what they are accruing cannot decide about it.
+    if u.get("overage_actions"):
+        over = u["overage_actions"]
+        cost = u.get("overage_usd")
+        shown = f"${cost:,.2f}" if cost is not None else "not billable"
+        print(f"  {Color.YELLOW}Over by{Color.RESET}   {over:>7,} API calls  {Color.DIM}({shown}){Color.RESET}")
     print(f"  {Color.DIM}Spend{Color.RESET}      {Color.WHITE}${u.get('spend_usd_this_month', 0.0):>6.2f}{Color.RESET}"
           f" {Color.DIM}this month{Color.RESET}")
 
@@ -888,6 +934,23 @@ def cmd_overview(args: argparse.Namespace) -> None:
             time.sleep(interval)
     except KeyboardInterrupt:
         print()
+
+
+def cmd_top(args: argparse.Namespace) -> None:
+    """Live agent console.
+
+    Thin on purpose: all of the drawing lives in haldir_top.render_frame,
+    which is pure, and all of the terminal handling lives in haldir_top.run.
+    This exists to build a client and pick up the flags.
+    """
+    import haldir_top
+
+    client = APIClient()
+    raise SystemExit(haldir_top.run(
+        client,
+        interval=float(getattr(args, "interval", 1.0) or 1.0),
+        once=bool(getattr(args, "once", False)),
+    ))
 
 
 def cmd_status(args: argparse.Namespace) -> None:
@@ -1799,6 +1862,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_over.add_argument("--watch", action="store_true", help="Refresh continuously, top-style")
     p_over.add_argument("--interval", type=float, default=5.0, help="Refresh interval (with --watch)")
     p_over.set_defaults(func=cmd_overview)
+
+    # ── top ──
+    # A live console for a fleet of agents. Distinct from `overview --watch`,
+    # which redraws the summary rows every few seconds; this one shows who is
+    # running and what they are doing, refreshes by default every second, and
+    # takes keys — including revoke.
+    p_top = sub.add_parser(
+        "top",
+        help="Live agent console — who is running, what they are doing",
+    )
+    p_top.add_argument(
+        "--interval", type=float, default=1.0,
+        help="Refresh interval in seconds (default 1; +/- adjusts while running)",
+    )
+    p_top.add_argument(
+        "--once", action="store_true",
+        help="Draw one frame and exit (useful when piping or in tests)",
+    )
+    p_top.set_defaults(func=cmd_top)
 
     p_status = sub.add_parser("status", help="System health (calls /v1/status)")
     p_status.add_argument("--json", action="store_true")

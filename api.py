@@ -32,6 +32,7 @@ import secrets
 import hashlib
 from functools import wraps
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     import haldir_export
@@ -44,6 +45,7 @@ from haldir_gate.gate import Gate, DelegationError, MAX_DELEGATION_DEPTH
 from haldir_vault.vault import Vault
 from haldir_watch.watch import Watch
 import haldir_idempotency
+import haldir_tiers
 from haldir_logging import configure_logging, get_logger
 from haldir_metrics import registry as prom_metrics
 from haldir_validation import validate_body
@@ -288,6 +290,15 @@ def _platform_after(response):  # type: ignore[no-untyped-def]
         response.headers["X-RateLimit-Monthly-Used"]        = str(rlm["used"])
         response.headers["X-RateLimit-Monthly-Reset"]       = str(rlm["reset"])
         response.headers["X-RateLimit-Monthly-Reset-After"] = str(max(0, rlm["reset_after"]))
+        # Overage, when there is any. Emitted only past the allowance so that
+        # a customer under their limit sees no billing headers at all, and
+        # only when there is a rate to charge — free has none, and a
+        # "0.00" here would read as an overage that costs nothing rather
+        # than one that is not billable.
+        if rlm.get("overage_actions"):
+            response.headers["X-RateLimit-Monthly-Over-By"] = str(rlm["overage_actions"])
+            if rlm.get("overage_usd") is not None:
+                response.headers["X-RateLimit-Monthly-Overage-USD"] = f"{rlm['overage_usd']:.6f}"
 
     retry_after = getattr(g, "retry_after", None)
     if retry_after is not None and response.status_code == 429:
@@ -370,11 +381,7 @@ def _err_500(e):  # type: ignore[no-untyped-def]
 
 # ── Billing tier limits ──
 
-TIER_LIMITS = {
-    "free":       {"agents": 1,    "actions_per_month": 1_000},
-    "pro":        {"agents": 10,   "actions_per_month": 50_000},
-    "enterprise": {"agents": 999_999, "actions_per_month": 999_999_999},
-}
+TIER_LIMITS = haldir_tiers.TIERS
 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
@@ -1089,6 +1096,53 @@ def list_secrets():
     tenant = getattr(request, "tenant_id", "")
     names = vault.list_secrets(tenant_id=tenant)
     return jsonify({"secrets": names, "count": len(names)})
+
+
+# ── Vault: encryption key management ──
+#
+# Rotating the deployment's encryption key is a different authority from
+# storing a secret, so it has its own scope rather than riding on
+# vault:write. A key granted vault:write can add and remove secrets; only a
+# key granted vault:rotate can re-key the store underneath them.
+
+@app.route("/v1/vault/keys", methods=["GET"])
+@require_api_key
+@require_scope("vault:read")
+def vault_keys():
+    """Which encryption keys the stored ciphertext actually needs, and how
+    many blobs each one covers.
+
+    Answers the question that gates retiring a key: it is safe to remove one
+    exactly when this reports no blobs under its id. The count comes from
+    reading the ciphertext, not from configuration — a key listed in the
+    environment still in use must show up here.
+    """
+    return jsonify(vault.key_census())
+
+
+@app.route("/v1/vault/rotate", methods=["POST"])
+@require_api_key
+@require_scope("vault:rotate")
+def vault_rotate():
+    """Re-encrypt every stored secret under the server's current primary key.
+
+    Takes no key in the request body, deliberately. The new key is installed
+    by pointing HALDIR_ENCRYPTION_KEY at it and listing the outgoing key in
+    HALDIR_ENCRYPTION_KEY_PREVIOUS, then restarting; this endpoint only
+    finishes the job. An endpoint that accepted a key would put it in proxy
+    logs, request captures, and shell history — and would give the server a
+    key it had not already been configured with.
+
+    Interruptible and repeatable: a second call rewrites nothing. Retire the
+    old key only once GET /v1/vault/keys reports no blobs under its id.
+    """
+    dry_run = request.args.get("dry_run") == "true"
+    report = vault.rotate_to_primary(dry_run=dry_run)
+
+    # A rotation that could not read some secrets is not a success. The
+    # caller has to know, because the fix (restore a key) is theirs.
+    status = 207 if report["summary"]["failed"] else 200
+    return jsonify(report), status
 
 
 # ── Vault: Payments ──
@@ -2016,6 +2070,7 @@ def pending_approvals():
 # ── Webhooks ──
 
 from haldir_watch.webhooks import WebhookManager
+from haldir_outbound import UnsafeURL
 webhook_mgr = WebhookManager(db_path=DB_PATH)
 
 # ── Compliance scheduler ──────────────────────────────────────────────
@@ -2045,12 +2100,18 @@ def register_webhook():
     cached = _idempotency_lookup("/v1/webhooks", data, tenant)
     if cached is not None:
         return cached
-    wh = webhook_mgr.register(
-        url=url,
-        name=data.get("name", ""),
-        events=data.get("events"),
-        tenant_id=tenant,
-    )
+    try:
+        wh = webhook_mgr.register(
+            url=url,
+            name=data.get("name", ""),
+            events=data.get("events"),
+            tenant_id=tenant,
+        )
+    except UnsafeURL as e:
+        # A refused URL is the caller's mistake, not a server fault. Without
+        # this it surfaced as a 500 with a traceback in the log, which tells
+        # the caller nothing about which part of the URL was the problem.
+        return jsonify({"error": str(e), "code": "unsafe_url"}), 400
     response = {
         "registered": True,
         "webhook_id": wh.webhook_id,
@@ -2409,6 +2470,47 @@ def admin_overview_html():
     }
 
 
+@app.route("/admin/revoke", methods=["POST"])
+def admin_revoke_html():
+    """The kill switch behind the dashboard's Revoke button.
+
+    Exists so an operator can stop an agent from the page they are already
+    watching, rather than having to hold an API key and craft a DELETE while
+    something is going wrong. It is a form post rather than a fetch() so the
+    console keeps working with JavaScript disabled, which is how a surprising
+    number of enterprise browsers are configured.
+
+    Cascades to descendant sessions. Revoking an orchestrator without its
+    children leaves subagents holding live credentials for work nobody is
+    supervising — the same reasoning the JSON DELETE endpoint applies when
+    asked for ?cascade=true, except that here it is not optional.
+    """
+    key = request.form.get("key", "")
+    session_id = request.form.get("session_id", "")
+
+    key_hash = _hash_key(key)
+    conn = get_db(DB_PATH)
+    row = conn.execute(
+        "SELECT tenant_id FROM api_keys WHERE key_hash = ? AND revoked = 0",
+        (key_hash,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return _render_admin_login(error="Invalid or revoked key."), 401, {
+            "Content-Type": "text/html; charset=utf-8",
+        }
+    tenant_id = row["tenant_id"]
+
+    # Tenant-scoped inside Gate, so a key can only ever revoke its own
+    # sessions even if the posted session_id belongs to someone else.
+    revoked = gate.revoke_session(session_id, tenant_id=tenant_id)
+    if revoked:
+        for child in gate.get_descendants(session_id, tenant_id=tenant_id):
+            gate.revoke_session(child.session_id, tenant_id=tenant_id)
+
+    return redirect(f"/admin/overview?key={quote(key, safe='')}")
+
+
 def _render_admin_login(error: str = "") -> str:
     """Tiny key-paste form when the visitor hits /admin/overview with
     no auth. Includes a one-click demo button that mints a sandbox
@@ -2532,6 +2634,100 @@ def _render_admin_overview(o: dict, key: str) -> str:
     key_short = (_h.escape(key[:8]) + "..." + _h.escape(key[-4:])
                  ) if key and len(key) > 12 else _h.escape(key or "")
 
+    # ── Monitoring sections ──────────────────────────────────────────
+    #
+    # The counts above answer "how much"; an operator watching agents needs
+    # "which one, doing what, right now, and how do I stop it". Everything
+    # below is rendered from the same overview payload the JSON endpoint
+    # serves, so the console and the API cannot disagree.
+    from datetime import datetime as _dt, timezone as _tz
+    now = time.time()
+
+    def _ago(ts: float) -> str:
+        """Idle time, coarsening with age. A console is scanned rather than
+        read, so the unit carries more than the precision."""
+        if not ts:
+            return "never"
+        delta = max(0.0, now - ts)
+        if delta < 60:
+            return f"{delta:.0f}s"
+        if delta < 3600:
+            return f"{delta / 60:.0f}m"
+        if delta < 86400:
+            return f"{delta / 3600:.0f}h"
+        return f"{delta / 86400:.0f}d"
+
+    def _clock(ts: float) -> str:
+        if not ts:
+            return "—"
+        return _dt.fromtimestamp(ts, tz=_tz.utc).strftime("%H:%M:%S")
+
+    def _spend_cell(spent: float, limit: float) -> str:
+        if limit <= 0:
+            return (f"${spent:,.2f}"
+                    f'<span class="dim"> / no cap</span>')
+        used = min(1.0, max(0.0, spent / limit)) if limit else 0.0
+        color = ("#0b8043" if used < 0.7 else
+                 "#b58900" if used < 0.9 else
+                 "#b00020")
+        return (
+            f"${spent:,.2f}"
+            f'<span class="dim"> / ${limit:,.2f}</span>'
+            f'<span class="sbar"><span class="sbar-fill" '
+            f'style="width:{used * 100:.1f}%;background:{color}"></span></span>'
+        )
+
+    session_rows = (s.get("sessions") or [])
+    if session_rows:
+        sessions_html = "".join(
+            "<tr>"
+            f'<td>{_h.escape(str(r.get("agent_id") or ""))}</td>'
+            f'<td class="dim">{_h.escape(str(r.get("session_id") or "")[:12])}</td>'
+            f'<td class="dim">{_h.escape(", ".join(r.get("scopes") or []) or "—")}</td>'
+            f'<td>{_spend_cell(float(r.get("spent") or 0.0), float(r.get("spend_limit") or 0.0))}</td>'
+            f'<td class="dim">{_ago(float(r.get("last_active") or 0.0))}</td>'
+            "<td>"
+            f'<form method="post" action="/admin/revoke" '
+            f'onsubmit="return confirm(\'Revoke this session? The agent loses '
+            f'access immediately.\')">'
+            f'<input type="hidden" name="key" value="{_h.escape(key or "")}">'
+            f'<input type="hidden" name="session_id" value="{_h.escape(str(r.get("session_id") or ""))}">'
+            '<button class="revoke" type="submit">Revoke</button>'
+            "</form>"
+            "</td>"
+            "</tr>"
+            for r in session_rows
+        )
+    else:
+        sessions_html = (
+            '<tr><td colspan="6" class="empty">'
+            "No active sessions. An agent appears here as soon as it opens one."
+            "</td></tr>"
+        )
+
+    recent = (a.get("recent") or [])
+    if recent:
+        activity_html = "".join(
+            f'<tr class="{"flag-row" if r.get("flagged") else ""}">'
+            f'<td class="dim">{_clock(float(r.get("timestamp") or 0.0))}</td>'
+            f'<td>{_h.escape(str(r.get("agent_id") or ""))}</td>'
+            f'<td>{_h.escape(str(r.get("action") or ""))}</td>'
+            f'<td class="dim">{_h.escape(str(r.get("tool") or "") or "—")}</td>'
+            f'<td class="dim">{"$%.4f" % float(r.get("cost_usd") or 0.0)}</td>'
+            "<td>"
+            + (f'<span class="flag">⚑ {_h.escape(str(r.get("flag_reason") or "flagged"))}</span>'
+               if r.get("flagged") else '<span class="dim">—</span>')
+            + "</td>"
+            "</tr>"
+            for r in recent
+        )
+    else:
+        activity_html = (
+            '<tr><td colspan="6" class="empty">'
+            "No recorded actions yet."
+            "</td></tr>"
+        )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2577,6 +2773,38 @@ def _render_admin_overview(o: dict, key: str) -> str:
         border-radius:4px;overflow:hidden;vertical-align:middle;margin-left:0.5rem}}
   .bar-fill{{display:block;height:100%;background:{bar_color};width:{bar_pct:.1f}%}}
 
+  h2{{font-weight:300;font-size:0.78rem;letter-spacing:2px;
+      text-transform:uppercase;color:rgba(224,221,213,0.4);
+      margin:2.75rem 0 0.75rem;font-family:'IBM Plex Mono',monospace}}
+  .panel{{border:1px solid rgba(224,221,213,0.08);border-radius:6px;
+          overflow-x:auto}}
+  table{{width:100%;border-collapse:collapse;
+         font-family:'IBM Plex Mono',monospace;font-size:0.72rem}}
+  th{{text-align:left;font-weight:400;color:rgba(224,221,213,0.4);
+      font-size:0.58rem;letter-spacing:1.5px;text-transform:uppercase;
+      padding:0.6rem 0.8rem;
+      border-bottom:1px solid rgba(224,221,213,0.08);white-space:nowrap}}
+  td{{padding:0.65rem 0.8rem;
+      border-bottom:1px solid rgba(224,221,213,0.05);
+      color:rgba(224,221,213,0.85);vertical-align:middle;
+      white-space:nowrap}}
+  tr:last-child td{{border-bottom:none}}
+  .dim{{color:rgba(224,221,213,0.35)}}
+  .flag{{color:#e0736f}}
+  .flag-row td{{background:rgba(176,0,32,0.09)}}
+  .empty{{font-family:'IBM Plex Mono',monospace;font-size:0.7rem;
+          color:rgba(224,221,213,0.3);padding:1.1rem 1.25rem}}
+  .revoke{{background:none;border:1px solid rgba(176,0,32,0.45);
+           color:#d4737f;font-family:'IBM Plex Mono',monospace;
+           font-size:0.6rem;padding:0.32rem 0.62rem;border-radius:4px;
+           cursor:pointer;letter-spacing:1px;text-transform:uppercase}}
+  .revoke:hover{{background:rgba(176,0,32,0.18);color:#fff;
+                 border-color:rgba(176,0,32,0.8)}}
+  .sbar{{display:inline-block;width:64px;height:6px;border-radius:3px;
+         background:rgba(224,221,213,0.08);overflow:hidden;
+         vertical-align:middle;margin-left:0.5rem}}
+  .sbar-fill{{display:block;height:100%}}
+
   footer{{font-family:'IBM Plex Mono',monospace;font-size:0.65rem;
           color:rgba(224,221,213,0.3);text-align:center;margin-top:2rem}}
   footer a{{color:rgba(224,221,213,0.5);text-decoration:none;margin:0 0.75rem}}
@@ -2606,7 +2834,7 @@ def _render_admin_overview(o: dict, key: str) -> str:
   <div class="grid">
 
     <div class="row">
-      <div class="label">Actions</div>
+      <div class="label">API calls</div>
       <div class="value">{u.get('actions_this_month', 0):,}<span style="color:rgba(224,221,213,0.4);font-weight:300"> / {u.get('actions_limit', 0):,}</span><span class="bar"><span class="bar-fill"></span></span></div>
       <div class="sub">{pct * 100:.1f}% of monthly quota</div>
     </div>
@@ -2653,6 +2881,32 @@ def _render_admin_overview(o: dict, key: str) -> str:
       <div class="sub">{compliance_sub}</div>
     </div>
 
+  </div>
+
+  <h2>Active agents &amp; sessions</h2>
+  <div class="panel">
+    <table>
+      <thead>
+        <tr>
+          <th>Agent</th><th>Session</th><th>Scopes</th>
+          <th>Spend</th><th>Idle</th><th></th>
+        </tr>
+      </thead>
+      <tbody>{sessions_html}</tbody>
+    </table>
+  </div>
+
+  <h2>Recent activity</h2>
+  <div class="panel">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th><th>Agent</th><th>Action</th>
+          <th>Tool</th><th>Cost</th><th>Flag</th>
+        </tr>
+      </thead>
+      <tbody>{activity_html}</tbody>
+    </table>
   </div>
 
   <footer>
@@ -2775,6 +3029,7 @@ def rate_limit():
             monthly_limit = tier_limits["actions_per_month"]
             monthly_actions = _get_tenant_monthly_actions(tenant)
             monthly_reset_after = _seconds_until_end_of_month(now)
+            over = max(0, monthly_actions - monthly_limit)
             g.rate_limit_monthly = {
                 "limit":       monthly_limit,
                 "used":        monthly_actions,
@@ -2782,23 +3037,37 @@ def rate_limit():
                 "reset":       int(now + monthly_reset_after),
                 "reset_after": monthly_reset_after,
             }
-            if monthly_actions >= monthly_limit:
-                # Mark the overall resource dimension as monthly so the
-                # X-RateLimit-Resource header tells callers which bucket
-                # they hit (hourly vs monthly quota).
-                g.rate_limit["resource"] = "monthly"
-                g.retry_after = monthly_reset_after
-                return _json_error(
-                    "monthly_quota_exceeded",
-                    "Monthly action quota exceeded",
-                    429,
-                    tier=billing_tier,
-                    limit=monthly_limit,
-                    used=monthly_actions,
-                    retry_after=monthly_reset_after,
-                    resource="monthly",
-                    upgrade="https://haldir.xyz/pricing",
-                )
+            # Usage past the allowance is billed on plans that have a payment
+            # method behind them, and refused on the one that does not.
+            #
+            # Refusing was the old behaviour for every tier, and it is the
+            # wrong failure for this product: the thing being metered is the
+            # audit record, so a 429 stops an agent mid-task *and* leaves a
+            # hole in the trail at exactly the moment something is happening.
+            # A customer who has already decided to pay is not the person to
+            # interrupt. Free has no card on file, so it still stops.
+            if over > 0:
+                overage_usd = haldir_tiers.overage_cost(effective_tier, over)
+                if overage_usd is not None and not haldir_tiers.is_hard_capped(effective_tier):
+                    g.rate_limit_monthly["overage_actions"] = over
+                    g.rate_limit_monthly["overage_usd"] = overage_usd
+                else:
+                    # Mark the overall resource dimension as monthly so the
+                    # X-RateLimit-Resource header tells callers which bucket
+                    # they hit (hourly vs monthly quota).
+                    g.rate_limit["resource"] = "monthly"
+                    g.retry_after = monthly_reset_after
+                    return _json_error(
+                        "monthly_quota_exceeded",
+                        "Monthly action quota exceeded",
+                        429,
+                        tier=billing_tier,
+                        limit=monthly_limit,
+                        used=monthly_actions,
+                        retry_after=monthly_reset_after,
+                        resource="monthly",
+                        upgrade="https://haldir.xyz/pricing",
+                    )
 
 
 # ── API Docs ──
@@ -3695,11 +3964,15 @@ def register_upstream():
         "tools_discovered": len(server.tools),
         "tool_names": [t["name"] for t in server.tools],
     }
-    if hasattr(server, '_last_error'):
+    # These are declared on UpstreamServer with a None default, so `is not
+    # None` is what `hasattr` was standing in for — and unlike hasattr it is
+    # checked by mypy, which is how a rename on the writing side would now
+    # show up here instead of silently dropping the diagnostic.
+    if server._last_error is not None:
         resp["error"] = server._last_error
-    if hasattr(server, '_raw_status'):
+    if server._raw_status is not None:
         resp["upstream_status"] = server._raw_status
-    if hasattr(server, '_raw_body'):
+    if server._raw_body is not None:
         resp["upstream_body"] = server._raw_body[:300]
     _idempotency_store("/v1/proxy/upstreams", data, tenant, resp, 201)
     return jsonify(resp), 201
@@ -4155,8 +4428,62 @@ def pricing_page():
 
 
 def _pricing_page_html():
-    """Archived pricing page HTML. Re-enable by returning this from pricing_page()."""
-    return """<!DOCTYPE html>
+    """Pricing page HTML. Plan cards are generated from haldir_tiers so the
+    numbers here cannot drift from the ones the rate limiter enforces; they
+    were typed separately and disagreed with the marketing site for months."""
+    body = _PRICING_HTML.replace("{TIER_CARDS}", _render_tier_cards())
+    return body, 200, {"Content-Type": "text/html"}
+
+
+def _render_tier_cards() -> str:
+    """Build the plan cards from haldir_tiers.
+
+    Generated rather than hand-written because the hand-written version is
+    how this page came to advertise Pro at $49 and 10 agents while the
+    marketing site advertised $99 and 25, and the rate limiter enforced 10.
+    Every number below now comes from the one table.
+    """
+    import html as _h
+    cards = []
+    for name in ("free", "pro", "enterprise"):
+        plan = haldir_tiers.limits(name)
+        price = plan.get("price_usd_month")
+        if price is None:
+            price_html = "Custom <span>/ year</span>"
+            cta = ('<button onclick="checkout(\'enterprise\')" '
+                   'class="tier-btn tier-btn-white">Contact Sales</button>')
+        elif price == 0:
+            price_html = "$0 <span>/ forever</span>"
+            cta = '<a href="/docs" class="tier-btn tier-btn-outline">Get Started</a>'
+        else:
+            price_html = f"${price:,} <span>/ month</span>"
+            cta = (f'<button onclick="checkout(\'{name}\')" '
+                   f'class="tier-btn tier-btn-gold">Upgrade to {plan["label"]}</button>')
+
+        badge = ""
+        if name == "pro":
+            badge = '<span class="tier-badge">Most Popular</span>'
+        elif name == "free":
+            badge = '<span class="current-badge">Current: Free</span>'
+
+        items = "".join(
+            f"<li>{_h.escape(line)}</li>" for line in haldir_tiers.feature_lines(name)
+        )
+        featured = " featured" if name == "pro" else ""
+        cards.append(
+            f'<div class="tier-card{featured}">\n'
+            f'    {badge}\n'
+            f'    <div class="tier-name">{_h.escape(plan["label"])}</div>\n'
+            f'    <div class="tier-price">{price_html}</div>\n'
+            f'    <div class="tier-desc">{_h.escape(plan.get("blurb", ""))}</div>\n'
+            f'    <ul class="tier-features">{items}</ul>\n'
+            f'    {cta}\n'
+            f'</div>'
+        )
+    return "\n".join(cards)
+
+
+_PRICING_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -4353,59 +4680,7 @@ footer a { color: var(--gold); text-decoration: none; }
 </div>
 
 <div class="pricing-grid">
-    <!-- Free -->
-    <div class="tier-card">
-        <span class="current-badge">Current: Free</span>
-        <div class="tier-name">Free</div>
-        <div class="tier-price">$0 <span>/ forever</span></div>
-        <div class="tier-desc">Get started. One agent, full security.</div>
-        <ul class="tier-features">
-            <li>1 agent</li>
-            <li>1,000 actions / month</li>
-            <li>Session-scoped permissions</li>
-            <li>Encrypted secret storage</li>
-            <li>Audit trail</li>
-            <li>MCP support</li>
-            <li>Community support</li>
-        </ul>
-        <a href="/docs" class="tier-btn tier-btn-outline">Get Started</a>
-    </div>
-
-    <!-- Pro -->
-    <div class="tier-card featured">
-        <span class="tier-badge">Most Popular</span>
-        <div class="tier-name">Pro</div>
-        <div class="tier-price">$49 <span>/ month</span></div>
-        <div class="tier-desc">For teams running multiple agents in production.</div>
-        <ul class="tier-features">
-            <li>10 agents</li>
-            <li>50,000 actions / month</li>
-            <li>Everything in Free</li>
-            <li>Anomaly detection</li>
-            <li>Webhooks (Slack, Discord)</li>
-            <li>Human-in-the-loop approvals</li>
-            <li>Proxy mode + governance policies</li>
-            <li>Priority support</li>
-        </ul>
-        <button onclick="checkout('pro')" class="tier-btn tier-btn-gold">Upgrade to Pro</button>
-    </div>
-
-    <!-- Enterprise -->
-    <div class="tier-card">
-        <div class="tier-name">Enterprise</div>
-        <div class="tier-price">$499 <span>/ month</span></div>
-        <div class="tier-desc">Unlimited scale. Full control. Dedicated support.</div>
-        <ul class="tier-features">
-            <li>Unlimited agents</li>
-            <li>Unlimited actions</li>
-            <li>Everything in Pro</li>
-            <li>SSO / SAML (coming soon)</li>
-            <li>Custom policy engine</li>
-            <li>Dedicated infrastructure</li>
-            <li>SLA guarantee</li>
-            <li>Dedicated Slack channel</li>
-        </ul>
-        <button onclick="checkout('enterprise')" class="tier-btn tier-btn-white">Upgrade to Enterprise</button>
+    {TIER_CARDS}
     </div>
 </div>
 
@@ -4413,7 +4688,7 @@ footer a { color: var(--gold); text-decoration: none; }
     <h2>Questions</h2>
     <div class="faq-item">
         <div class="faq-q">What counts as an action?</div>
-        <div class="faq-a">Every API call to /v1/* counts as one action. Creating sessions, checking permissions, storing secrets, logging audit entries — each is one action.</div>
+        <div class="faq-a">Every API call to /v1/* counts as one. Creating sessions, checking permissions, storing secrets, logging audit entries — each is one API call, and reads count too.</div>
     </div>
     <div class="faq-item">
         <div class="faq-q">What happens if I exceed my limit?</div>
@@ -4459,7 +4734,7 @@ function checkout(tier) {
 }
 </script>
 </body>
-</html>""", 200, {"Content-Type": "text/html"}
+</html>"""
 
 
 @app.route("/v1/billing/checkout", methods=["POST"])

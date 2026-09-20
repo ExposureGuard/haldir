@@ -37,6 +37,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+
+from haldir_outbound import safe_outbound_url
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -259,6 +261,13 @@ class WebhookManager:
             on the returned object so callers can address it later
             (rotate / delete).
         """
+        # Refuse anything that is not plain http(s) to a public address.
+        # Without this the URL reached urlopen unexamined, and urlopen honours
+        # whatever scheme it is handed — `file:///etc/passwd` included, with
+        # the contents read back into the delivery record. Raises UnsafeURL,
+        # which the API surfaces as a 400.
+        safe_outbound_url(url)
+
         if secret is None and generate_secret:
             secret = _secrets.token_urlsafe(32)
         elif secret is None:
@@ -383,8 +392,22 @@ class WebhookManager:
 
         started = time.time()
         try:
+            # Checked again here, not only at registration. A hostname that
+            # resolved to a public address when the webhook was created can
+            # resolve to 127.0.0.1 by the time an event fires — the classic
+            # DNS-rebinding shape — and registration-time checks never see it.
+            safe_outbound_url(wh.url)
+            # already refused every scheme but http/https and every host
+            # that resolves inward. The annotation is here rather than a
+            # lowered severity threshold so that a *new* urlopen without a
+            # guard still trips the check.
+            # bandit cannot see that safe_outbound_url above already
+            # refused every scheme but http/https, and every host that
+            # resolves inward — hence the nosec rather than a lowered
+            # severity threshold, which would also silence a *new* urlopen
+            # that nobody guarded.
             req = urllib.request.Request(wh.url, data=data, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310
                 body = resp.read(RESPONSE_EXCERPT_LIMIT + 1)
             duration_ms = int((time.time() - started) * 1000)
             excerpt = body[:RESPONSE_EXCERPT_LIMIT].decode("utf-8", "replace")

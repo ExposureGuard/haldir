@@ -75,6 +75,7 @@ jobs:
             --cov=haldir_watch \
             --cov-report=xml \
             --cov-report=term-missing \
+            --cov-fail-under=78 \
             -v
 
       - name: Upload coverage to Codecov
@@ -94,6 +95,13 @@ jobs:
   postgres:
     name: pytest (Postgres)
     runs-on: ubuntu-latest
+
+    # Bounded so a hang fails the job instead of being cancelled by whatever
+    # push comes next. This job spent fifteen minutes at a time producing no
+    # pytest output at all, and being cancelled at the end of it meant the
+    # log never contained a verdict. A red check with a readable failure is
+    # worth more than a grey one with nothing in it.
+    timeout-minutes: 6
 
     # The Postgres path had never run anywhere. DATABASE_URL is the documented
     # production configuration — README, SELF_HOSTING.md and docker-compose all
@@ -139,6 +147,10 @@ jobs:
           # Fixed key so the run is reproducible; the app otherwise
           # generates a throwaway one and warns.
           HALDIR_ENCRYPTION_KEY: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
+          # Fail a lock wait in two seconds rather than ten. The point is not
+          # the value: it is that a cascade of lock timeouts shows up as a
+          # short, readable failure instead of a fifteen-minute silence.
+          HALDIR_PG_LOCK_TIMEOUT_MS: "2000"
         run: |
           # API-level suites only. The unit tests (test_db, test_migrate, …)
           # build their own temp SQLite files and pass the path in, so with
@@ -150,7 +162,82 @@ jobs:
                  tests/test_admin.py \
                  tests/test_delegation.py \
                  tests/test_sth_log.py \
-                 -q --tb=short
+                 tests/test_retention.py \
+                 tests/test_concurrency.py \
+                 tests/test_invariants_chain.py \
+                 tests/test_invariants_spend.py \
+                 tests/test_invariants_secrets.py \
+                 -q --tb=short -x \
+                 --log-cli-level=ERROR \
+                 --timeout=120 --timeout-method=thread
+          # --log-cli-level=ERROR is not decoration. pytest captures stdout
+          # and stderr, so every logger.error this code emits during import
+          # and schema setup was being swallowed — the CI log contained no
+          # Haldir log lines at all, which is why two rounds of added
+          # diagnostics changed nothing about what could be seen. The
+          # application's own account of what went wrong was being collected
+          # and discarded.
+
+      - name: Who is holding the locks?
+        # The diagnostic that was missing. This job's failure mode was
+        # `CREATE INDEX IF NOT EXISTS idx_audit_*` being cancelled by
+        # lock_timeout, over and over, for fifteen minutes — which says a
+        # conflicting lock is held but not by whom. CREATE INDEX takes SHARE,
+        # and SHARE conflicts with ROW EXCLUSIVE, which is what any open
+        # write transaction holds; so the question is which connection is
+        # sitting in a transaction, and on what.
+        #
+        # Answered from the server rather than guessed at from the client.
+        # Runs only on failure so it costs nothing when the job is green.
+        if: failure()
+        env:
+          PGPASSWORD: haldir
+        run: |
+          echo "=== pg_stat_activity: who is connected and what are they doing ==="
+          psql -h localhost -U haldir -d haldir -x -c "
+            SELECT pid, state, wait_event_type, wait_event,
+                   now() - xact_start AS xact_age,
+                   left(coalesce(query, ''), 120) AS query
+            FROM pg_stat_activity
+            WHERE datname = 'haldir' AND pid <> pg_backend_pid()
+            ORDER BY xact_start NULLS LAST;"
+          echo
+          echo "=== pg_locks: who holds what, and who is waiting ==="
+          psql -h localhost -U haldir -d haldir -c "
+            SELECT l.pid, l.locktype, l.mode, l.granted,
+                   c.relname, a.state,
+                   now() - a.xact_start AS xact_age
+            FROM pg_locks l
+            LEFT JOIN pg_class c ON c.oid = l.relation
+            LEFT JOIN pg_stat_activity a ON a.pid = l.pid
+            WHERE c.relname IN ('audit_log','sessions','api_keys')
+            ORDER BY l.granted, c.relname;"
+          echo
+          echo "=== idle-in-transaction is the suspect ==="
+          psql -h localhost -U haldir -d haldir -c "
+            SELECT count(*) AS idle_in_transaction
+            FROM pg_stat_activity
+            WHERE state = 'idle in transaction';"
+          echo
+          echo "=== the constraint the audit chain's integrity rests on ==="
+          # Two writers cannot claim the same (tenant_id, seq) without this
+          # index, so a forked chain on Postgres and not on SQLite is most
+          # likely this constraint being absent rather than the appends being
+          # wrong. Reported directly so the next failure says which.
+          psql -h localhost -U haldir -d haldir -c "
+            SELECT indexname, indexdef FROM pg_indexes
+            WHERE tablename = 'audit_log';"
+          echo
+          echo "=== duplicate sequence numbers, if any ==="
+          psql -h localhost -U haldir -d haldir -c "
+            SELECT tenant_id, seq, count(*) FROM audit_log
+            WHERE seq > 0 GROUP BY tenant_id, seq HAVING count(*) > 1
+            LIMIT 20;"
+          echo
+          echo "=== entries claiming to start the chain ==="
+          psql -h localhost -U haldir -d haldir -c "
+            SELECT tenant_id, count(*) AS chain_roots FROM audit_log
+            WHERE prev_hash = '' GROUP BY tenant_id;"
 
   package:
     name: package (build the wheel and actually run it)
@@ -256,3 +343,101 @@ jobs:
               sys.exit(1)
           print("all shipped modules import")
           PY
+
+  security:
+    name: security (deps + static analysis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install scanners
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pip-audit>=2.7,<3" "bandit>=1.7,<2"
+
+      - name: Audit dependencies for known CVEs
+        # Haldir is a security product that moves money and holds secrets; a
+        # CVE in a pinned dependency is a CVE in Haldir. The pins are bounded
+        # but frozen, so this is the only thing that will notice when one of
+        # them is disclosed. Fails the build: a known-vulnerable dependency
+        # shipping to users is worse than a red check.
+        run: pip-audit -r requirements.txt --strict --desc
+
+      - name: Static analysis
+        # Deliberately narrow. A blanket `bandit -r .` on this codebase
+        # reports things that are the product rather than defects: it fires
+        # on `subprocess` in the reverse-shell teaching examples, on the
+        # intentionally-weak hashing in the crypto demos, and on every
+        # `try/except/pass` in the SQLite migration path. A check that is
+        # always red is a check nobody reads, so this runs at medium
+        # severity over the modules that actually enforce something.
+        run: |
+          bandit -ll -r haldir_gate haldir_vault haldir_watch \
+                 --exclude '*/tests/*' \
+                 -f screen
+
+  coverage-floor:
+    name: coverage floor is not lowered
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: The floor in the workflow may not go down
+        # A ratchet only ratchets if something stops it being loosened. The
+        # cheapest way to fix a failing coverage gate is to lower the number,
+        # and that is exactly the move this forbids.
+        run: |
+          # `-x` because this check's failure mode is silence: it opens with
+          # `set -e`, so the first failing command aborts it, and the step has
+          # been reporting exit code 1 with no output at all. A trace turns
+          # that into a named command.
+          set -euxo pipefail
+
+          # Make the base ref resolvable before depending on it. With
+          # `set -e`, a failing command substitution aborts the step
+          # immediately and prints nothing at all — which is how this check
+          # came to fail with an empty log and no explanation: `origin/main`
+          # was not a ref in the checkout, so `git merge-base` exited 1 and
+          # took the step with it before a single line was echoed.
+          #
+          # A check whose failure mode is silence is worse than no check, so
+          # the fetch is explicit and its failure is reported.
+          if ! git rev-parse --verify --quiet "origin/${{ github.base_ref }}" >/dev/null; then
+            echo "origin/${{ github.base_ref }} not present; fetching it"
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+          fi
+
+          base="$(git merge-base HEAD origin/${{ github.base_ref }})" || {
+            echo "::error::could not find a merge base against origin/${{ github.base_ref }}"
+            exit 1
+          }
+          # `grep -m1`, not `grep | head -1`. head exits as soon as it has a
+          # line, so grep takes SIGPIPE and returns 141; with `pipefail` that
+          # is the pipeline's status and `set -e` kills the step — right after
+          # the assignment, so the log ends at "+ old=" with no explanation.
+          # -m1 stops grep itself and avoids the signal entirely.
+          old=$(git show "$base:.github/workflows/test.yml" \
+                | grep -m1 -oE '\-\-cov-fail-under=[0-9]+' | cut -d= -f2 || true)
+          new=$(grep -m1 -oE '\-\-cov-fail-under=[0-9]+' .github/workflows/test.yml | cut -d= -f2 || true)
+          echo "base floor=${old:-none}  this branch floor=${new:-none}"
+          if [ -z "$new" ]; then
+            echo "::error::--cov-fail-under was removed from the pytest step"
+            exit 1
+          fi
+          if [ -n "$old" ] && [ "$new" -lt "$old" ]; then
+            echo "::error::coverage floor lowered from $old to $new"
+            exit 1
+          fi

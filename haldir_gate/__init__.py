@@ -10,6 +10,7 @@ from .gate import (
     Permission,
     DelegationError,
     MAX_DELEGATION_DEPTH,
+    reserve_spend,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "Permission",
     "DelegationError",
     "MAX_DELEGATION_DEPTH",
+    "reserve_spend",
 ]

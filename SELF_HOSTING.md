@@ -233,6 +233,84 @@ Schema migrations are idempotent and run automatically on boot.
 
 ---
 
+## Rotating the encryption key
+
+The Vault encrypts every secret with `HALDIR_ENCRYPTION_KEY`. Rotating it — because someone with access left, or because your policy says so — is a four-step procedure with no downtime and no re-entry of secrets.
+
+Every stored secret records which key encrypted it, so the server can hold your old and new keys at once and rewrite the store while it keeps serving reads.
+
+**1. Generate the new key.**
+
+```bash
+python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+```
+
+**2. Point the environment at it, keeping the old one.** In `.env`:
+
+```bash
+HALDIR_ENCRYPTION_KEY=<the new key>
+HALDIR_ENCRYPTION_KEY_PREVIOUS=<the old key>
+```
+
+Restart. New writes use the new key; existing secrets still decrypt with the old one. Verify nothing broke before going further:
+
+```bash
+curl -H "Authorization: Bearer $HALDIR_API_KEY" \
+     -H "X-Session-ID: $SESSION_ID" \
+     https://your-haldir/v1/secrets/some-existing-secret
+```
+
+**3. Rewrite the store.**
+
+```bash
+# See what would happen, changing nothing
+curl -X POST -H "Authorization: Bearer $HALDIR_API_KEY" \
+     "https://your-haldir/v1/vault/rotate?dry_run=true"
+
+# Do it
+curl -X POST -H "Authorization: Bearer $HALDIR_API_KEY" \
+     https://your-haldir/v1/vault/rotate
+```
+
+This endpoint takes **no key in the request body** — deliberately. The new key reaches the server through its environment, never over HTTP, so it cannot end up in a proxy log or a shell history. An endpoint that accepted a key would also be accepting a key the server was never configured with.
+
+Safe to interrupt and re-run: each secret is rewritten on its own, and until the pass finishes the old key is still loaded, so a crash leaves a vault that reads correctly rather than one that does not. Re-running finishes the job and rewrites nothing twice.
+
+**4. Confirm, then drop the old key.**
+
+```bash
+curl -H "Authorization: Bearer $HALDIR_API_KEY" https://your-haldir/v1/vault/keys
+```
+
+You get which keys the ciphertext actually needs and how many blobs each covers:
+
+```json
+{
+  "keys": [{"key_id": "9f2c…", "role": "primary"}],
+  "blobs_by_key": {"9f2c…": 412},
+  "unreadable_blobs": 0,
+  "total_blobs": 412
+}
+```
+
+Retire the old key **only** when `blobs_by_key` no longer lists it. Then remove `HALDIR_ENCRYPTION_KEY_PREVIOUS` and restart. Keeping a key loaded that nothing needs is a key you still have to protect.
+
+**If the response is `207` rather than `200`,** some secrets could not be read — usually a key that was retired early. The report names them and the reason; nothing was lost, and restoring the missing key and re-running fixes it. Do not treat a 207 as success.
+
+```bash
+# Which keys are still needed?
+curl -H "Authorization: Bearer $HALDIR_API_KEY" https://your-haldir/v1/vault/keys
+
+# Re-key: needs the `vault:rotate` scope. `vault:write` is NOT enough —
+# authority over the secrets is separate from authority over the key
+# protecting them.
+curl -X POST -H "Authorization: Bearer $ADMIN_KEY" https://your-haldir/v1/vault/rotate
+```
+
+**Upgrading from a build older than this one** needs no action. Pre-existing secrets were written before ciphertext carried a key id, and the server opens those with the key it was started with — which, on an ordinary upgrade, is the same key that wrote them. If you had already changed `HALDIR_ENCRYPTION_KEY` some other way, set `HALDIR_ENCRYPTION_KEY_LEGACY` to the key that produced them; the error message will tell you.
+
+---
+
 ## Troubleshooting
 
 **API returns `503 encryption key not configured`**

@@ -137,7 +137,13 @@ def test_decryption_under_different_key_always_fails(
     plaintext: str, key_a: bytes, key_b: bytes, name: str
 ) -> None:
     """For any plaintext and any pair of distinct keys, swapping keys breaks
-    decryption deterministically."""
+    decryption deterministically.
+
+    The exception is either InvalidTag (the vault held the named key but the
+    bytes did not match) or ValueError (it did not hold the named key at
+    all). Naming both is the point — what must never happen is a return, and
+    in particular never a return of the plaintext.
+    """
     if key_a == key_b:
         return
 
@@ -148,7 +154,7 @@ def test_decryption_under_different_key_always_fails(
     v_b._secrets[f"t:{name}"] = SecretEntry(
         name=name, encrypted_value=e.encrypted_value, tenant_id="t",
     )
-    with pytest.raises(InvalidTag):
+    with pytest.raises((InvalidTag, ValueError)):
         v_b.get_secret(name=name, tenant_id="t")
 
 

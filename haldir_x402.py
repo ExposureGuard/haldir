@@ -317,34 +317,31 @@ def _log_payment_to_audit(*, tenant_id: str, tx_hash: str, payer: str,
     Best-effort; any error here MUST NOT block the payment response."""
     try:
         import api
-        from haldir_db import get_db
-        import uuid
-        conn = get_db(api.DB_PATH)
+        # amount is in atomic USDC units (6 decimals).
         try:
-            # amount is in atomic USDC units (6 decimals).
-            try:
-                dollars = int(amount_atomic) / 1_000_000
-            except (TypeError, ValueError):
-                dollars = 0.0
-            entry_id = f"x402-{uuid.uuid4().hex[:12]}"
-            details = json.dumps({
+            dollars = int(amount_atomic) / 1_000_000
+        except (TypeError, ValueError):
+            dollars = 0.0
+
+        # Through Watch, not a hand-built INSERT. The previous version wrote
+        # `entry_hash = f"x402-hash-{entry_id}"` and `prev_hash = ''`, which
+        # is not a chain hash at all: verify_chain recomputes the digest and
+        # compares, so every settled payment made the audit trail report as
+        # tampered. Two implementations of "the chain hash" is one too many.
+        from haldir_watch import Watch
+        Watch(db_path=api.DB_PATH).log_system_action(
+            actor=payer or "anon",
+            action="x402.pay",
+            tool="x402",
+            details={
                 "x402": True,
-                "tx":   tx_hash,
+                "tx": tx_hash,
                 "network": settlement.get("network", ""),
-            }, separators=(",", ":"))
-            conn.execute(
-                "INSERT INTO audit_log (entry_id, tenant_id, session_id, "
-                "agent_id, action, tool, details, cost_usd, timestamp, "
-                "flagged, prev_hash, entry_hash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?)",
-                (entry_id, tenant_id, "x402-session",
-                 payer or "anon", "x402.pay", "x402",
-                 details, round(dollars, 6), time.time(),
-                 f"x402-hash-{entry_id}"),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+            },
+            cost_usd=round(dollars, 6),
+            tenant_id=tenant_id,
+            session_id="x402-session",
+        )
     except Exception as e:
         logger.warning("x402 audit write failed",
                        extra={"error": f"{type(e).__name__}: {e}"})
