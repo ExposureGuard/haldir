@@ -24,8 +24,13 @@ Returned shape (build_overview):
       "usage": {
           "actions_this_month":    int,
           "actions_limit":         int,
-          "actions_pct_used":      float,    # 0.0..1.0
+          "actions_pct_used":      float,    # 0.0..1.0, may exceed 1.0 when
+                                             # over the allowance on a
+                                             # metered plan
           "spend_usd_this_month":  float,
+          "overage_actions":       int,      # past the allowance, 0 if none
+          "overage_usd":           float | None,  # None = not billable
+          "metered":               bool,     # overage billed rather than refused
       },
       "sessions": {
           "active_count":  int,
@@ -68,16 +73,14 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-
-# Default tier ceilings, mirroring api.py:TIER_LIMITS. Duplicated as a
-# fallback so this module can run in tests without importing api (which
-# pulls in the whole Flask app). Callers that care about the live tier
-# table pass it as `tier_limits=`.
-_DEFAULT_TIER_LIMITS = {
-    "free":       {"agents": 1,        "actions_per_month": 1_000},
-    "pro":        {"agents": 10,       "actions_per_month": 50_000},
-    "enterprise": {"agents": 999_999,  "actions_per_month": 999_999_999},
-}
+# The plan table, from its single definition. This used to be a local copy
+# "mirroring api.py:TIER_LIMITS" so the module could run without importing
+# the Flask app — and the copy is exactly what drifted: the marketing site
+# said Pro allowed 25 agents while both dicts said 10, and nothing compared
+# them. haldir_tiers imports nothing but typing, so the reason for
+# duplicating it does not apply.
+import haldir_tiers
+from haldir_tiers import TIERS as _DEFAULT_TIER_LIMITS
 
 
 def build_overview(
@@ -150,11 +153,23 @@ def _usage(db_path: str, tenant_id: str, tier_caps: dict[str, int]) -> dict[str,
     spend = float(row["total_spend_usd"]) if row else 0.0
     cap = int(tier_caps.get("actions_per_month", 0))
     pct = (actions / cap) if cap else 0.0
+
+    # Usage past the allowance is billed on metered plans rather than refused,
+    # so it has to be visible — a customer who cannot see what they are
+    # accruing cannot make a decision about it, and an overage that only
+    # appears on an invoice a month later reads as a billing error.
+    over = max(0, actions - cap) if cap else 0
+    tier = _tier(db_path, tenant_id)
+    overage_usd = haldir_tiers.overage_cost(tier, over)
+
     return {
         "actions_this_month":   actions,
         "actions_limit":        cap,
         "actions_pct_used":     round(pct, 4),
         "spend_usd_this_month": round(spend, 2),
+        "overage_actions":      over,
+        "overage_usd":          overage_usd,
+        "metered":              haldir_tiers.is_metered(tier),
     }
 
 

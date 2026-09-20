@@ -124,9 +124,9 @@ $ haldir overview
   acct_xyz123  ·  tier pro  ·  2026-04-19T18:42:11+00:00
 
   Status     ● ok
-  Actions      4,217 / 50,000   ████░░░░░░░░░░░░░░░░    8.4%
+  Actions      4,217 / 1,500,000  ░░░░░░░░░░░░░░░░░░░    0.3%
   Spend      $ 47.30 this month
-  Sessions        12 active  ·  3/10 agents
+  Sessions        12 active  ·  3/25 agents
   Vault            8 secrets  ·  62 accesses this month
   Audit        1,847 entries  ·  0 flagged (7d)  ·  chain ✓
   Webhooks         2 registered  ·  541 deliveries (24h)  ·  99.82% success

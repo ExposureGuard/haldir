@@ -45,6 +45,7 @@ from haldir_gate.gate import Gate, DelegationError, MAX_DELEGATION_DEPTH
 from haldir_vault.vault import Vault
 from haldir_watch.watch import Watch
 import haldir_idempotency
+import haldir_tiers
 from haldir_logging import configure_logging, get_logger
 from haldir_metrics import registry as prom_metrics
 from haldir_validation import validate_body
@@ -289,6 +290,15 @@ def _platform_after(response):  # type: ignore[no-untyped-def]
         response.headers["X-RateLimit-Monthly-Used"]        = str(rlm["used"])
         response.headers["X-RateLimit-Monthly-Reset"]       = str(rlm["reset"])
         response.headers["X-RateLimit-Monthly-Reset-After"] = str(max(0, rlm["reset_after"]))
+        # Overage, when there is any. Emitted only past the allowance so that
+        # a customer under their limit sees no billing headers at all, and
+        # only when there is a rate to charge — free has none, and a
+        # "0.00" here would read as an overage that costs nothing rather
+        # than one that is not billable.
+        if rlm.get("overage_actions"):
+            response.headers["X-RateLimit-Monthly-Over-By"] = str(rlm["overage_actions"])
+            if rlm.get("overage_usd") is not None:
+                response.headers["X-RateLimit-Monthly-Overage-USD"] = f"{rlm['overage_usd']:.6f}"
 
     retry_after = getattr(g, "retry_after", None)
     if retry_after is not None and response.status_code == 429:
@@ -371,11 +381,7 @@ def _err_500(e):  # type: ignore[no-untyped-def]
 
 # ── Billing tier limits ──
 
-TIER_LIMITS = {
-    "free":       {"agents": 1,    "actions_per_month": 1_000},
-    "pro":        {"agents": 10,   "actions_per_month": 50_000},
-    "enterprise": {"agents": 999_999, "actions_per_month": 999_999_999},
-}
+TIER_LIMITS = haldir_tiers.TIERS
 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
@@ -3023,6 +3029,7 @@ def rate_limit():
             monthly_limit = tier_limits["actions_per_month"]
             monthly_actions = _get_tenant_monthly_actions(tenant)
             monthly_reset_after = _seconds_until_end_of_month(now)
+            over = max(0, monthly_actions - monthly_limit)
             g.rate_limit_monthly = {
                 "limit":       monthly_limit,
                 "used":        monthly_actions,
@@ -3030,23 +3037,37 @@ def rate_limit():
                 "reset":       int(now + monthly_reset_after),
                 "reset_after": monthly_reset_after,
             }
-            if monthly_actions >= monthly_limit:
-                # Mark the overall resource dimension as monthly so the
-                # X-RateLimit-Resource header tells callers which bucket
-                # they hit (hourly vs monthly quota).
-                g.rate_limit["resource"] = "monthly"
-                g.retry_after = monthly_reset_after
-                return _json_error(
-                    "monthly_quota_exceeded",
-                    "Monthly action quota exceeded",
-                    429,
-                    tier=billing_tier,
-                    limit=monthly_limit,
-                    used=monthly_actions,
-                    retry_after=monthly_reset_after,
-                    resource="monthly",
-                    upgrade="https://haldir.xyz/pricing",
-                )
+            # Usage past the allowance is billed on plans that have a payment
+            # method behind them, and refused on the one that does not.
+            #
+            # Refusing was the old behaviour for every tier, and it is the
+            # wrong failure for this product: the thing being metered is the
+            # audit record, so a 429 stops an agent mid-task *and* leaves a
+            # hole in the trail at exactly the moment something is happening.
+            # A customer who has already decided to pay is not the person to
+            # interrupt. Free has no card on file, so it still stops.
+            if over > 0:
+                overage_usd = haldir_tiers.overage_cost(effective_tier, over)
+                if overage_usd is not None and not haldir_tiers.is_hard_capped(effective_tier):
+                    g.rate_limit_monthly["overage_actions"] = over
+                    g.rate_limit_monthly["overage_usd"] = overage_usd
+                else:
+                    # Mark the overall resource dimension as monthly so the
+                    # X-RateLimit-Resource header tells callers which bucket
+                    # they hit (hourly vs monthly quota).
+                    g.rate_limit["resource"] = "monthly"
+                    g.retry_after = monthly_reset_after
+                    return _json_error(
+                        "monthly_quota_exceeded",
+                        "Monthly action quota exceeded",
+                        429,
+                        tier=billing_tier,
+                        limit=monthly_limit,
+                        used=monthly_actions,
+                        retry_after=monthly_reset_after,
+                        resource="monthly",
+                        upgrade="https://haldir.xyz/pricing",
+                    )
 
 
 # ── API Docs ──
@@ -4407,8 +4428,62 @@ def pricing_page():
 
 
 def _pricing_page_html():
-    """Archived pricing page HTML. Re-enable by returning this from pricing_page()."""
-    return """<!DOCTYPE html>
+    """Pricing page HTML. Plan cards are generated from haldir_tiers so the
+    numbers here cannot drift from the ones the rate limiter enforces; they
+    were typed separately and disagreed with the marketing site for months."""
+    body = _PRICING_HTML.replace("{TIER_CARDS}", _render_tier_cards())
+    return body, 200, {"Content-Type": "text/html"}
+
+
+def _render_tier_cards() -> str:
+    """Build the plan cards from haldir_tiers.
+
+    Generated rather than hand-written because the hand-written version is
+    how this page came to advertise Pro at $49 and 10 agents while the
+    marketing site advertised $99 and 25, and the rate limiter enforced 10.
+    Every number below now comes from the one table.
+    """
+    import html as _h
+    cards = []
+    for name in ("free", "pro", "enterprise"):
+        plan = haldir_tiers.limits(name)
+        price = plan.get("price_usd_month")
+        if price is None:
+            price_html = "Custom <span>/ year</span>"
+            cta = ('<button onclick="checkout(\'enterprise\')" '
+                   'class="tier-btn tier-btn-white">Contact Sales</button>')
+        elif price == 0:
+            price_html = "$0 <span>/ forever</span>"
+            cta = '<a href="/docs" class="tier-btn tier-btn-outline">Get Started</a>'
+        else:
+            price_html = f"${price:,} <span>/ month</span>"
+            cta = (f'<button onclick="checkout(\'{name}\')" '
+                   f'class="tier-btn tier-btn-gold">Upgrade to {plan["label"]}</button>')
+
+        badge = ""
+        if name == "pro":
+            badge = '<span class="tier-badge">Most Popular</span>'
+        elif name == "free":
+            badge = '<span class="current-badge">Current: Free</span>'
+
+        items = "".join(
+            f"<li>{_h.escape(line)}</li>" for line in haldir_tiers.feature_lines(name)
+        )
+        featured = " featured" if name == "pro" else ""
+        cards.append(
+            f'<div class="tier-card{featured}">\n'
+            f'    {badge}\n'
+            f'    <div class="tier-name">{_h.escape(plan["label"])}</div>\n'
+            f'    <div class="tier-price">{price_html}</div>\n'
+            f'    <div class="tier-desc">{_h.escape(plan.get("blurb", ""))}</div>\n'
+            f'    <ul class="tier-features">{items}</ul>\n'
+            f'    {cta}\n'
+            f'</div>'
+        )
+    return "\n".join(cards)
+
+
+_PRICING_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -4605,59 +4680,7 @@ footer a { color: var(--gold); text-decoration: none; }
 </div>
 
 <div class="pricing-grid">
-    <!-- Free -->
-    <div class="tier-card">
-        <span class="current-badge">Current: Free</span>
-        <div class="tier-name">Free</div>
-        <div class="tier-price">$0 <span>/ forever</span></div>
-        <div class="tier-desc">Get started. One agent, full security.</div>
-        <ul class="tier-features">
-            <li>1 agent</li>
-            <li>1,000 actions / month</li>
-            <li>Session-scoped permissions</li>
-            <li>Encrypted secret storage</li>
-            <li>Audit trail</li>
-            <li>MCP support</li>
-            <li>Community support</li>
-        </ul>
-        <a href="/docs" class="tier-btn tier-btn-outline">Get Started</a>
-    </div>
-
-    <!-- Pro -->
-    <div class="tier-card featured">
-        <span class="tier-badge">Most Popular</span>
-        <div class="tier-name">Pro</div>
-        <div class="tier-price">$49 <span>/ month</span></div>
-        <div class="tier-desc">For teams running multiple agents in production.</div>
-        <ul class="tier-features">
-            <li>10 agents</li>
-            <li>50,000 actions / month</li>
-            <li>Everything in Free</li>
-            <li>Anomaly detection</li>
-            <li>Webhooks (Slack, Discord)</li>
-            <li>Human-in-the-loop approvals</li>
-            <li>Proxy mode + governance policies</li>
-            <li>Priority support</li>
-        </ul>
-        <button onclick="checkout('pro')" class="tier-btn tier-btn-gold">Upgrade to Pro</button>
-    </div>
-
-    <!-- Enterprise -->
-    <div class="tier-card">
-        <div class="tier-name">Enterprise</div>
-        <div class="tier-price">$499 <span>/ month</span></div>
-        <div class="tier-desc">Unlimited scale. Full control. Dedicated support.</div>
-        <ul class="tier-features">
-            <li>Unlimited agents</li>
-            <li>Unlimited actions</li>
-            <li>Everything in Pro</li>
-            <li>SSO / SAML (coming soon)</li>
-            <li>Custom policy engine</li>
-            <li>Dedicated infrastructure</li>
-            <li>SLA guarantee</li>
-            <li>Dedicated Slack channel</li>
-        </ul>
-        <button onclick="checkout('enterprise')" class="tier-btn tier-btn-white">Upgrade to Enterprise</button>
+    {TIER_CARDS}
     </div>
 </div>
 
@@ -4711,7 +4734,7 @@ function checkout(tier) {
 }
 </script>
 </body>
-</html>""", 200, {"Content-Type": "text/html"}
+</html>"""
 
 
 @app.route("/v1/billing/checkout", methods=["POST"])
