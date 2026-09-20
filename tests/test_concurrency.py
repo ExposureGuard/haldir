@@ -39,6 +39,12 @@ def db(tmp_path):
     return path
 
 
+# A tenant for this module. On SQLite each test gets a fresh database
+# file; on Postgres the database is shared, so queries that walk
+# audit_log must say which tenant they mean.
+TENANT = "concurrency-suite"
+
+
 def run_together(fn, count):
     """Run `fn(i)` on `count` threads released at the same instant.
 
@@ -158,16 +164,18 @@ def test_concurrent_audit_appends_keep_the_chain_linear(db) -> None:
 
     gate = Gate(db_path=db)
     watch = Watch(db_path=db)
-    session = gate.create_session("chain-racer", scopes=["read"], ttl=3600)
+    session = gate.create_session("chain-racer", scopes=["read"], ttl=3600, tenant_id=TENANT)
 
     run_together(
-        lambda i: watch.log_action(session, tool="racer", action=f"step-{i}"),
+        lambda i: watch.log_action(session, tool="racer", action=f"step-{i}", tenant_id=TENANT),
         THREADS,
     )
 
     conn = get_db(db)
     rows = conn.execute(
-        "SELECT entry_id, prev_hash, entry_hash FROM audit_log ORDER BY timestamp",
+        "SELECT entry_id, prev_hash, entry_hash FROM audit_log "
+        "WHERE tenant_id = ? ORDER BY timestamp",
+        (TENANT,),
     ).fetchall()
     conn.close()
 
@@ -203,15 +211,16 @@ def test_the_chain_covers_everything_it_was_given(db) -> None:
 
     gate = Gate(db_path=db)
     watch = Watch(db_path=db)
-    session = gate.create_session("walker", scopes=["read"], ttl=3600)
+    session = gate.create_session("walker", scopes=["read"], ttl=3600, tenant_id=TENANT)
 
     run_together(
-        lambda i: watch.log_action(session, tool="walker", action=f"a{i}"),
+        lambda i: watch.log_action(session, tool="walker", action=f"a{i}", tenant_id=TENANT),
         THREADS,
     )
 
     conn = get_db(db)
-    rows = conn.execute("SELECT entry_hash, prev_hash FROM audit_log").fetchall()
+    rows = conn.execute("SELECT entry_hash, prev_hash FROM audit_log "
+                        "WHERE tenant_id = ?", (TENANT,)).fetchall()
     conn.close()
 
     by_prev = {r["prev_hash"]: r["entry_hash"] for r in rows}
@@ -240,15 +249,16 @@ def test_sequence_numbers_are_contiguous_under_concurrency(db) -> None:
 
     gate = Gate(db_path=db)
     watch = Watch(db_path=db)
-    session = gate.create_session("seq-racer", scopes=["read"], ttl=3600)
+    session = gate.create_session("seq-racer", scopes=["read"], ttl=3600, tenant_id=TENANT)
 
     run_together(
-        lambda i: watch.log_action(session, tool="t", action=f"s{i}"), THREADS,
+        lambda i: watch.log_action(session, tool="t", action=f"s{i}", tenant_id=TENANT), THREADS,
     )
 
     conn = get_db(db)
     seqs = [r["seq"] for r in conn.execute(
-        "SELECT seq FROM audit_log ORDER BY seq").fetchall()]
+        "SELECT seq FROM audit_log WHERE tenant_id = ? ORDER BY seq",
+        (TENANT,)).fetchall()]
     conn.close()
 
     assert seqs == list(range(1, THREADS + 1)), (
@@ -280,19 +290,27 @@ def test_a_duplicate_sequence_number_is_refused(db) -> None:
     """End-to-end proof that a second row cannot claim a taken sequence."""
     gate = Gate(db_path=db)
     watch = Watch(db_path=db)
-    session = gate.create_session("dup", scopes=["read"], ttl=3600)
-    watch.log_action(session, tool="t", action="first")
+    session = gate.create_session("dup", scopes=["read"], ttl=3600, tenant_id=TENANT)
+    watch.log_action(session, tool="t", action="first", tenant_id=TENANT)
 
     conn = get_db(db)
     try:
-        with pytest.raises(sqlite3.IntegrityError):
+        # Same tenant as the row above, so seq = 1 is genuinely taken.
+        # Postgres raises UniqueViolation where SQLite raises IntegrityError;
+        # both subclass their driver's IntegrityError, and either means the
+        # index held.
+        with pytest.raises(Exception) as caught:
             conn.execute(
                 "INSERT INTO audit_log (entry_id, tenant_id, session_id, agent_id, "
                 "action, tool, details, cost_usd, timestamp, flagged, flag_reason, "
                 "prev_hash, entry_hash, seq) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', ?, 1)",
-                ("collide", "", "s", "a", "act", "t", "{}", 0.0, 0.0, "h"),
+                ("collide", TENANT, "s", "a", "act", "t", "{}", 0.0, 0.0, "h"),
             )
+        assert "unique" in str(caught.value).lower() or "duplicate" in str(caught.value).lower(), (
+            f"expected a uniqueness violation on (tenant_id, seq), got "
+            f"{type(caught.value).__name__}: {caught.value}"
+        )
     finally:
         conn.rollback()
         conn.close()
@@ -309,9 +327,9 @@ def test_concurrent_writes_do_not_fail_with_database_locked(db) -> None:
     """
     gate = Gate(db_path=db)
     watch = Watch(db_path=db)
-    session = gate.create_session("contention", scopes=["read"], ttl=3600)
+    session = gate.create_session("contention", scopes=["read"], ttl=3600, tenant_id=TENANT)
 
     results = run_together(
-        lambda i: watch.log_action(session, tool="t", action=f"c{i}"), 16,
+        lambda i: watch.log_action(session, tool="t", action=f"c{i}", tenant_id=TENANT), 16,
     )
     assert all(r is not None for r in results)

@@ -129,8 +129,17 @@ def test_every_column_is_either_tested_or_excused(db) -> None:
     file exists to catch, so the list is checked against the live table
     rather than trusted.
     """
+    # PRAGMA is SQLite-only and Postgres rejects it outright ("syntax error
+    # at or near PRAGMA"). information_schema is the portable way to ask.
     conn = get_db(db)
-    columns = {r[1] for r in conn.execute("PRAGMA table_info(audit_log)").fetchall()}
+    try:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(audit_log)").fetchall()}
+    except Exception:
+        rows = conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'audit_log'"
+        ).fetchall()
+        columns = {r[0] for r in rows}
     conn.close()
 
     untested = columns - set(MUTABLE_FIELDS) - set(UNHASHED)
@@ -378,7 +387,12 @@ def test_the_chain_is_linear_after_concurrent_appends(db) -> None:
         t.join(timeout=30)
 
     conn = get_db(db)
-    rows = conn.execute("SELECT entry_id, entry_hash, prev_hash FROM audit_log").fetchall()
+    # Scoped to this test's tenant. Without the filter this walks every
+    # tenant's rows, which is invisible on SQLite (a fresh file per test)
+    # and wrong on Postgres, where the database is shared.
+    rows = conn.execute(
+        "SELECT entry_id, entry_hash, prev_hash FROM audit_log "
+        "WHERE tenant_id = ?", (tenant(),)).fetchall()
     conn.close()
     assert len(rows) == THREADS
 

@@ -278,3 +278,44 @@ def test_schema_init_connects_with_the_server_timeouts() -> None:
             f"psycopg2.connect({args}). It runs DDL, so a lock wait there has "
             f"no bound and blocks application startup."
         )
+
+
+def test_money_columns_are_double_precision_not_real() -> None:
+    """REAL means two different things on the two backends.
+
+    In Postgres REAL is a 4-byte float — about seven significant digits — and
+    in SQLite it is 8-byte. So every money column declared REAL was precise on
+    SQLite and imprecise on the backend the docs tell enterprises to run:
+    1234.56 round-tripped through Postgres as 1234.56005859375.
+
+    The spend cap is the product's central promise and the audit trail records
+    cost_usd, so this is money silently drifting, not a style question.
+
+    Checked against the schema text rather than a live table, because the
+    difference only appears on Postgres and there is none here to query.
+    """
+    money_columns = ("max_spend", "spend_limit", "spent", "amount", "cost_usd")
+    offenders = [
+        line.strip()
+        for line in haldir_db._SCHEMA.splitlines()
+        if any(line.strip().startswith(f"{c} ") for c in money_columns)
+        and "REAL" in line.replace("DOUBLE PRECISION", "")
+    ]
+    assert not offenders, (
+        f"these money columns are declared REAL, which Postgres reads as a "
+        f"4-byte float and SQLite as 8-byte, so the two backends disagree on "
+        f"precision: {offenders}"
+    )
+
+
+def test_existing_postgres_money_columns_get_widened(tmp_path) -> None:
+    """`CREATE TABLE IF NOT EXISTS` does not alter a column that already
+    exists, so a deployment created before the fix keeps its float4 columns
+    unless the type is changed in place."""
+    import inspect
+
+    src = inspect.getsource(haldir_db._init_pg)
+    assert "DOUBLE PRECISION" in src, (
+        "_init_pg does not widen existing money columns, so a Postgres "
+        "deployment created before this keeps losing precision"
+    )

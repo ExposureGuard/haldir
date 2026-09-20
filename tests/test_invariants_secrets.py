@@ -56,6 +56,24 @@ values = st.text(min_size=1, max_size=200)
 def db(tmp_path):
     path = str(tmp_path / "secrets.db")
     init_db(path)
+
+    # Empty the secrets table.
+    #
+    # On SQLite this path is a fresh file and there is nothing to clear. On
+    # Postgres DATABASE_URL wins and every run shares one table, so rows from
+    # earlier runs are still there — encrypted under random keys that were
+    # never persisted anywhere. A rotation re-keys the whole deployment, tries
+    # to read those rows, and fails on them, which is correct behaviour for
+    # the code and noise for this test.
+    from haldir_db import get_db
+    conn = get_db(path)
+    try:
+        conn.execute("DELETE FROM secrets")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        conn.close()
     return path
 
 

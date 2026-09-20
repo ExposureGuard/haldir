@@ -295,6 +295,21 @@ class PgRow:
 # ── Schema ──
 
 _SCHEMA = """
+-- Money is DOUBLE PRECISION, not REAL, and that is not a style choice.
+--
+-- In Postgres REAL is a 4-byte float: about seven significant decimal digits.
+-- In SQLite REAL is 8-byte, like DOUBLE PRECISION. So `REAL` meant two
+-- different things on the two backends, and 1234.56 round-tripped through
+-- Postgres as 1234.56005859375.
+--
+-- Every column below that holds money — spend_limit, spent, max_spend,
+-- amount, cost_usd — was declared REAL, so on the backend SELF_HOSTING.md and
+-- docker-compose tell enterprises to run, budgets and audit costs were
+-- silently imprecise. The spend cap is the product's central promise.
+--
+-- DOUBLE PRECISION is 8-byte on Postgres and keeps REAL affinity on SQLite,
+-- so this makes the two agree instead of changing either.
+
     CREATE TABLE IF NOT EXISTS api_keys (
         key_hash TEXT PRIMARY KEY,
         key_prefix TEXT NOT NULL,
@@ -313,7 +328,7 @@ _SCHEMA = """
         agent_id TEXT NOT NULL,
         tenant_id TEXT NOT NULL DEFAULT '',
         default_scopes TEXT NOT NULL DEFAULT '["read","browse"]',
-        max_spend REAL NOT NULL DEFAULT 0.0,
+        max_spend DOUBLE PRECISION NOT NULL DEFAULT 0.0,
         metadata TEXT NOT NULL DEFAULT '{}',
         created_at REAL NOT NULL,
         PRIMARY KEY (agent_id, tenant_id)
@@ -324,8 +339,8 @@ _SCHEMA = """
         tenant_id TEXT NOT NULL DEFAULT '',
         agent_id TEXT NOT NULL,
         scopes TEXT NOT NULL DEFAULT '[]',
-        spend_limit REAL NOT NULL DEFAULT 0.0,
-        spent REAL NOT NULL DEFAULT 0.0,
+        spend_limit DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+        spent DOUBLE PRECISION NOT NULL DEFAULT 0.0,
         created_at REAL NOT NULL,
         expires_at REAL NOT NULL DEFAULT 0.0,
         revoked INTEGER NOT NULL DEFAULT 0,
@@ -357,7 +372,7 @@ _SCHEMA = """
         tenant_id TEXT NOT NULL DEFAULT '',
         session_id TEXT NOT NULL,
         agent_id TEXT NOT NULL,
-        amount REAL NOT NULL,
+        amount DOUBLE PRECISION NOT NULL,
         currency TEXT NOT NULL DEFAULT 'USD',
         description TEXT NOT NULL DEFAULT '',
         remaining_budget REAL NOT NULL DEFAULT 0.0,
@@ -375,7 +390,7 @@ _SCHEMA = """
         action TEXT NOT NULL,
         tool TEXT NOT NULL DEFAULT '',
         details TEXT NOT NULL DEFAULT '{}',
-        cost_usd REAL NOT NULL DEFAULT 0.0,
+        cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0,
         timestamp DOUBLE PRECISION NOT NULL,
         flagged INTEGER NOT NULL DEFAULT 0,
         flag_reason TEXT NOT NULL DEFAULT '',
@@ -409,7 +424,7 @@ _SCHEMA = """
         tool TEXT NOT NULL DEFAULT '',
         details TEXT NOT NULL DEFAULT '{}',
         reason TEXT NOT NULL DEFAULT '',
-        amount REAL NOT NULL DEFAULT 0.0,
+        amount DOUBLE PRECISION NOT NULL DEFAULT 0.0,
         status TEXT NOT NULL DEFAULT 'pending',
         created_at REAL NOT NULL,
         expires_at REAL NOT NULL DEFAULT 0.0,
@@ -730,6 +745,29 @@ def _init_pg():
     except Exception as e:
         conn.rollback()
         logger.warning("idx_sessions_parent CREATE skipped: %s", e)
+
+    # Widen money columns that were created as REAL, which Postgres reads as
+    # a 4-byte float. `CREATE TABLE IF NOT EXISTS` does not touch existing
+    # columns, so a deployment created before this needs the type changed in
+    # place or it keeps losing precision. SQLite is unaffected — its REAL is
+    # already 8-byte — and the ALTER is skipped there because the syntax
+    # differs.
+    for table, column in (
+        ("agents", "max_spend"),
+        ("sessions", "spend_limit"),
+        ("sessions", "spent"),
+        ("payments", "amount"),
+        ("payments", "remaining_budget"),
+        ("audit_log", "cost_usd"),
+        ("approval_requests", "amount"),
+    ):
+        try:
+            conn.execute(
+                f"ALTER TABLE {table} ALTER COLUMN {column} TYPE DOUBLE PRECISION"
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()  # already the right type, or not a Postgres column
 
     # Chain sequencing for audit_log — see _migrate_audit_seq. Postgres
     # supports ADD COLUMN IF NOT EXISTS, but the helper's try/except covers
