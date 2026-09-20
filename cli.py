@@ -936,6 +936,23 @@ def cmd_overview(args: argparse.Namespace) -> None:
         print()
 
 
+def cmd_top(args: argparse.Namespace) -> None:
+    """Live agent console.
+
+    Thin on purpose: all of the drawing lives in haldir_top.render_frame,
+    which is pure, and all of the terminal handling lives in haldir_top.run.
+    This exists to build a client and pick up the flags.
+    """
+    import haldir_top
+
+    client = APIClient()
+    raise SystemExit(haldir_top.run(
+        client,
+        interval=float(getattr(args, "interval", 1.0) or 1.0),
+        once=bool(getattr(args, "once", False)),
+    ))
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     """System health (calls /v1/status)."""
     client = APIClient()
@@ -1845,6 +1862,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_over.add_argument("--watch", action="store_true", help="Refresh continuously, top-style")
     p_over.add_argument("--interval", type=float, default=5.0, help="Refresh interval (with --watch)")
     p_over.set_defaults(func=cmd_overview)
+
+    # ── top ──
+    # A live console for a fleet of agents. Distinct from `overview --watch`,
+    # which redraws the summary rows every few seconds; this one shows who is
+    # running and what they are doing, refreshes by default every second, and
+    # takes keys — including revoke.
+    p_top = sub.add_parser(
+        "top",
+        help="Live agent console — who is running, what they are doing",
+    )
+    p_top.add_argument(
+        "--interval", type=float, default=1.0,
+        help="Refresh interval in seconds (default 1; +/- adjusts while running)",
+    )
+    p_top.add_argument(
+        "--once", action="store_true",
+        help="Draw one frame and exit (useful when piping or in tests)",
+    )
+    p_top.set_defaults(func=cmd_top)
 
     p_status = sub.add_parser("status", help="System health (calls /v1/status)")
     p_status.add_argument("--json", action="store_true")
