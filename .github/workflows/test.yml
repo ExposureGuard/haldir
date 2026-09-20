@@ -19,6 +19,7 @@ jobs:
   mypy:
     name: mypy (type check)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -42,6 +43,7 @@ jobs:
   pytest:
     name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -103,6 +105,12 @@ jobs:
   postgres:
     name: pytest (Postgres)
     runs-on: ubuntu-latest
+    # Bounded on purpose. Without this a job that deadlocks sits "in
+    # progress" until GitHub's six-hour ceiling, producing no log to read —
+    # which is exactly what happened when these concurrency tests first met
+    # a real Postgres. A timeout turns a silent hang into a red check with
+    # a timestamp pointing at the test that never returned.
+    timeout-minutes: 15
 
     # The Postgres path had never run anywhere. DATABASE_URL is the documented
     # production configuration — README, SELF_HOSTING.md and docker-compose all
@@ -185,6 +193,7 @@ jobs:
   security:
     name: security (deps + static analysis)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -224,6 +233,7 @@ jobs:
   coverage-floor:
     name: coverage floor is not lowered
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout
