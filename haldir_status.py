@@ -47,9 +47,18 @@ from haldir_metrics import Counter, Histogram, Registry
 # Component labels. Fixed ordering so the public page is stable.
 _COMPONENT_ORDER = ("api", "database", "billing", "proxy")
 
-# Overall state precedence: "down" > "degraded" > "ok". A single down
-# component turns the banner red; a degraded dep turns it yellow.
+# Overall state precedence: "down" > "degraded" > "ok".
+#
+# "off" sits outside the ranking entirely and is never returned as an overall
+# state. It means "this component is optional and has not been configured" —
+# exactly the expected condition on a fresh install, where Stripe has no key
+# and no MCP upstream has been registered yet. Those were reported as
+# `degraded`, so a brand-new, entirely healthy instance announced itself as
+# "Status ● degraded". On a first run that reads as a broken product.
+#
+# A component that is *supposed* to work and is not is still `degraded`.
 _STATE_RANK = {"ok": 0, "degraded": 1, "down": 2}
+_NEUTRAL_STATE = "off"
 
 
 @dataclass
@@ -128,16 +137,17 @@ def check_billing() -> ComponentStatus:
         )
     return ComponentStatus(
         name="billing",
-        state="degraded",
-        message="Stripe unconfigured (self-hosted deploys may intentionally skip)",
+        state=_NEUTRAL_STATE,
+        message="Stripe not configured — set STRIPE_SECRET_KEY to enable billing",
         checked_at=time.time(),
     )
 
 
 def check_proxy(db_path: str) -> ComponentStatus:
     """The MCP proxy is optional — tenants configure upstreams via
-    POST /v1/proxy/upstreams. Report `ok` once any upstream exists;
-    until then it's `degraded` (feature available but unused)."""
+    POST /v1/proxy/upstreams. Report `ok` once any upstream exists; until
+    then it is `off`, which is the honest description of a feature nobody
+    has switched on yet."""
     try:
         conn = sqlite3.connect(db_path, timeout=1.0)
         try:
@@ -147,11 +157,12 @@ def check_proxy(db_path: str) -> ComponentStatus:
         finally:
             conn.close()
     except sqlite3.OperationalError:
-        # Table absent on a fresh bootstrap — proxy unused.
+        # Table absent on a fresh bootstrap — proxy unused, which is not a
+        # fault. Registering an upstream flips this to `ok`.
         return ComponentStatus(
             name="proxy",
-            state="degraded",
-            message="No upstream MCP servers registered",
+            state=_NEUTRAL_STATE,
+            message="No upstream MCP servers registered yet",
             checked_at=time.time(),
         )
     except Exception as e:
@@ -165,8 +176,8 @@ def check_proxy(db_path: str) -> ComponentStatus:
     if count == 0:
         return ComponentStatus(
             name="proxy",
-            state="degraded",
-            message="No upstream MCP servers registered",
+            state=_NEUTRAL_STATE,
+            message="No upstream MCP servers registered yet",
             checked_at=time.time(),
         )
     return ComponentStatus(
@@ -191,9 +202,15 @@ def all_components(db_path: str) -> list[ComponentStatus]:
 
 def overall_state(components: list[ComponentStatus]) -> str:
     """Worst-case roll-up: one `down` component turns the whole page
-    red; any `degraded` turns it yellow; otherwise green."""
+    red; any `degraded` turns it yellow; otherwise green.
+
+    Components in the neutral `off` state are skipped — they are optional
+    and unconfigured, which says nothing about whether Haldir is working.
+    """
     worst = 0
     for c in components:
+        if c.state == _NEUTRAL_STATE:
+            continue
         worst = max(worst, _STATE_RANK.get(c.state, 0))
     for state, rank in _STATE_RANK.items():
         if rank == worst:
