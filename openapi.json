@@ -15,7 +15,7 @@
   },
   "servers": [
     {
-      "url": "https://api.haldir.xyz"
+      "url": "https://haldir.xyz"
     }
   ],
   "components": {

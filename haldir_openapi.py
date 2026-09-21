@@ -28,6 +28,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from haldir_public_url import public_base_url
+
 # Mapping from validate_body Python types → OpenAPI primitive types.
 _TYPE_MAP: dict[type, dict[str, Any]] = {
     str:   {"type": "string"},
@@ -270,12 +272,16 @@ def generate_openapi(app: Any, version: str = "0.3.2") -> dict[str, Any]:
             ),
             "contact": {
                 "name": "Haldir",
-                "url": "https://haldir.xyz",
+                "url": public_base_url(),
                 "email": "sterling@haldir.xyz",
             },
             "license": {"name": "MIT"},
         },
-        "servers": [{"url": "https://api.haldir.xyz"}],
+        # This pointed at https://api.haldir.xyz, which has no DNS record —
+        # every client generated from this spec targeted a host that does
+        # not resolve. It is the instance's own origin: one host serves the
+        # API and the documents, hosted and self-hosted alike.
+        "servers": [{"url": public_base_url()}],
         "components": _components(),
         "security": [{"ApiKeyBearer": []}],
         "paths": {},
