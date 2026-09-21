@@ -58,7 +58,7 @@ from __future__ import annotations
 import functools
 import os
 from contextlib import contextmanager
-from typing import Any, Callable, Iterator, Optional, TypeVar
+from typing import Any, Callable, Iterator, TypeVar
 
 
 F = TypeVar("F", bound=Callable[..., Any])

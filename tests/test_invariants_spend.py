@@ -265,7 +265,8 @@ def test_a_negative_amount_is_refused(db) -> None:
     budget for itself."""
     from haldir_gate import reserve_spend
 
-    vault, gate = Vault(db_path=db), Gate(db_path=db)
+    Vault(db_path=db)
+    gate = Gate(db_path=db)
     session = gate.create_session("neg", scopes=["spend"], spend_limit=100.0, ttl=3600)
 
     conn = get_db(db)

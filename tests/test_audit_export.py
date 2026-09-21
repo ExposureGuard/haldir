@@ -28,6 +28,14 @@ import pytest  # noqa: E402
 
 import api  # noqa: E402
 import haldir_export  # noqa: E402
+from haldir_export import (  # noqa: E402
+    CSV_COLUMNS,
+    ExportFilters,
+    ManifestBuilder,
+    export_stream,
+    iter_csv,
+    iter_jsonl,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -39,15 +47,6 @@ def _lift_agent_cap(monkeypatch) -> None:
     patched = copy.deepcopy(api.TIER_LIMITS)
     patched["free"]["agents"] = 999
     monkeypatch.setattr(api, "TIER_LIMITS", patched)
-from haldir_export import (  # noqa: E402
-    CSV_COLUMNS,
-    ExportFilters,
-    ManifestBuilder,
-    compute_manifest,
-    export_stream,
-    iter_csv,
-    iter_jsonl,
-)
 
 
 # ── Helpers: seed some audit rows for the bootstrap tenant ────────────
@@ -200,8 +199,8 @@ def test_stream_rows_yields_ascending_timestamps(haldir_client, bootstrap_key) -
 
 
 def test_filter_by_session_id_narrows(haldir_client, bootstrap_key) -> None:
-    ids = _seed_rows(haldir_client, bootstrap_key, count=3,
-                     session_id="ses_narrow", agent_id="agent-narrow")
+    _seed_rows(haldir_client, bootstrap_key, count=3,
+               session_id="ses_narrow", agent_id="agent-narrow")
     tenant = _current_tenant(bootstrap_key)
     # Get the actual session_id the seed created (not the fake one).
     rows = list(haldir_export.stream_audit_rows(

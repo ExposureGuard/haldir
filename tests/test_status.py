@@ -10,13 +10,11 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
-import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-import haldir_metrics  # noqa: E402
 from haldir_metrics import Registry  # noqa: E402
 from haldir_status import (  # noqa: E402
     ComponentStatus,

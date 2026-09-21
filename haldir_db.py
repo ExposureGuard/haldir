@@ -232,7 +232,7 @@ class PgConnectionWrapper:
         cursor = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         try:
             cursor.execute(sql, params or ())
-        except Exception as e:
+        except Exception:
             self._conn.rollback()
             raise
         self._last_cursor = cursor

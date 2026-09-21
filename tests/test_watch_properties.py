@@ -10,7 +10,6 @@ Run: python -m pytest tests/test_watch_properties.py -v
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 

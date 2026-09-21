@@ -17,8 +17,6 @@ Run: python -m pytest tests/test_watch.py -v
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import sys
 

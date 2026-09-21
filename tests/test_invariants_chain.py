@@ -23,7 +23,6 @@ Run: python -m pytest tests/test_invariants_chain.py -v
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import sys

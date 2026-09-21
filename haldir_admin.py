@@ -94,7 +94,6 @@ def build_overview(
     """Compose the dashboard payload. Every section is computed from
     SQL aggregates so a tenant with millions of rows still resolves in
     a handful of milliseconds."""
-    from haldir_db import get_db
     limits = tier_limits or _DEFAULT_TIER_LIMITS
 
     tier = _tier(db_path, tenant_id)

@@ -37,7 +37,7 @@ from urllib.parse import quote
 if TYPE_CHECKING:
     import haldir_export
 
-from flask import Flask, request, jsonify, abort, redirect, g, send_from_directory
+from flask import Flask, request, jsonify, redirect, g, send_from_directory
 from flask_cors import CORS
 
 from haldir_db import init_db, get_db
@@ -54,7 +54,7 @@ from haldir_validation import validate_body
 from haldir_openapi import generate_openapi
 from haldir_status import build_status
 from haldir_scopes import require_scope
-from haldir_public_url import public_base_url, rewrite_public_origin
+from haldir_public_url import rewrite_public_origin
 
 configure_logging()
 log = get_logger("haldir.api")
@@ -1933,7 +1933,7 @@ def get_usage():
 
 # ── Approvals (Human-in-the-loop) ──
 
-from haldir_gate.approvals import ApprovalEngine, ApprovalStatus
+from haldir_gate.approvals import ApprovalEngine
 approval_engine = ApprovalEngine(db_path=DB_PATH)
 
 @app.route("/v1/approvals/rules", methods=["POST"])
@@ -3828,7 +3828,7 @@ def mcp_jsonrpc():
         prompt_name = params.get("name", "")
         if prompt_name == "security-audit":
             sid = (params.get("arguments") or {}).get("session_id", "")
-            msg = f"Review the Haldir audit trail"
+            msg = "Review the Haldir audit trail"
             if sid:
                 msg += f" for session {sid}"
             msg += (
@@ -4961,8 +4961,7 @@ def blog_post(slug):
                 html_lines.append("</pre>")
                 in_code = False
             else:
-                lang = line[3:].strip()
-                html_lines.append(f'<pre style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:1.25rem;overflow-x:auto;font-size:0.8rem;line-height:1.8;color:rgba(224,221,213,0.6);margin:1rem 0">')
+                html_lines.append('<pre style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:1.25rem;overflow-x:auto;font-size:0.8rem;line-height:1.8;color:rgba(224,221,213,0.6);margin:1rem 0">')
                 in_code = True
             continue
         if in_code:
@@ -5899,7 +5898,6 @@ def serve_dashboard_js():
     """Serve the cloud dashboard client script. The dashboard shell at
     /cloud/overview loads this with <script src=\"/dashboard.js\">, so it
     must be reachable at the exact path the HTML references."""
-    js_path = os.path.join(os.path.dirname(__file__), "dashboard.js")
     return send_from_directory(os.path.dirname(__file__), "dashboard.js",
                                mimetype="application/javascript")
 

@@ -37,8 +37,6 @@ keyed by (tenant, tree_size).
 
 from __future__ import annotations
 
-import hashlib
-import time
 from typing import Any
 
 import haldir_merkle as merkle

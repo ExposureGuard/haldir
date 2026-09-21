@@ -20,7 +20,6 @@ Run: python -m pytest tests/test_usage_based_caps.py -v
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import os
 import sys

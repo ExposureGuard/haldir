@@ -32,7 +32,6 @@ process restarts, no schedule fires twice for the same period.
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 from typing import Any

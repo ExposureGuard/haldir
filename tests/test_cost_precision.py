@@ -46,7 +46,6 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import api  # noqa: E402
 from haldir_watch import (  # noqa: E402
     HASH_VERSION_CURRENT,
     HASH_VERSION_FLAG_REASON,
@@ -142,7 +141,7 @@ def test_micropayments_are_recorded_exactly(db) -> None:
     w = Watch(db_path=db)
     from haldir_gate import Gate
     g = Gate(db_path=db)
-    sess = g.create_session(agent_id="payer", tenant_id="t1", scopes=["pay"])
+    g.create_session(agent_id="payer", tenant_id="t1", scopes=["pay"])
 
     for amount in MICRO:
         w.log_system_action(actor="hld_x402", action="x402.settle", tool="x402",

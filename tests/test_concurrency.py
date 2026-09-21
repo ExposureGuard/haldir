@@ -18,7 +18,6 @@ Run: python -m pytest tests/test_concurrency.py -v
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
 import threading
 import uuid

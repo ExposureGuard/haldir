@@ -17,13 +17,11 @@ import os
 import sys
 import uuid
 
-import pytest
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import api  # noqa: E402
-from haldir_vault.vault import KEY_LEN, NONCE_LEN, _seal, key_id_for  # noqa: E402
+from haldir_vault.vault import KEY_LEN, _seal, key_id_for  # noqa: E402
 
 
 def make_key(client, admin_key, scopes, name="scoped"):

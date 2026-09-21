@@ -40,7 +40,7 @@ import uuid
 
 from haldir_outbound import safe_outbound_url
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 
 # Retry policy for transient delivery failures. Exponential backoff

@@ -26,7 +26,6 @@ import argparse
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 DEMO = Path(__file__).resolve().parent

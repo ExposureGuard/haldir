@@ -5,7 +5,7 @@ Haldir integration test — runs through the full Gate → Vault → Watch pipel
 import sys
 sys.path.insert(0, '..')
 
-from haldir_gate import Gate, Permission
+from haldir_gate import Gate
 from haldir_vault import Vault
 from haldir_watch import Watch
 
