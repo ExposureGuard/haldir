@@ -138,7 +138,27 @@ def test_agent_json_lists_integration_packages(haldir_client) -> None:
         )
         entry = body["integrations"][fw]
         assert entry["package"].endswith("-haldir")
-        assert entry["version"].startswith("0.2")
+
+        # Compared against the integration's own pyproject.toml rather than a
+        # hardcoded prefix. The assertion used to require "0.2", and
+        # langchain-haldir's pyproject declares 0.1.0 — so the agent card
+        # advertised a version that does not exist and this test enforced the
+        # wrong value instead of catching the disagreement. Whichever side is
+        # authoritative, the two must say the same thing, and the pyproject is
+        # what actually gets published.
+        import pathlib as _pathlib
+        import re as _re
+
+        _py = (_pathlib.Path(__file__).resolve().parent.parent
+               / "integrations" / f"{fw}-haldir" / "pyproject.toml")
+        _declared = _re.search(r'^version = "([^"]+)"', _py.read_text(),
+                               _re.M).group(1)
+        assert entry["version"] == _declared, (
+            f"the agent card advertises {entry['package']} "
+            f"{entry['version']}, but integrations/{fw}-haldir declares "
+            f"{_declared}. An agent reading the card would look for a release "
+            f"that does not exist."
+        )
 
 
 def test_agent_json_covers_rekor_verifier(haldir_client) -> None:

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Haldir",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "description": "Identity, secrets, spend, and audit for AI agents. Every mutating POST accepts an optional Idempotency-Key header for safe retries.",
     "contact": {
       "name": "Haldir",
@@ -15,7 +15,7 @@
   },
   "servers": [
     {
-      "url": "https://api.haldir.xyz"
+      "url": "https://haldir.xyz"
     }
   ],
   "components": {

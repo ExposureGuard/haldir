@@ -96,75 +96,139 @@
          queries about the product. -->
     <script type="application/ld+json">
     {
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      "mainEntity": [
-        {
-          "@type": "Question",
-          "name": "What is Haldir?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Haldir is the cryptographic governance layer for AI agents. It sits between an agent and the tools it calls, enforcing scoped sessions, spend limits, encrypted secrets retrieval, and an RFC 6962 Merkle-tree tamper-evident audit log with Ed25519 Signed Tree Heads mirrored to Sigstore Rekor. Same cryptographic primitive Certificate Transparency uses to keep seven billion TLS certificates honest, applied to AI-agent audit logs."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "How do I add Haldir to a LangChain agent?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Two lines: 'from langchain_haldir import HaldirSession' then 'with HaldirSession.for_agent(\"bot\") as h: AgentExecutor(..., callbacks=[h.handler]).invoke({...})'. Every tool call and LLM call is audited, spend-capped, and the run's Signed Tree Head is stamped onto the output. Same pattern ships for CrewAI (crewai-haldir) and LlamaIndex (llamaindex-haldir)."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "How do I install Haldir as an MCP server in Claude Desktop, Cursor, or Windsurf?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "pip install haldir, then paste this into the client's MCP config: {\"mcpServers\": {\"haldir\": {\"command\": \"haldir\", \"args\": [\"mcp\", \"serve\"], \"env\": {\"HALDIR_API_KEY\": \"hld_...\"}}}}. 19 tools appear immediately: haldir_create_session, haldir_get_inclusion_proof, haldir_build_evidence_pack, and the rest of Haldir's governance surface."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "How do I verify an audit entry was logged and hasn't been tampered with?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Call GET /v1/audit/inclusion-proof/{entry_id}. The response includes the RFC 6962 audit path, the current Signed Tree Head, and Ed25519 signature. Verify offline with haldir.verify_inclusion_proof() and haldir.verify_sth() — no server trust required. For independent confirmation, Haldir mirrors each STH to Sigstore Rekor and exposes /v1/audit/sth-log/mirror/receipts/{uuid}/verify which cryptographically validates the receipt against Rekor's own published public key."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Can I try Haldir without signing up?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes. haldir.xyz/demo/tamper is a live adversarial demo: click Tamper, watch the Merkle tree detect a real database mutation in real time. haldir.xyz/compliance?demo=1 shows a full audit-prep evidence pack. Both are free, no auth."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "What compliance frameworks does Haldir cover?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Haldir generates signed audit-prep evidence packs relevant to SOC2 Trust Services Criteria CC5.2, CC6.1, CC6.7, CC7.2, CC7.3, and CC8.1. This is audit-prep evidence, not a SOC2 attestation itself — Haldir surfaces what an auditor asks for (controls, proofs, activity logs) so the tenant can answer quickly."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Can AI agents buy individual audit proofs from Haldir?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes, via x402 pay-per-request endpoints. Agents pay USDC on Base ($0.001 for a tree head, $0.01 for an inclusion proof, $0.10 for a full evidence pack). Manifest at /.well-known/x402.json and /v1/x402/manifest. Compatible with agentic.market and the Coinbase Bazaar discovery extension."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Where can agents discover Haldir's capabilities programmatically?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Single-entry manifest: https://haldir.xyz/.well-known/agent.json. Also: /.well-known/ai-plugin.json (OpenAI plugin format), /.well-known/mcp/mcp.json + server-card.json (MCP discovery), /.well-known/x402.json (x402 resources), /.well-known/jwks.json (Ed25519 verification key), /openapi.json (OpenAPI 3.1), /llms.txt + /llms-full.txt (LLM-native summaries), /AGENTS.md (conventions for coding agents working on this repo), /THREAT_MODEL.md (full STRIDE analysis)."
-          }
-        }
-      ]
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How do I stop an AI agent from overspending or running up a huge API bill?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Put a spending limit on the agent's session before it starts, so the cap is enforced server-side instead of trusted to the agent. In Haldir, POST /v1/sessions with a scope such as \"spend:50\" mints a session capped at $50. Every action is authorised against that budget before it runs, and the session is revoked once the cap is reached. The check and the reservation happen in one transaction, so concurrent calls cannot both spend the last dollar — that race is the specific bug this closes."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I see what my AI agent actually did?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Every action the agent takes is written to an append-only audit log you query with GET /v1/audit, filtering by session_id, agent_id, tool or flagged status. GET /v1/audit/spend returns the cost rollup for a session or agent, and GET /v1/audit/export streams the trail as CSV or JSONL with an integrity manifest attached. The log is hash-chained, so entries cannot be removed or reordered without the chain failing verification."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I prove an AI agent's audit log wasn't edited after the fact?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Use a Merkle tree rather than a database you have to trust. Haldir signs an RFC 6962 Signed Tree Head every time entries are appended, and GET /v1/audit/inclusion-proof/{entry_id} returns the audit path plus that signature. An auditor verifies it offline against the Ed25519 public key at /.well-known/jwks.json with zero trust in the server. For independent confirmation each tree head is also mirrored to Sigstore Rekor, and /v1/audit/sth-log/mirror/receipts/{uuid}/verify checks the receipt against Rekor's own published key. This is the same primitive Certificate Transparency uses to keep TLS certificates honest."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I give an AI agent an API key without exposing the secret?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Store it in a vault the agent cannot read directly. Haldir encrypts each secret with AES-256-GCM bound to its name and tenant via additional authenticated data, so a ciphertext cannot be moved to a different key without failing to decrypt. The agent presents its session ID and Haldir checks the session's scope before returning a value — an agent without the scope gets nothing, and listing secrets never returns values. This is what stops a prompt-injected agent from reading credentials it was never granted."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I limit which tools an AI agent is allowed to call?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Grant scopes at session creation and enforce them on every call. Haldir's Proxy sits in front of upstream MCP servers: the agent connects to Haldir, Haldir checks the session's scopes and any policy, then forwards. POST /v1/proxy/policies with {\"type\": \"block_tool\", \"tool\": \"...\"} denies a tool outright, and the denial is recorded in the audit log rather than silently dropped."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I require human approval before an AI agent takes a risky action?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Set a threshold instead of reviewing everything. POST /v1/approvals/rules with {\"type\": \"spend_over\", \"threshold\": 100} makes any action above $100 stop and wait. The agent's request lands in GET /v1/approvals/pending, a human approves or denies it, and both the request and the decision are written to the audit trail so the intervention itself is auditable."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I revoke an AI agent's access immediately?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "DELETE /v1/sessions/{id} revokes a session, and ?cascade=true also revokes every session it delegated to. The cascade matters: revoking an orchestrator without its children leaves subagents holding live credentials for work nobody is supervising. The dashboard's Revoke button always cascades, for that reason. Revocation takes effect on the next call — there is no cache to wait out."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I track what subagents did after an orchestrator spawned them?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Sessions form a delegation tree. Every session carries a parent_session_id, so an orchestrator and everything it spawned can be reconstructed as one run rather than as unrelated activity. GET /v1/gate/sessions?roots_only=true returns the tops of those trees for a fleet view, and nesting is capped at 8 levels so a runaway agent cannot spawn itself indefinitely. Each descendant's actions are audited under its own session and attributed back up the chain."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I add cost tracking and spend limits to a LangChain agent?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Two lines. Install langchain-haldir, then wrap the run in a session: 'from langchain_haldir import HaldirSession' and 'with HaldirSession.for_agent(\"bot\") as h:'. Every tool call and LLM call is then audit-logged, spend-capped and attributed to that session, and the run's Signed Tree Head is stamped onto the output. The callback also records the model's prompt and completion token counts for each call. Matching integrations ship for CrewAI, LlamaIndex, AutoGen and the Vercel AI SDK."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does Haldir work with LangGraph, the OpenAI Agents SDK, or my own agent loop?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes — the governance layer is a REST API, so anything that can make an HTTP call can be governed by it, including hand-written agent loops. First-party integrations ship for LangChain, CrewAI, LlamaIndex, AutoGen and the Vercel AI SDK; LangGraph runs on LangChain's callback system, so the LangChain integration applies there too. There is no framework you have to be using."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is there an MCP server for auditing and governing AI agent actions?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. 'pip install haldir' then 'haldir mcp serve' runs a stdio MCP server exposing 19 governance tools — haldir_create_session, haldir_check_permission, haldir_log_audit_action, haldir_get_inclusion_proof, haldir_build_evidence_pack and the rest. It drops into Claude Desktop, Cursor, Windsurf or any MCP client with one config entry, and 'haldir mcp config' prints the snippet to paste. There is also an HTTP JSON-RPC endpoint for clients that cannot spawn a process."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What do I give an auditor to show how AI agents were controlled?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "A signed evidence pack rather than screenshots. GET /v1/compliance/evidence returns audit-prep evidence mapped to SOC 2 Trust Services Criteria CC5.2, CC6.1, CC6.7, CC7.2, CC7.3 and CC8.1, signed so the auditor can confirm it was not altered after export. GET /v1/compliance/score gives a 0-100 readiness score with per-criterion pass, warn and fail plus remediation, and /v1/compliance/schedules delivers it on a recurring basis. This is audit-prep evidence, not a SOC 2 attestation — Haldir cannot attest on your behalf, it removes the scramble when someone asks."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I monitor cost and token usage across multiple agents?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Haldir caps and records money rather than tokens, because money is what the bill is denominated in and what a spend limit has to be set against. Every action is written to the audit log with its cost_usd, and GET /v1/audit/spend rolls that up per session or per agent, so you can see which agent is responsible for a spike. Where a framework exposes token counts, the integration records them on the same tamper-evident entry — the LangChain callback stores prompt and completion tokens per model call. GET /admin/overview shows live sessions, spend against cap, and per-agent activity in one view."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I self-host AI agent governance and audit logging?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Haldir is MIT licensed and runs on Postgres or SQLite with no external dependency — 'pip install haldir && haldir serve' is a working instance in one command, and a Dockerfile and Kubernetes manifests ship for production. Set HALDIR_BASE_URL to your own origin so the discovery documents describe your instance rather than the hosted one. The only thing that leaves your infrastructure is what you configure: the optional Sigstore Rekor mirror, and the compliance email delivery."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How can an AI agent pay for something without handing it a credit card?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Give it a budget scoped to a session rather than a payment credential. Haldir authorises payments against the session's spend cap — POST /v1/payments/authorize with the session_id and amount — so the agent can transact up to its limit and no further, and the card or wallet never reaches the agent at all. For agent-to-agent commerce, Haldir also exposes its own cryptographic proofs as x402 v2 paid resources settled in USDC on Base: an autonomous agent can buy a signed tree head for $0.001 or an inclusion proof for $0.01 with no account, no subscription and no human in the loop. The manifest is at /.well-known/x402.json."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I try it without signing up or installing anything?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. haldir.xyz/demo/tamper is a live adversarial demo: click Tamper to mutate the audit database directly, and watch the Merkle tree detect it and refuse to produce a valid proof. haldir.xyz/compliance?demo=1 shows a full evidence pack. Both are free and need no account. To run it locally instead, 'pip install haldir && haldir serve' starts an instance on your machine in one command."
+      }
     }
+  ]
+}
     </script>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">

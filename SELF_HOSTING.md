@@ -354,6 +354,36 @@ docker compose restart api
 
 Whichever you pick, the API, SDKs, and framework integrations are identical.
 
+### Tell your instance where it lives
+
+Set `HALDIR_BASE_URL` to your instance's public origin:
+
+```bash
+HALDIR_BASE_URL=https://haldir.yourcompany.com
+```
+
+Haldir serves a set of discovery documents — `/llms.txt`, `/sitemap.xml`,
+`/.well-known/agent.json`, `/.well-known/ai.txt`, `/robots.txt`, and the
+OpenAPI spec at `/openapi.json`. They exist so that **agents** can find and
+call your instance without a human reading a README first, and they name
+absolute URLs.
+
+Unset, those URLs are `https://haldir.xyz` — which is correct on the hosted
+service and wrong on yours. An agent that reads your agent card and follows
+it would send your credentials and your data to us. It would work. That is
+the problem.
+
+Setting `HALDIR_BASE_URL` makes your instance describe itself instead.
+It also sets `servers` in the OpenAPI spec, which is where a generated
+client sends every request.
+
+Leave it unset and nothing changes — the documents are served exactly as
+they ship.
+
+Set `HALDIR_BASE_URL` if you are self-hosting. It takes one line and it is
+the difference between an agent talking to you and an agent talking to your
+vendor.
+
 ---
 
 ## Community

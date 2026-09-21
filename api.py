@@ -47,11 +47,14 @@ from haldir_watch.watch import Watch
 import haldir_idempotency
 import haldir_tiers
 from haldir_logging import configure_logging, get_logger
+
+logger = get_logger(__name__)
 from haldir_metrics import registry as prom_metrics
 from haldir_validation import validate_body
 from haldir_openapi import generate_openapi
 from haldir_status import build_status
 from haldir_scopes import require_scope
+from haldir_public_url import public_base_url, rewrite_public_origin
 
 configure_logging()
 log = get_logger("haldir.api")
@@ -4996,53 +4999,83 @@ a{{color:#b8973a;text-decoration:none}}a:hover{{text-decoration:underline}}</sty
 
 # ── Agent discovery files ──
 
+def _serve_content(
+    *parts: str,
+    content_type: str = "text/plain; charset=utf-8",
+    rewrite_origin: bool = False,
+):
+    """Read a file the application serves from its own directory.
+
+    Returns 404, not 500, when it is absent. These routes do a bare open()
+    relative to the package directory, so a file that is missing produces
+    FileNotFoundError and a 500 — which is what an installed Haldir did on
+    /llms.txt, /.well-known/agent.json and /AGENTS.md, because none of this
+    content was in the wheel. A 500 says "the server is broken"; a 404 says
+    "that is not here", and only one of those is true.
+
+    The packaging bug is fixed. This makes the class of bug visible in the
+    status line instead of the traceback if it ever returns.
+
+    `rewrite_origin` repoints the absolute URLs inside the file at this
+    instance instead of at the hosted service, so a self-hosted Haldir
+    describes itself rather than its vendor. It is off by default and a
+    no-op unless HALDIR_BASE_URL is set, so the hosted deployment serves
+    these files byte-for-byte unchanged. See haldir_public_url.
+    """
+    path = os.path.join(os.path.dirname(__file__), *parts)
+    if not os.path.isfile(path):
+        logger.warning(
+            "content file missing from the installation: %s. If this is a "
+            "pip install, it was not packaged — see the wheel include list "
+            "in pyproject.toml.", os.path.join(*parts),
+        )
+        return jsonify({"error": "not found", "path": "/" + os.path.join(*parts)}), 404
+    with open(path, encoding="utf-8") as f:
+        body = f.read()
+    if rewrite_origin:
+        body = rewrite_public_origin(body)
+    return body, 200, {"Content-Type": content_type}
+
+
 @app.route("/llms.txt")
 def llms_txt():
-    p = os.path.join(os.path.dirname(__file__), "llms.txt")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return _serve_content("llms.txt", rewrite_origin=True)
 
 
 @app.route("/llms-full.txt")
 def llms_full_txt():
-    p = os.path.join(os.path.dirname(__file__), "llms-full.txt")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return _serve_content("llms-full.txt", rewrite_origin=True)
 
 
 @app.route("/robots.txt")
 def robots_txt():
-    p = os.path.join(os.path.dirname(__file__), "robots.txt")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return _serve_content("robots.txt", rewrite_origin=True)
 
 
 @app.route("/sitemap.xml")
 def sitemap_xml():
-    p = os.path.join(os.path.dirname(__file__), "sitemap.xml")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "application/xml; charset=utf-8"}
+    return _serve_content(
+        "sitemap.xml",
+        content_type="application/xml; charset=utf-8",
+        rewrite_origin=True,
+    )
 
 
 @app.route("/.well-known/security.txt")
 def security_txt():
-    p = os.path.join(os.path.dirname(__file__), ".well-known", "security.txt")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return _serve_content(".well-known", "security.txt", rewrite_origin=True)
 
 
 @app.route("/.well-known/ai.txt")
 def ai_txt():
-    p = os.path.join(os.path.dirname(__file__), ".well-known", "ai.txt")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    return _serve_content(".well-known", "ai.txt", rewrite_origin=True)
 
 
 @app.route("/.well-known/ai-plugin.json")
 def ai_plugin():
-    p = os.path.join(os.path.dirname(__file__), "ai-plugin.json")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "application/json"}
+    return _serve_content(
+        "ai-plugin.json", content_type="application/json", rewrite_origin=True,
+    )
 
 
 @app.route("/.well-known/agent.json")
@@ -5052,11 +5085,10 @@ def agent_json():
     / MCP HTTP / x402), every integration package, every trust signal,
     and where we're already listed in the ecosystem. One file, one
     fetch, complete picture."""
-    p = os.path.join(
-        os.path.dirname(__file__), ".well-known", "agent.json",
+    return _serve_content(
+        ".well-known", "agent.json",
+        content_type="application/json", rewrite_origin=True,
     )
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "application/json"}
 
 
 @app.route("/.well-known/jwks.json")
@@ -5105,9 +5137,11 @@ def agents_md():
     Claude Code, Windsurf, Devin) look for AGENTS.md at repo and site
     root for project-specific conventions. Mirror the on-disk file so
     the live site and the git tree stay in sync."""
-    p = os.path.join(os.path.dirname(__file__), "AGENTS.md")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/markdown; charset=utf-8"}
+    return _serve_content(
+        "AGENTS.md",
+        content_type="text/markdown; charset=utf-8",
+        rewrite_origin=True,
+    )
 
 
 @app.route("/THREAT_MODEL.md")
@@ -5117,9 +5151,11 @@ def threat_model_md():
     Enterprise security buyers and technical investors read this
     first; serving it at the repo + site root means there's one
     canonical version no marketing team can dilute."""
-    p = os.path.join(os.path.dirname(__file__), "THREAT_MODEL.md")
-    with open(p) as f:
-        return f.read(), 200, {"Content-Type": "text/markdown; charset=utf-8"}
+    return _serve_content(
+        "THREAT_MODEL.md",
+        content_type="text/markdown; charset=utf-8",
+        rewrite_origin=True,
+    )
 
 
 @app.route("/icon.svg")

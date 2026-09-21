@@ -10,11 +10,10 @@
     "contact_email": "sterling@getexposureguard.com"
   },
   "license": "MIT",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "homepage": "https://haldir.xyz",
   "repository": "https://github.com/ExposureGuard/haldir",
   "documentation": "https://haldir.xyz/docs",
-
   "entry_points": {
     "rest_api": {
       "base_url": "https://haldir.xyz/v1",
@@ -33,7 +32,10 @@
         "mcpServers": {
           "haldir": {
             "command": "haldir",
-            "args": ["mcp", "serve"],
+            "args": [
+              "mcp",
+              "serve"
+            ],
             "env": {
               "HALDIR_API_KEY": "hld_your_key_here",
               "HALDIR_BASE_URL": "https://haldir.xyz"
@@ -45,7 +47,9 @@
     },
     "mcp_http": {
       "endpoint": "https://haldir.xyz/mcp",
-      "authentication": {"type": "bearer"}
+      "authentication": {
+        "type": "bearer"
+      }
     },
     "x402": {
       "manifest": "https://haldir.xyz/.well-known/x402.json",
@@ -53,7 +57,6 @@
       "description": "Agents buy individual audit proofs with USDC on Base Sepolia; three paid resources live today ($0.001–$0.10 per call)."
     }
   },
-
   "capabilities": {
     "identity_and_access": [
       "Scoped agent sessions (POST /v1/sessions)",
@@ -84,12 +87,11 @@
       "Policy-enforcement proxy for MCP tool calls"
     ]
   },
-
   "integrations": {
     "python_sdk": "https://pypi.org/project/haldir",
     "langchain": {
       "package": "langchain-haldir",
-      "version": "0.2.0",
+      "version": "0.1.0",
       "adoption": "from langchain_haldir import HaldirSession"
     },
     "crewai": {
@@ -103,7 +105,6 @@
       "adoption": "from llamaindex_haldir import HaldirSession, govern_tool"
     }
   },
-
   "trust_signals": {
     "rfc_6962_merkle": true,
     "ed25519_sth": true,
@@ -116,12 +117,10 @@
     "license": "MIT",
     "open_source_repo": "https://github.com/ExposureGuard/haldir"
   },
-
   "live_demos": {
     "tamper_evidence": "https://haldir.xyz/demo/tamper",
     "compliance_pack": "https://haldir.xyz/compliance?demo=1"
   },
-
   "ecosystem": {
     "listed_in": [
       "https://github.com/bh-rat/EMERGING.md (Security & Governance section, merged via PR #55)",
@@ -132,7 +131,6 @@
       "https://github.com/coinbase/x402 (ecosystem PR #88 open)"
     ]
   },
-
   "contact_for_partnerships": "sterling@getexposureguard.com",
   "last_updated": "2026-04-21"
 }

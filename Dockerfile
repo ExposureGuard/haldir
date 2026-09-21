@@ -88,6 +88,15 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 # decides — better than a restart loop that hides the real error).
 # Set HALDIR_AUTO_MIGRATE=0 to opt out; the operator then runs
 # `python -m haldir_migrate up` in a separate job before deploy.
+#
+# --worker-tmp-dir /tmp: gunicorn otherwise creates its control socket and
+# worker heartbeat files in the working directory. The container runs as
+# uid 1000 and /app is owned by root, so that directory is read-only and
+# every boot logged
+#     [ERROR] Control server error: [Errno 13] Permission denied: '/app/.gunicorn'
+# Non-fatal — the app served traffic regardless — but a permission error
+# on every start is the kind of line that gets ignored right up until it
+# is the one that mattered. /tmp is mode 1777 in the base image.
 CMD ["sh", "-c", "\
     if [ \"${HALDIR_AUTO_MIGRATE:-1}\" = \"1\" ]; then \
         python -m haldir_migrate up || true; \
@@ -97,5 +106,6 @@ CMD ["sh", "-c", "\
         --workers ${GUNICORN_WORKERS:-1} \
         --threads ${GUNICORN_THREADS:-4} \
         --timeout 120 \
+        --worker-tmp-dir /tmp \
         --access-logfile - \
         --error-logfile -"]

@@ -3,6 +3,127 @@
 All notable changes to Haldir are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.2] — 2026-09-21
+
+The "Postgres correctness" release. Haldir's documented enterprise backend —
+the one `SELF_HOSTING.md` tells you to deploy — carried a set of bugs that were
+invisible on SQLite and live on Postgres. Eight are fixed here, including one
+that made every secret unreadable after a key rotation, and one that silently
+left the audit chain's anti-fork constraint uncreated. Provable audit is the
+central claim of this product; it now holds on the backend enterprises are
+actually told to run.
+
+### Fixed — Postgres
+
+- **Key rotation made every secret unreadable.** `_parse_blob` compared a
+  psycopg2 `memoryview` (format `'c'`) against `bytes`, so a rotated key never
+  matched. Rotation is the operation you perform *because* you care about key
+  hygiene, and it was destroying the secrets it exists to protect.
+- **The audit chain's uniqueness constraint could fail silently.** The
+  audit-seq migration raised `AttributeError` on a raw connection, so the
+  anti-fork index was never created — leaving the append-only chain forkable.
+- **`_exec` returned `execute()`'s result** — a cursor on sqlite3, `None` on
+  psycopg2 — which concealed the failure above instead of surfacing it.
+- **A failed catalogue probe aborted the transaction**, so every later
+  statement in the same block failed for an unrelated reason.
+- **Money was a 4-byte `REAL`.** `REAL` means different things on the two
+  backends; 1234.56 round-tripped as 1234.56005859375.
+- **`PgConnectionWrapper` had no `rollback`**, so the audit append's retry
+  path raised instead of retrying.
+- **A pooled connection was returned with a transaction still open.**
+- **Pool exhaustion destroyed in-flight connections instead of waiting**, and
+  schema init took an exclusive lock on every start with no timeout — two
+  ways a busy or freshly-restarted instance could wedge itself.
+
+### Fixed — Packaging
+
+- **The wheel shipped no application content.** An installed Haldir answered
+  500 on `/llms.txt`, the agent card, `/AGENTS.md`, `/robots.txt`,
+  `/sitemap.xml`, the docs, the blog and the demo — the whole discovery
+  surface, which is how an agent or a registry works out that Haldir exists.
+- **The wheel is built from the sdist, and the sdist listed three modules.**
+  Fixing the wheel's include list twice changed nothing for that reason.
+  `tests/test_packaging.py` now asserts every entry-point module is present.
+- **Gunicorn had nowhere to write its control socket** in the container image.
+
+### Added
+
+- **`haldir serve`** — a working instance in one command, no Docker and no
+  account. The previous first-run path required both before showing anything.
+- **`haldir top`** — a live fleet console in the terminal, pure stdlib.
+- **Monitoring console at `/admin/overview`** — which agent is doing what:
+  sessions, spend against cap, live activity, flag reasons, and a revoke that
+  cascades to subagents.
+- **Usage-based billing.** One plan table (`haldir_tiers.py`) that every
+  surface derives from, replacing five copies that had drifted to three
+  different answers — $99/25 agents on the marketing site, $49/10 in the
+  product. Caps bill rather than block, and the meter counts API calls.
+- **Vault key rotation** without re-entering secrets.
+- **An invariant suite** asserting the three core claims — spend cap, audit
+  chain, vault binding — as properties under concurrency, not as examples.
+
+### Security
+
+- **A webhook URL could read local files and reach the internal network.**
+  Outbound webhook delivery now rejects non-public destinations.
+- **Cost was recorded at cent precision**, so x402 micropayments were logged
+  as `$0.00`.
+
+### Changed
+
+- **CI now exercises the Postgres path.** It previously never did, on any
+  pull request. Three things kept that invisible: stacked PRs matched no
+  workflow at all (the trigger filtered on the PR's base branch, `main`); no
+  job set `timeout-minutes`, so a hung run was cancelled by the next push and
+  reported no verdict; and pytest's output capture meant the CI log held zero
+  application log lines while an `AttributeError` printed for hours and the
+  failure was attributed to database locks.
+- **`haldir login` survives an environment with no TTY.**
+
+## [0.3.1] — 2026-09-20
+
+The "provable retention" release. Audit entries can now be pruned without
+weakening the integrity claim, administrative actions join the same hash
+chain as everything else, and the Postgres path runs in CI for the first time
+— which immediately surfaced two Postgres-only bugs that had been shipped in
+every prior release.
+
+### Added
+
+- **Retention windows**, with pruning that stays provable. Deleting history
+  from an append-only log normally voids the evidence; the tree is rebuilt so
+  the surviving entries still verify.
+- **Administrative actions are audited** in the same hash chain as agent
+  actions, so an operator's intervention is as accountable as the agent's.
+- **Agent delegation hierarchy**, with spawn events recorded in the
+  tamper-evident chain — revoking an orchestrator reaches the agents it
+  created.
+
+### Fixed
+
+- **The compliance evidence digest changed just because you read it**, so two
+  reads of identical evidence produced different digests.
+- **Two Postgres-only bugs**, one of them silent, caught by the new CI job.
+- **The published wheel could not be started.** Hatchling's `packages` is a
+  shorthand that replaces `include`, so three top-level modules were dropped —
+  the `haldir` console script, the `haldir-mcp` entry point, and the database
+  layer both import. Nobody who ran `pip install haldir` could start the CLI.
+- **The `haldir_*.py` glob** built a correct wheel locally and a wheel missing
+  `haldir_logging.py` and `haldir_tracing.py` in CI. The module list is now
+  explicit and asserted.
+- **The cloud dashboard's data panels never loaded.**
+- **CI had been red long enough to stop being read**: environment gaps, a
+  hand-maintained test file list that omitted most of the suite, and a backlog
+  of mypy errors.
+
+### Changed
+
+- **One MCP tool catalog on every surface** — stdio and HTTP had drifted.
+- **Dependencies bounded**, with one manifest shared by dev and CI.
+- **`.pyc` bytecode untracked**; committed bytecode had been shadowing source.
+- **README and demo gallery rebuilt** around the tamper demo, with reproducible
+  screenshot capture.
+
 ## [0.3.0] — 2026-04-19
 
 The "production-grade platform" release. Eighteen feature commits fill in

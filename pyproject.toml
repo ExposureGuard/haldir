@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "haldir"
-version = "0.3.1"
+version = "0.3.2"
 description = "The guardian layer for AI agents — scoped sessions, AES-256-GCM secrets, hash-chained audit, policy proxy."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -133,6 +133,7 @@ include = [
     "haldir_metrics.py",
     "haldir_migrate.py",
     "haldir_openapi.py",
+    "haldir_public_url.py",
     "haldir_outbound.py",
     "haldir_rekor_verify.py",
     "haldir_retention.py",
@@ -153,6 +154,39 @@ include = [
     # The two entry-point modules that do not carry the prefix.
     "cli.py",
     "api.py",
+    # ── Content the app serves from disk ──
+    #
+    # The HTTP routes read these with a bare open() relative to the package
+    # directory, so they are part of the product, not documentation: without
+    # them an installed copy answers 500 on /llms.txt, /.well-known/agent.json,
+    # /AGENTS.md, /robots.txt, /sitemap.xml, the docs, the blog and the demo.
+    # That is the same failure as 0.3.0 shipping four modules of twenty-seven —
+    # files that exist in the checkout and nowhere a user gets them.
+    #
+    # It matters most for the discovery surface: those files are how an agent
+    # or a registry works out that Haldir exists. An installed Haldir was
+    # invisible to exactly the audience it is built for.
+    "llms.txt",
+    "llms-full.txt",
+    "robots.txt",
+    "sitemap.xml",
+    "ai-plugin.json",
+    "AGENTS.md",
+    "THREAT_MODEL.md",
+    "SECURITY.md",
+    "HOW_IT_WORKS.md",
+    "SELF_HOSTING.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "dashboard.html",
+    "demo_gallery.html",
+    "quickstart.html",
+    ".well-known",
+    "landing",
+    "blog",
+    "demo",
+    "docs",
+
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -187,6 +221,7 @@ include = [
     "haldir_metrics.py",
     "haldir_migrate.py",
     "haldir_openapi.py",
+    "haldir_public_url.py",
     "haldir_outbound.py",
     "haldir_rekor_verify.py",
     "haldir_retention.py",
@@ -207,4 +242,37 @@ include = [
     "api.py",
     "README.md",
     "pyproject.toml",
+    # ── Content the app serves from disk ──
+    #
+    # The HTTP routes read these with a bare open() relative to the package
+    # directory, so they are part of the product, not documentation: without
+    # them an installed copy answers 500 on /llms.txt, /.well-known/agent.json,
+    # /AGENTS.md, /robots.txt, /sitemap.xml, the docs, the blog and the demo.
+    # That is the same failure as 0.3.0 shipping four modules of twenty-seven —
+    # files that exist in the checkout and nowhere a user gets them.
+    #
+    # It matters most for the discovery surface: those files are how an agent
+    # or a registry works out that Haldir exists. An installed Haldir was
+    # invisible to exactly the audience it is built for.
+    "llms.txt",
+    "llms-full.txt",
+    "robots.txt",
+    "sitemap.xml",
+    "ai-plugin.json",
+    "AGENTS.md",
+    "THREAT_MODEL.md",
+    "SECURITY.md",
+    "HOW_IT_WORKS.md",
+    "SELF_HOSTING.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "dashboard.html",
+    "demo_gallery.html",
+    "quickstart.html",
+    ".well-known",
+    "landing",
+    "blog",
+    "demo",
+    "docs",
+
 ]
