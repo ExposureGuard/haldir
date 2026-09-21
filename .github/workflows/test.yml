@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   mypy:
-    name: mypy (type check)
+    name: lint (types + dead code)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -34,6 +34,12 @@ jobs:
 
       - name: Type-check
         run: mypy --config-file mypy.ini
+
+      - name: Lint (dead code, undefined names)
+        # Correctness only, configured in .flake8 — read the comment there for
+        # why the style codes are excluded on purpose. The tree is clean on
+        # these codes, so anything reported here is new.
+        run: flake8
 
   pytest:
     name: pytest (Python ${{ matrix.python-version }})
