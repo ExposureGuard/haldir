@@ -115,6 +115,7 @@ Security = "https://github.com/ExposureGuard/haldir/blob/main/SECURITY.md"
 # property that actually matters: a module added without being listed here
 # breaks the build rather than the installed package.
 include = [
+    "haldir.py",
     "haldir_admin.py",
     "haldir_audit_tree.py",
     "haldir_compliance.py",
@@ -203,6 +204,7 @@ include = [
 # It also matters on its own: an sdist that cannot build a complete wheel is
 # broken for anyone installing from source rather than from a wheel.
 include = [
+    "haldir.py",
     "haldir_admin.py",
     "haldir_audit_tree.py",
     "haldir_compliance.py",
