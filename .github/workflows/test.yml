@@ -98,6 +98,53 @@ jobs:
           # Set in repo Settings → Secrets → Actions if you have one.
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  integrations:
+    name: integrations (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # One framework shipping a breaking release should not hide whether the
+      # other two still work.
+      fail-fast: false
+      matrix:
+        include:
+          - package: langchain-haldir
+            path: integrations/langchain-haldir
+          - package: crewai-haldir
+            path: integrations/crewai-haldir
+          - package: llamaindex-haldir
+            path: integrations/llamaindex-haldir
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install haldir from this checkout
+        # Deliberately the local tree rather than PyPI. These suites exist to
+        # prove the "two lines of code" promise in each framework's README, so
+        # the failure worth catching is a change *here* breaking them — which
+        # installing the published release would hide until after a release.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Install the integration and its test deps
+        # These suites already existed and passed; nothing ever ran them. CI
+        # ran the root tests/ only, and nothing installed integrations/*.
+        #
+        # crewai and llamaindex declare no `test` extra, so the test deps are
+        # named here rather than read from package metadata.
+        run: pip install -e "${{ matrix.path }}" pytest pytest-asyncio
+
+      - name: Run the integration suite
+        run: pytest "${{ matrix.path }}/tests" -q
+
   postgres:
     name: pytest (Postgres)
     runs-on: ubuntu-latest
