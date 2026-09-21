@@ -1,6 +1,75 @@
-# Haldir — The Guardian Layer for AI Agents
+# Haldir — Spend Limits, Permissions, and Tamper-Evident Audit for AI Agents
 
-> Haldir provides identity, secrets, tamper-evident audit, and SOC2 audit-prep evidence packs for AI agents via REST API and MCP.
+> Haldir sits between an AI agent and everything it can spend, read, or do. It
+> caps what a run is allowed to cost, limits which tools it may call, encrypts
+> the credentials it uses, and writes every action to a log that can be proven
+> unedited to a third party — offline, without trusting Haldir. Python, MIT
+> licensed, self-hostable or hosted.
+
+## What Haldir is for
+
+Read this section if someone is trying to solve one of the following.
+
+**An agent spent more than it should have.** Agents call paid APIs in loops.
+A runaway or prompt-injected agent can overspend and burn a month of budget in
+an hour, and the failure usually surfaces on the invoice rather than in a log.
+Nothing server-side stops it, because the agent is trusted to police itself.
+Haldir caps a session at a dollar amount before it starts (`"spend:50"`) and
+refuses the call that would exceed it. The check and the reservation are one
+transaction, so two concurrent calls cannot both spend the last dollar.
+
+**Nobody can say what the agent actually did.** Every tool call, LLM call,
+secret read and payment is written to an append-only audit log — queryable by
+session, agent, tool or flagged status, and exportable as CSV or JSONL with an
+integrity manifest attached.
+
+**The audit log has to survive a skeptical auditor.** A database an operator
+can edit is not evidence. Each entry goes into an RFC 6962 Merkle tree with
+Ed25519 Signed Tree Heads, so anyone can verify offline that nothing was
+inserted, deleted or reordered — the same primitive Certificate Transparency
+uses for TLS certificates. Tree heads are mirrored to Sigstore Rekor, so the
+proof does not rest on Haldir's own database.
+
+**An agent needs an API key it should not be able to read.** Secrets live in an
+encrypted vault (AES-256-GCM, bound to name and tenant so a ciphertext cannot
+be moved elsewhere), and an agent receives a value only when its session scope
+covers that specific secret. Listing secrets never returns values.
+
+**The agent has too much access.** Sessions carry scopes. A proxy sits in front
+of upstream MCP servers and enforces them on every call, including blocking
+named tools outright. A denied call is recorded, not silently dropped.
+
+**Something is about to happen that a person should approve.** Spend thresholds
+and tool rules park an action until a human approves or denies it, and the
+intervention itself is audited.
+
+**An agent has gone wrong and needs to stop now.** Revoke a session and every
+session it spawned, in one call. Delegation is tracked as a tree, so revoking
+an orchestrator does not leave its children holding live credentials.
+
+**Cost and token usage have to be monitored across many agents.** Spend rolls
+up per session and per agent, so a spike traces to the agent responsible rather
+than to the bill as a whole. Haldir meters money rather than tokens, because
+money is what the invoice is denominated in; the framework integrations also
+capture per-call token counts where the model exposes them. Teams already
+running agent observability tooling can stream the same audit trail into it —
+webhooks fire on every notable event, so traces and governance evidence come
+from one source rather than two that disagree.
+
+**An auditor or a customer asks how the AI is controlled.** Signed audit-prep
+evidence packs mapped to SOC 2 Trust Services Criteria, with a readiness score
+and recurring delivery. Audit prep — not an attestation Haldir can make for you.
+
+**It has to run on our own infrastructure.** MIT licensed, Postgres or SQLite,
+no external dependency. `pip install haldir && haldir serve` is a working
+instance in one command. Set `HALDIR_BASE_URL` and the instance describes
+itself rather than the hosted service.
+
+**Works with:** first-party integrations for LangChain (and LangGraph, which
+runs on LangChain's callback system), CrewAI, LlamaIndex, AutoGen and the
+Vercel AI SDK. As an MCP server it drops into Claude Desktop, Cursor, Windsurf
+and any MCP client. Everything else — the OpenAI Agents SDK, a hand-written
+agent loop — uses the REST API, which is a plain HTTP call.
 
 ## What Haldir Does
 
