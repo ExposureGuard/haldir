@@ -109,14 +109,26 @@ class HaldirClient:
         self,
         agent_id: str,
         scopes: Optional[list[str]] = None,
-        ttl: int = 3600,
+        ttl: Optional[int] = None,
         spend_limit: Optional[float] = None,
     ) -> dict:
         """Create an agent session with the given scopes and spend limit.
 
+        `ttl` is omitted from the request when it is not given, rather than
+        sent as `null`. The server rejects an explicit null for it — "expected
+        int, got NoneType" — while treating an absent key as "use the
+        default", so passing None through meant a guaranteed 400. That is not
+        hypothetical: `crewai-haldir` and `autogen-haldir` both default
+        `ttl=None` and forward it, so every documented quickstart for those
+        two integrations failed on the first call.
+
         Returns a dict with session_id, agent_id, scopes, spend_limit, expires_at, ttl.
         """
-        payload: dict[str, Any] = {"agent_id": agent_id, "ttl": ttl}
+        payload: dict[str, Any] = {"agent_id": agent_id}
+        # Every optional field is guarded the same way. `ttl` used to be the
+        # exception, which is exactly how it came to be the broken one.
+        if ttl is not None:
+            payload["ttl"] = ttl
         if scopes is not None:
             payload["scopes"] = scopes
         if spend_limit is not None:
@@ -346,11 +358,17 @@ class HaldirAsyncClient:
         self,
         agent_id: str,
         scopes: Optional[list[str]] = None,
-        ttl: int = 3600,
+        ttl: Optional[int] = None,
         spend_limit: Optional[float] = None,
     ) -> dict:
-        """Create an agent session with the given scopes and spend limit."""
-        payload: dict[str, Any] = {"agent_id": agent_id, "ttl": ttl}
+        """Create an agent session with the given scopes and spend limit.
+
+        Same omission rule as the sync client — see the note there on why an
+        explicit `"ttl": null` is a guaranteed 400.
+        """
+        payload: dict[str, Any] = {"agent_id": agent_id}
+        if ttl is not None:
+            payload["ttl"] = ttl
         if scopes is not None:
             payload["scopes"] = scopes
         if spend_limit is not None:

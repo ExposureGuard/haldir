@@ -326,5 +326,91 @@ class TestAsyncClient:
         asyncio.run(run())
 
 
+# ── The payload the SDK actually sends ───────────────────────────────
+
+def _capturing_sync_client():
+    """An SDK client whose transport records each request body.
+
+    Built on a real httpx transport rather than by replacing `_request`, so
+    the test observes the payload *after serialization* — which is where
+    `"ttl": null` actually went out on the wire.
+    """
+    import json as _json
+
+    import httpx
+
+    from sdk.client import HaldirClient
+
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(_json.loads(request.content) if request.content else {})
+        return httpx.Response(200, json={"session_id": "ses_probe"})
+
+    h = HaldirClient(api_key="hld_probe", base_url="http://probe.test")
+    h._client = httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="http://probe.test",
+    )
+    return h, seen
+
+
+def test_create_session_omits_ttl_rather_than_sending_null() -> None:
+    """An omitted optional field must be absent from the body, not null.
+
+    `ttl` was the one optional field the SDK did not guard, so it always went
+    out — as `null` when the caller had no opinion. The server rejects an
+    explicit null ("expected int, got NoneType") while reading an absent key
+    as "use the default", so the two spellings of "no preference" behaved
+    differently and one of them was a 400.
+
+    That was not theoretical: `crewai-haldir` and `autogen-haldir` both
+    default `ttl=None` and forward it, so every documented quickstart for
+    those two integrations failed on its first call. Their tests mock
+    `HaldirClient`, so nothing had ever looked at a real payload.
+    """
+    h, seen = _capturing_sync_client()
+
+    # The defect itself: an explicit None reached the wire as JSON null. This
+    # is the assertion that fails on the unfixed SDK — with "sent as None".
+    h.create_session("agent", ttl=None)
+    assert "ttl" not in seen[0], (
+        f"ttl=None was sent as {seen[0].get('ttl')!r}; it must be absent so "
+        f"the server applies its default rather than rejecting the null"
+    )
+
+    # An explicit value still travels.
+    h.create_session("agent", ttl=120)
+    assert seen[1]["ttl"] == 120
+
+    # And the other optional fields keep their existing behaviour.
+    h.create_session("agent", scopes=["read"], spend_limit=5.0)
+    assert seen[2]["scopes"] == ["read"]
+    assert seen[2]["spend_limit"] == 5.0
+
+
+def test_the_payload_the_sdk_builds_is_one_the_api_accepts(
+    haldir_client, bootstrap_key
+) -> None:
+    """The two halves together.
+
+    The test above pins what the SDK sends; this sends that exact body to the
+    real route, so the pair fails if either side moves. Uses the shared
+    fixtures rather than minting a key — `POST /v1/keys` is not reliably
+    available on the long-lived test database, and a guard that skips is not
+    a guard.
+    """
+    h, seen = _capturing_sync_client()
+    h.create_session("sdk-payload-probe", ttl=None)
+    assert "ttl" not in seen[0]
+
+    r = haldir_client.post(
+        "/v1/sessions", json=seen[0],
+        headers={"Authorization": f"Bearer {bootstrap_key}"},
+    )
+    assert r.status_code == 201, (
+        f"the SDK's own payload was rejected by the API: {r.status_code} {r.data}"
+    )
+
+
 # No teardown: this module shares conftest's session database, so there is
 # nothing of its own to clean up. See the note at the top of the file.
