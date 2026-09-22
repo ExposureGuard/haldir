@@ -373,7 +373,14 @@ class WebhookManager:
             )
             if not _is_retriable(status_code,
                                  Exception(err) if err else None):
-                self._mark_success(wh)
+                # A permanent failure: a revoked receiver token, a deleted
+                # endpoint, a URL that was never right. It is not retried —
+                # and it is not a delivery either. This called
+                # `_mark_success`, so an endpoint answering 404 to everything
+                # showed a rising fire_count and a fail_count of zero. That is
+                # the one signal an operator has for "this webhook is dead",
+                # and it read as healthy.
+                self._mark_failure(wh)
                 return
             if attempt < MAX_DELIVERY_ATTEMPTS:
                 sleep(BACKOFF_BASE_SECONDS * (BACKOFF_FACTOR ** (attempt - 1)))
@@ -473,18 +480,22 @@ class WebhookManager:
             conn.close()
 
     def _mark_failure(self, wh: WebhookConfig) -> None:
+        # `last_fired` is the last *attempt*, so it moves here as well. Leaving
+        # it untouched made a webhook that has never once succeeded look like
+        # one that has never fired.
+        wh.last_fired = time.time()
         wh.fail_count += 1
         conn = self._get_db()
         if conn:
             if wh.webhook_id:
                 conn.execute(
-                    "UPDATE webhooks SET fail_count = ? WHERE id = ?",
-                    (wh.fail_count, wh.webhook_id),
+                    "UPDATE webhooks SET last_fired = ?, fail_count = ? WHERE id = ?",
+                    (wh.last_fired, wh.fail_count, wh.webhook_id),
                 )
             else:
                 conn.execute(
-                    "UPDATE webhooks SET fail_count = ? WHERE url = ?",
-                    (wh.fail_count, wh.url),
+                    "UPDATE webhooks SET last_fired = ?, fail_count = ? WHERE url = ?",
+                    (wh.last_fired, wh.fail_count, wh.url),
                 )
             conn.commit()
             conn.close()

@@ -167,6 +167,36 @@ def test_4xx_is_not_retried(receiver, manager) -> None:
     assert len(rec.received) == 1
 
 
+def test_a_permanent_failure_is_counted_as_a_failure(receiver, manager) -> None:
+    """Not retried, and not a delivery either.
+
+    The permanent-failure branch called `_mark_success`, which bumps
+    `fire_count` and never `fail_count`. An endpoint answering 404 to
+    everything — a revoked receiver token, a deleted route, a URL that was
+    never right — therefore showed a rising delivery count and zero failures.
+    That is the one signal an operator has for "this webhook is dead", and it
+    reported the opposite.
+
+    Asserted against the counters rather than the response code, because the
+    response was never the problem: the delivery was correctly made and
+    correctly not retried. It was the bookkeeping that lied.
+    """
+    rec, url = receiver
+    rec.status_queue = [404]
+    wh = manager.register(url=url, events=["all"])
+    manager.fire("anomaly", {"agent": "a"})
+    _wait_until(lambda: len(rec.received) >= 1, timeout_s=15)
+    time.sleep(0.5)   # let the counter write land
+
+    listed = next(w for w in manager.list_webhooks() if w["url"] == wh.url)
+    assert listed["fail_count"] == 1, (
+        f"a permanently failing endpoint was not counted as failing: {listed}"
+    )
+    assert listed["fire_count"] == 0, (
+        f"a permanently failing endpoint was counted as delivered: {listed}"
+    )
+
+
 def test_gives_up_after_max_attempts(receiver, manager) -> None:
     rec, url = receiver
     rec.status_queue = [500] * (MAX_DELIVERY_ATTEMPTS + 2)
