@@ -441,29 +441,34 @@ class WebhookManager:
             duration_ms = int((time.time() - started) * 1000)
             return (0, "", f"{type(e).__name__}: {e}", duration_ms)
 
-    @staticmethod
-    def _row_selector(wh: WebhookConfig) -> tuple[str, tuple]:
-        """Address one endpoint's row.
-
-        By id when it has one — matching on `url` meant two tenants that
-        registered the same URL (a shared Slack receiver, say) shared a
-        single set of counters, so one tenant's failures showed up in the
-        other's dashboard.
-        """
-        if wh.webhook_id:
-            return "id = ?", (wh.webhook_id,)
-        return "url = ?", (wh.url,)
+    # Counters address one endpoint's row.
+    #
+    # By id when it has one. Matching on `url` meant two tenants that
+    # registered the same endpoint — a shared Slack receiver, say — shared a
+    # single set of counters, so one tenant's failures surfaced on the
+    # other's dashboard.
+    #
+    # The two statements are written out rather than assembled from a clause
+    # and interpolated. Assembling them is what bandit's B608
+    # (string-built SQL) flags, and the gate is right to: the safe form costs
+    # four lines and removes the question. The values were always bound
+    # parameters; only the fixed text was interpolated.
 
     def _mark_success(self, wh: WebhookConfig) -> None:
         wh.last_fired = time.time()
         wh.fire_count += 1
         conn = self._get_db()
         if conn:
-            where, params = self._row_selector(wh)
-            conn.execute(
-                f"UPDATE webhooks SET last_fired = ?, fire_count = ? WHERE {where}",
-                (wh.last_fired, wh.fire_count, *params),
-            )
+            if wh.webhook_id:
+                conn.execute(
+                    "UPDATE webhooks SET last_fired = ?, fire_count = ? WHERE id = ?",
+                    (wh.last_fired, wh.fire_count, wh.webhook_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE webhooks SET last_fired = ?, fire_count = ? WHERE url = ?",
+                    (wh.last_fired, wh.fire_count, wh.url),
+                )
             conn.commit()
             conn.close()
 
@@ -471,11 +476,16 @@ class WebhookManager:
         wh.fail_count += 1
         conn = self._get_db()
         if conn:
-            where, params = self._row_selector(wh)
-            conn.execute(
-                f"UPDATE webhooks SET fail_count = ? WHERE {where}",
-                (wh.fail_count, *params),
-            )
+            if wh.webhook_id:
+                conn.execute(
+                    "UPDATE webhooks SET fail_count = ? WHERE id = ?",
+                    (wh.fail_count, wh.webhook_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE webhooks SET fail_count = ? WHERE url = ?",
+                    (wh.fail_count, wh.url),
+                )
             conn.commit()
             conn.close()
 
