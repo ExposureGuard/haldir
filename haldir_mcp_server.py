@@ -379,17 +379,30 @@ TOOLS: list[dict[str, Any]] = [
         "name": "haldir_get_approval_status",
         "description": (
             "Check the current status of an approval request. Takes the "
-            "request_id that haldir_request_approval returned — the route "
-            "returns `request_id`, so calling it `approval_id` here made the "
-            "caller translate between two names for one value."
+            "request_id that haldir_request_approval returned. `approval_id` "
+            "is accepted as an alias for callers written against the old name."
         ),
         "inputSchema": {
             "type": "object",
-            "required": ["request_id"],
-            "properties": {"request_id": {"type": "string"}},
+            # Neither is `required`: demanding `request_id` would reject the
+            # alias at schema validation, before the handler could honour it.
+            "properties": {
+                "request_id": {"type": "string"},
+                "approval_id": {
+                    "type": "string",
+                    "description": "Deprecated alias for request_id.",
+                },
+            },
         },
+        # Both names, deliberately. `approval_id` was the documented name and
+        # it *worked* — it is interpolated into the path below, so it is not a
+        # no-op that could be dropped. Renaming it outright turned every
+        # existing caller into `KeyError: 'request_id'`, which call_tool's
+        # broad except reports as an opaque dispatch_error rather than as a
+        # rename. Found by an independent review of this change.
         "handler": lambda args: _call(
-            "GET", f"/v1/approvals/{args['request_id']}",
+            "GET",
+            "/v1/approvals/" + (args.get("request_id") or args.get("approval_id") or ""),
         ),
     },
 

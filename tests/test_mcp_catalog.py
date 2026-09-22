@@ -106,6 +106,22 @@ def test_docs_do_not_advertise_retired_camel_case_names(doc: str) -> None:
 
 # ── A tool's arguments must name what the route reads ────────────────
 
+def _body_keys_the_route_reads(handler: str) -> set[str]:
+    """The JSON body keys the named handler in api.py actually reads.
+
+    Read from the source rather than restated here. An earlier version of the
+    test below hardcoded the names, which meant it would have stayed green
+    while the route side moved on — the exact failure it exists to catch.
+    """
+    src = _read("api.py")
+    start = src.find(f"def {handler}(")
+    assert start >= 0, f"api.py has no handler named {handler!r}"
+    tail = src[start:]
+    nxt = re.search(r"\n(?=@app\.route|def |class )", tail[10:])
+    body = tail[: nxt.start() + 10] if nxt else tail[:3000]
+    return set(re.findall(r'data\.get\(\s*"([^"]+)"', body))
+
+
 def test_the_approval_tools_name_what_the_route_reads() -> None:
     """A tool's arguments are sent verbatim as the request body, so a name the
     route does not read is an argument that silently does nothing.
@@ -115,30 +131,43 @@ def test_the_approval_tools_name_what_the_route_reads() -> None:
     validated, and was then discarded — every approval got the 3600s default
     whatever the caller asked for, and nothing reported the difference.
 
-    `haldir_get_approval_status` then asked for `approval_id` while the create
-    call returns `request_id`: one value under two names, with the caller left
-    to work out that they were the same thing.
-
-    Neither is visible from either side alone, which is why neither was
-    caught. This is the comparison that was missing.
+    Neither side looks wrong alone, which is why it went unnoticed. This
+    compares them, and reads the route half from the source so that a rename
+    there fails here instead of being pinned by a literal on this side.
     """
     tools = {t["name"]: t for t in TOOLS}
+    reads = _body_keys_the_route_reads("request_approval")
 
     props = set(tools["haldir_request_approval"]["inputSchema"]["properties"])
-    assert "ttl" in props, (
-        "POST /v1/approvals/request reads `ttl`; under any other name the "
-        f"argument is accepted and ignored. Schema has: {sorted(props)}"
+    unknown = sorted(props - reads)
+    assert not unknown, (
+        f"haldir_request_approval declares {unknown}, and POST "
+        f"/v1/approvals/request never reads those — the argument is accepted "
+        f"and then discarded. The route reads: {sorted(reads)}"
     )
-    assert "expires_in_s" not in props, (
-        "`expires_in_s` is not read by the route, so it would be silently "
-        "discarded again"
+    assert "ttl" in props, (
+        "the route's expiry parameter is not declared, so a caller cannot set it"
     )
 
+
+def test_the_approval_status_tool_accepts_the_name_the_create_call_returns() -> None:
+    """`haldir_request_approval` returns `request_id`, so the status tool must
+    accept that name — otherwise the caller translates between two names for
+    one value.
+
+    `approval_id` is kept as an alias. It was the documented name and it
+    *worked*: it is interpolated into the request path, so removing it breaks
+    existing callers rather than tidying anything. Found by an independent
+    review after an earlier version of this change dropped it outright.
+    """
+    tools = {t["name"]: t for t in TOOLS}
     props = set(tools["haldir_get_approval_status"]["inputSchema"]["properties"])
-    assert props == {"request_id"}, (
-        "haldir_request_approval returns `request_id`; the status tool must "
-        "take the same name rather than one the caller has to translate: "
-        f"{sorted(props)}"
+    assert "request_id" in props, (
+        f"the create call returns `request_id`; the status tool must accept "
+        f"it: {sorted(props)}"
+    )
+    assert "approval_id" in props, (
+        "the previous name must keep working — it was not a no-op"
     )
 
 
