@@ -43,7 +43,7 @@
           }
         }
       },
-      "tool_count": 18
+      "tool_count": 19
     },
     "mcp_http": {
       "endpoint": "https://haldir.xyz/mcp",

@@ -138,4 +138,46 @@
     <priority>0.85</priority>
   </url>
 
+  <!-- ── The rest of the posts ─────────────────────────────────────
+       Six of the eight were absent. Every one serves at /blog/<slug>
+       (the index enumerates blog/*.md and the post route reads the same
+       directory), so a sitemap listing two of them under-represented the
+       blog by a factor of four to anything that reads it — which, for a
+       file whose header says it is "optimised for agent / LLM crawlers",
+       is the audience it exists for. -->
+
+  <!-- Thought leadership: the ones that explain why the product exists. -->
+  <url>
+    <loc>https://haldir.xyz/blog/why-ai-agents-need-governance</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/blog/human-in-the-loop-ai-agents</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/blog/mcp-proxy-mode-explained</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Framework integration guides. -->
+  <url>
+    <loc>https://haldir.xyz/blog/haldir-langchain-integration</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.75</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/blog/haldir-crewai-integration</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.75</priority>
+  </url>
+  <url>
+    <loc>https://haldir.xyz/blog/haldir-autogen-integration</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.75</priority>
+  </url>
+
 </urlset>

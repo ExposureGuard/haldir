@@ -346,6 +346,37 @@ def test_llms_txt_links_resolve_locally(haldir_client) -> None:
         )
 
 
+def test_every_blog_post_is_in_the_sitemap() -> None:
+    """The sitemap listed two of the eight posts.
+
+    It is a curated priority list rather than an enumeration, so a gap is not
+    a broken link — but a post absent from it is one a crawler has to find
+    some other way, and the file's own header says it exists for "agent / LLM
+    crawlers". Six were missing, including the three integration guides that
+    the distribution plan leans on.
+
+    Derived from the directory the `/blog/<slug>` route reads, so a new post
+    fails here until it is listed rather than being silently absent.
+    """
+    import os as _os
+
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    posts = sorted(
+        f[:-3] for f in _os.listdir(_os.path.join(root, "blog"))
+        if f.endswith(".md") and f != "index.md"
+    )
+    assert posts, "no blog posts found — this test has stopped being meaningful"
+
+    with open(_os.path.join(root, "sitemap.xml"), encoding="utf-8") as fh:
+        sitemap = fh.read()
+
+    missing = [p for p in posts if f"/blog/{p}" not in sitemap]
+    assert not missing, (
+        f"these posts exist and serve at /blog/<slug> but are not in the "
+        f"sitemap, so a crawler has no path to them: {missing}"
+    )
+
+
 def test_landing_page_has_jsonld_with_tamper_evidence(haldir_client) -> None:
     """The SoftwareApplication JSON-LD block on the landing page must
     include the Merkle / tamper-evidence featureList so Google and
