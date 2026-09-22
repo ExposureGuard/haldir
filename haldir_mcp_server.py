@@ -346,18 +346,29 @@ TOOLS: list[dict[str, Any]] = [
         "name": "haldir_request_approval",
         "description": (
             "Request human-in-the-loop approval for a risky action. "
-            "Returns an approval_id; poll or webhook until status "
-            "becomes 'approved' or 'denied'."
+            "Returns a request_id; pass that to haldir_get_approval_status, "
+            "or wait for a webhook, until the status becomes 'approved' "
+            "or 'denied'."
         ),
         "inputSchema": {
             "type": "object",
             "required": ["session_id", "action", "reason"],
             "properties": {
-                "session_id":    {"type": "string"},
-                "action":        {"type": "string"},
-                "reason":        {"type": "string"},
-                "details":       {"type": "object"},
-                "expires_in_s":  {"type": "integer", "default": 3600},
+                "session_id": {"type": "string"},
+                "action":     {"type": "string"},
+                "reason":     {"type": "string"},
+                "details":    {"type": "object"},
+                # Named `ttl`, not `expires_in_s`. This dict is sent verbatim
+                # as the JSON body of POST /v1/approvals/request, and that
+                # route reads `ttl`. Under the old name the argument was
+                # advertised, accepted, and then silently discarded: every
+                # approval got the 3600s default regardless of what the caller
+                # asked for, and nothing reported the difference.
+                "ttl": {
+                    "type": "integer",
+                    "default": 3600,
+                    "description": "Seconds until the request expires.",
+                },
             },
         },
         "handler": lambda args: _call(
@@ -366,14 +377,19 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "haldir_get_approval_status",
-        "description": "Check the current status of an approval request.",
+        "description": (
+            "Check the current status of an approval request. Takes the "
+            "request_id that haldir_request_approval returned — the route "
+            "returns `request_id`, so calling it `approval_id` here made the "
+            "caller translate between two names for one value."
+        ),
         "inputSchema": {
             "type": "object",
-            "required": ["approval_id"],
-            "properties": {"approval_id": {"type": "string"}},
+            "required": ["request_id"],
+            "properties": {"request_id": {"type": "string"}},
         },
         "handler": lambda args: _call(
-            "GET", f"/v1/approvals/{args['approval_id']}",
+            "GET", f"/v1/approvals/{args['request_id']}",
         ),
     },
 
