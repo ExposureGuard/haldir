@@ -18,7 +18,6 @@ Run: python -m pytest tests/test_audit_tree.py -v
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 

@@ -182,7 +182,7 @@ def test_full_api(bootstrap_key):
     # No destructive DB cleanup here: api.DB_PATH is frozen at import
     # time and is shared with every other test module in this run.
     # Removing the file stranded the next suite with "no such table".
-    print(f"\n[+] All API tests passed!")
+    print("\n[+] All API tests passed!")
 
 
 if __name__ == "__main__":

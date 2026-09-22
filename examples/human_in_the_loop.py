@@ -19,7 +19,6 @@ Usage:
 
 import os
 import sys
-import time
 import httpx
 
 BASE_URL = "https://haldir.xyz"
@@ -69,7 +68,7 @@ def main():
     api_key, headers, session_id = setup()
     print(f"[+] API key: {api_key[:12]}...")
     print(f"[+] Session: {session_id}")
-    print(f"[+] Agent: finance-bot (scopes: read, write, execute)")
+    print("[+] Agent: finance-bot (scopes: read, write, execute)")
 
     # ── Step 1: Add approval rules ──
     # Rules define which actions need human approval before proceeding.
@@ -190,7 +189,7 @@ def main():
         },
     )
     if resp.status_code == 200:
-        print(f"[+] Request approved by: sterling")
+        print("[+] Request approved by: sterling")
     else:
         print(f"[-] Failed to approve: {resp.text}")
 
@@ -265,7 +264,7 @@ def main():
             },
         )
         if resp.status_code == 200:
-            print(f"[+] Request denied")
+            print("[+] Request denied")
 
         # Agent sees the denial
         resp = httpx.get(f"{BASE_URL}/v1/approvals/{deny_id}", headers=headers)
@@ -277,7 +276,7 @@ def main():
 
     # ── Cleanup ──
     httpx.delete(f"{BASE_URL}/v1/sessions/{session_id}", headers=headers)
-    print(f"\n[+] Session revoked. Approval demo complete.")
+    print("\n[+] Session revoked. Approval demo complete.")
 
 
 if __name__ == "__main__":

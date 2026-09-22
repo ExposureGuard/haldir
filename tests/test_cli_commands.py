@@ -19,10 +19,8 @@ Run: python -m pytest tests/test_cli_commands.py -v
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
-import sqlite3
 import sys
 from typing import Any
 
@@ -54,7 +52,6 @@ def mock_transport(monkeypatch):
 
     # Patch httpx.request, httpx.get, httpx.stream — the three call
     # sites the CLI uses.
-    real_client = httpx.Client
 
     def fake_request(method: str, url: str, **kwargs: Any) -> httpx.Response:
         with httpx.Client(transport=transport) as c:

@@ -18,9 +18,7 @@ Run: python -m pytest tests/test_webhook_delivery.py -v
 from __future__ import annotations
 
 import http.server
-import json
 import os
-import sqlite3
 import sys
 import threading
 import time
@@ -32,7 +30,6 @@ import pytest  # noqa: E402
 
 from haldir_watch.webhooks import (  # noqa: E402
     MAX_DELIVERY_ATTEMPTS,
-    WebhookConfig,
     WebhookManager,
 )
 

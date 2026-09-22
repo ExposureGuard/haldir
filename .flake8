@@ -1,0 +1,33 @@
+[flake8]
+# Correctness checks only, deliberately.
+#
+# This gate exists to keep dead code and latent bugs out — unused imports,
+# names used but never defined, locals assigned and never read — not to
+# impose a house style on a tree that already has one. The whole tree is
+# clean on these codes as of the commit that added this file, so any finding
+# here is something new.
+#
+#   F     pyflakes: dead imports, undefined names, unused locals. F821 in
+#         particular catches a NameError that mypy cannot see when a module
+#         carries `from __future__ import annotations` and the undefined name
+#         appears only in an annotation.
+#   E722  a bare `except:` also swallows KeyboardInterrupt and SystemExit
+#   E999  a file that does not parse
+#
+# Style codes (E1xx/E2xx/E3xx/E5xx, W) are deliberately absent: the long
+# inline strings in api.py and the section-colocated imports in it are
+# choices, and a gate that argues with them would get disabled.
+select = F,E722,E999
+
+extend-exclude =
+    .git,
+    build,
+    dist,
+    node_modules,
+    .mypy_cache,
+    .pytest_cache,
+    .hypothesis
+
+# Wide enough not to fire on generated-style strings. Not a style rule —
+# it only stops a long line from being reported as its own violation.
+max-line-length = 200

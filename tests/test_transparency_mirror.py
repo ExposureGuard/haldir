@@ -27,11 +27,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pytest  # noqa: E402
 import httpx  # noqa: E402
 
 import haldir_transparency_mirror as mirror  # noqa: E402

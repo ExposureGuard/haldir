@@ -25,7 +25,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-import haldir_scopes  # noqa: E402
 from haldir_scopes import (  # noqa: E402
     WILDCARD,
     ScopeValidationError,

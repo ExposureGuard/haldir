@@ -54,7 +54,6 @@ import argparse
 import hashlib
 import os
 import re
-import sys
 import time
 from dataclasses import dataclass
 from typing import Any

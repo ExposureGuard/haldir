@@ -28,7 +28,6 @@ import fnmatch
 import glob
 import os
 import re
-import sys
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10

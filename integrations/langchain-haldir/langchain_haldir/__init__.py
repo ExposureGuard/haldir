@@ -22,8 +22,6 @@ wired into any LangChain agent or tool.
 
 from __future__ import annotations
 
-from typing import Any
-
 from sdk.client import HaldirClient
 
 from .callback import HaldirCallbackHandler

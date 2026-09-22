@@ -1440,7 +1440,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     print(f"  cd {target}")
     print("  haldir dev            # start the local stack (equivalent to: docker compose up -d)")
     print()
-    print(f"Your bootstrap token (save it, needed to create your first API key):")
+    print("Your bootstrap token (save it, needed to create your first API key):")
     print(f"  {bootstrap_token}")
 
 

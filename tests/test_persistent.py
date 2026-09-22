@@ -68,10 +68,10 @@ def test_persistent_pipeline():
 
     # Log actions
     watch.add_anomaly_rule("spend_per_action", 75.0, "High-cost action")
-    e1 = watch.log_action(session, tool="openai", action="gpt4_call", cost_usd=0.03)
-    e2 = watch.log_action(session, tool="stripe", action="charge", cost_usd=25.00)
-    e3 = watch.log_action(session, tool="exposureguard", action="scan_domain",
-                          details={"domain": "example.com"})
+    watch.log_action(session, tool="openai", action="gpt4_call", cost_usd=0.03)
+    watch.log_action(session, tool="stripe", action="charge", cost_usd=25.00)
+    watch.log_action(session, tool="exposureguard", action="scan_domain",
+                     details={"domain": "example.com"})
     print(f"[+] Logged {3} actions")
 
     # Query audit trail
@@ -109,7 +109,7 @@ def test_persistent_pipeline():
 
     # Cleanup
     os.remove(DB_PATH)
-    print(f"\n[+] All persistent storage tests passed!")
+    print("\n[+] All persistent storage tests passed!")
 
 
 if __name__ == "__main__":

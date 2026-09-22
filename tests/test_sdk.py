@@ -31,7 +31,6 @@ from api import app as flask_app
 from sdk.client import (
     HaldirClient,
     HaldirAsyncClient,
-    HaldirAPIError,
     HaldirAuthError,
     HaldirPermissionError,
     HaldirNotFoundError,

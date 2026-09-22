@@ -193,7 +193,7 @@ def test_landing_page_states_the_real_allowances() -> None:
 
         agents = plan["agents"]
         if agents < 999_999:
-            assert f"{agents} agents" in desc or f"{agents} agent" in desc or f"single agent" in desc, (
+            assert f"{agents} agents" in desc or f"{agents} agent" in desc or "single agent" in desc, (
                 f"the landing page does not state the {agents}-agent limit for "
                 f"{name}: '{desc}'"
             )

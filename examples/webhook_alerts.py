@@ -99,7 +99,7 @@ def main():
         },
     )
     if resp.status_code == 201:
-        print(f"[+] Webhook registered: discord-security (anomaly + budget_exhausted)")
+        print("[+] Webhook registered: discord-security (anomaly + budget_exhausted)")
     else:
         print(f"[-] Failed to register webhook: {resp.text}")
 
@@ -114,7 +114,7 @@ def main():
         },
     )
     if resp.status_code == 201:
-        print(f"[+] Webhook registered: custom-integration (anomaly + flagged)")
+        print("[+] Webhook registered: custom-integration (anomaly + flagged)")
     else:
         print(f"[-] Failed to register webhook: {resp.text}")
 
@@ -169,7 +169,7 @@ def main():
                 "session_id": session_id,
                 "amount": amount,
                 "currency": "USD",
-                "description": f"API call batch",
+                "description": "API call batch",
             },
         )
         result = resp.json()
@@ -222,7 +222,7 @@ def main():
 
     # ── Cleanup ──
     httpx.delete(f"{BASE_URL}/v1/sessions/{session_id}", headers=headers)
-    print(f"\n[+] Session revoked. Webhook demo complete.")
+    print("\n[+] Session revoked. Webhook demo complete.")
 
     # ── Webhook payload format ──
     print("\n" + "=" * 60)
