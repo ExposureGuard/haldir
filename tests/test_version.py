@@ -54,6 +54,10 @@ def _stated_versions() -> dict[str, str]:
         "haldir_mcp_server.py": r'SERVER_VERSION = "([^"]+)"',
         "haldir_watch/webhooks.py": r'Haldir/([0-9][^"]*)',
         "haldir_tracing.py":    r'"haldir", "([^"]+)"',
+        # The public module. `haldir.__version__` is what a user reads off
+        # before writing a bug report, so it disagreeing with the package is
+        # the same failure this test exists to prevent.
+        "haldir.py":            r'^__version__ = "([^"]+)"',
     }
     for rel, pat in patterns.items():
         m = re.search(pat, _read(rel), re.M)

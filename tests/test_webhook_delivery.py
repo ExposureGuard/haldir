@@ -294,20 +294,27 @@ def test_deliveries_endpoint_requires_auth(haldir_client) -> None:
 # ── SDK re-export ─────────────────────────────────────────────────────
 
 def test_sdk_reexports_verify_webhook_signature() -> None:
-    """Customer-facing import should succeed as `from haldir import ...`
-    if the package is installed, or via `import sdk` in-repo."""
-    import sdk
-    assert hasattr(sdk, "verify_webhook_signature")
-    assert hasattr(sdk, "WebhookVerificationError")
+    """The customer-facing import, actually performed.
 
-    # Identity check — they must be the same callables as in the
-    # internal module, not accidental shadow definitions.
+    This previously read `import sdk` while its docstring promised to check
+    `from haldir import ...` — so the public name was never exercised, and it
+    did not work. Both are asserted now, because the in-repo name and the
+    published one are different names and either could break alone.
+
+    Identity rather than hasattr: a re-export that shadows would satisfy
+    hasattr while drifting from the implementation.
+    """
+    import sdk
+    from haldir import verify_webhook_signature, WebhookVerificationError
+
     from haldir_watch.webhooks import (
         verify_signature,
-        WebhookVerificationError,
+        WebhookVerificationError as InternalWebhookVerificationError,
     )
+
     assert sdk.verify_webhook_signature is verify_signature
-    assert sdk.WebhookVerificationError is WebhookVerificationError
+    assert verify_webhook_signature is verify_signature
+    assert WebhookVerificationError is InternalWebhookVerificationError
 
 
 # ── Helpers ───────────────────────────────────────────────────────────

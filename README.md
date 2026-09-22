@@ -195,9 +195,10 @@ Everything on the right is one process in front of your tools. Your agent keeps 
 ## Quick Start (Python)
 
 ```python
-from sdk.client import HaldirClient
+from haldir import HaldirClient
 
-h = HaldirClient(api_key="hld_xxx", base_url="https://haldir.xyz")
+# The key and URL that `haldir serve` printed above.
+h = HaldirClient(api_key="hld_xxx", base_url="http://127.0.0.1:8000")
 
 # Create a governed agent session
 session = h.create_session("my-agent", scopes=["read", "spend:50"])

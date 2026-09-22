@@ -98,7 +98,7 @@ curl -X POST http://localhost:8000/v1/sessions \
 Or point the Python SDK at your instance:
 
 ```python
-from sdk.client import HaldirClient
+from haldir import HaldirClient
 
 client = HaldirClient(
     api_key="hld_...",
