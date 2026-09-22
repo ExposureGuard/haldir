@@ -8,7 +8,9 @@
 # Sterling: during the Glama "Add Server" flow, point the Dockerfile
 # upload at this file (or paste its contents verbatim).
 
-FROM python:3.14-slim
+# 3.12, matching ./Dockerfile and the CI matrix. This said 3.14, which is
+# neither what CI tests nor what the production image runs.
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -18,4 +20,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # HALDIR_API_KEY is supplied by Glama per the smithery.yaml config schema.
-CMD ["python", "-m", "mcp_server"]
+#
+# `haldir_mcp_server`, not `mcp_server`. There has never been a module by the
+# latter name — pyproject records that one was removed — so this container
+# exited on `ModuleNotFoundError` every time it started. smithery.yaml already
+# named the right one; only this file still pointed at the deleted module.
+CMD ["python", "-m", "haldir_mcp_server"]
