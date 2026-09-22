@@ -115,7 +115,7 @@ const h = new Client({
 | `requestApproval(request)` | Request human approval |
 | `getApproval(requestId)` | Check approval status |
 | `approveRequest(requestId)` | Approve a pending request |
-| `denyRequest(requestId, { reason })` | Deny a pending request |
+| `denyRequest(requestId, { note, decidedBy })` | Deny a pending request. `note` is the denial reason — it used to be documented as `reason`, which the API does not read, so the explanation was silently dropped |
 | `listPendingApprovals()` | List pending approvals |
 
 ### Webhooks
