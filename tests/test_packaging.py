@@ -348,6 +348,52 @@ def test_served_content_is_listed_for_packaging(pyproject) -> None:
     )
 
 
+# ── Read from disk at runtime, by module path rather than by HTTP ────
+
+# `haldir_migrate` discovers NNN_*.sql beside its own module and applies
+# whatever the database has not recorded yet. The directory was not packaged,
+# so an installed Haldir had no migrations at all: the runner found nothing,
+# logged "no migration files found", and the tables that only the migrations
+# create were never created.
+#
+# The visible result was a 500 on /v1/audit/sth-log — the Signed Tree Head
+# log, the transparency surface the tamper-evidence claim rests on — and
+# "no such table: sth_mirror_receipts" from the Rekor mirror. Both worked in
+# the checkout, where the directory exists, and in no installation. Same shape
+# as 0.3.0 shipping four modules of twenty-seven, and 0.3.1 shipping no
+# application content: present for the developer, absent for the user.
+MIGRATIONS_DIR = "migrations"
+
+
+def _sdist_include(pyproject: dict) -> list[str]:
+    return pyproject["tool"]["hatch"]["build"]["targets"]["sdist"].get("include", [])
+
+
+def test_the_migrations_directory_holds_sql() -> None:
+    d = os.path.join(ROOT, MIGRATIONS_DIR)
+    assert os.path.isdir(d), f"{MIGRATIONS_DIR}/ does not exist, so nothing applies"
+    sql = sorted(f for f in os.listdir(d) if f.endswith(".sql"))
+    assert sql, f"{MIGRATIONS_DIR}/ holds no .sql files, so nothing applies"
+
+
+def test_migrations_are_packaged(pyproject) -> None:
+    """Both lists, because the wheel is built *from* the sdist.
+
+    A directory missing from the sdist is missing from the wheel regardless of
+    what the wheel target says — which is why two earlier rounds of fixing only
+    the wheel's include list changed nothing at all.
+    """
+    for target, include in (
+        ("wheel", _wheel_include(pyproject)),
+        ("sdist", _sdist_include(pyproject)),
+    ):
+        assert MIGRATIONS_DIR in include, (
+            f"{MIGRATIONS_DIR}/ is read at runtime by haldir_migrate but is not "
+            f"in the {target} include list, so an installed Haldir applies no "
+            f"migrations and the tables only they create never exist"
+        )
+
+
 def test_served_content_directories_are_packaged(pyproject) -> None:
     """The dot-directory is the one that got missed.
 
