@@ -79,3 +79,25 @@ def test_the_version_looks_like_a_release() -> None:
     disagree, and PyPI rejects the upload after the tag is already public."""
     v = _package_version()
     assert re.fullmatch(r"\d+\.\d+\.\d+", v), f"version {v!r} is not X.Y.Z"
+
+
+def test_every_version_literal_in_api_py_matches() -> None:
+    """All of them, not the first.
+
+    `_stated_versions` above uses `re.search`, so it can only ever see the
+    first literal in a file. api.py states the version four times — the MCP
+    server handshake, /healthz, /v1, and the landing fallback — so the helper
+    was structurally unable to notice the other three.
+
+    All four sat at 0.1.0 while the package was 0.3.2. An MCP client doing its
+    handshake, an operator curling /healthz before opening a support thread,
+    and anyone reading /v1 were each told a version three releases old — which
+    is the exact conversation this file opens by describing.
+    """
+    want = _package_version()
+    found = set(re.findall(r'"version":\s*"([^"]+)"', _read("api.py")))
+    assert found, "no version literals found in api.py — the pattern needs updating"
+    wrong = sorted(v for v in found if v != want)
+    assert not wrong, (
+        f"api.py states the version as {wrong} but the package is {want!r}"
+    )
