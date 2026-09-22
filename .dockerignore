@@ -87,3 +87,36 @@ AGENT_DISCOVERY_LAUNCH_CHECKLIST.md
 DAILY_REALITY_CHECK.md
 outreach_templates.md
 pilot_targets.md
+
+# ── Private working material ────────────────────────────────────────
+#
+# The same paths `.gitignore` keeps out of the repository, listed again on
+# purpose: the two mechanisms are independent, and `docker build` sends the
+# *working directory* rather than the git tree, so a file git ignores can
+# still land in a layer.
+#
+# This list had drifted from `.gitignore` — it covered the investor
+# one-pagers above, but not these, every one of which sits in the repo root
+# and was being copied in by the `COPY . .` at the end of the Dockerfile:
+#
+#   SESSION_CONTEXT.md   working notes: strategy, pricing, what is blocked
+#   SOUL.md              positioning and messaging
+#   FUNDING_*.md         the raise
+#   USER_CONVERSATIONS.md / CONVERSATION_HISTORY.md   what customers said
+#   AGENTIC_MARKET_SUBMISSION.md
+#   drafts/              cold-DM and X copy — prospect names, VC targets
+#   .aider*              editor transcripts
+#
+# `.gitignore` is the source of truth for what is private; keep this list in
+# step with it and not with memory of it.
+.mcpregistry_*
+SESSION_CONTEXT.md
+CONVERSATION_HISTORY.md
+USER_CONVERSATIONS.md
+SOUL.md
+FUNDING_PATH.md
+FUNDING_OPTIONS.md
+AGENTIC_MARKET_SUBMISSION.md
+OFFICE_PLAN.md
+drafts/
+.aider*
