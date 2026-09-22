@@ -443,15 +443,42 @@ def _paths_opened_beside_the_module(py_file: str) -> set[str]:
         if not isinstance(node, ast.Call) or not node.args:
             continue
         func = node.func
-        if not (isinstance(func, ast.Attribute) and func.attr == "join"):
+
+        # Two shapes read a file that has to be in the package:
+        #
+        #   os.path.join(os.path.dirname(__file__), "a", "b")
+        #   send_from_directory(os.path.dirname(__file__), "a")
+        #
+        # Matching only the first is not enough, and that is not theoretical:
+        # the dead-code sweep removed the `js_path = os.path.join(...,
+        # "dashboard.js")` line as genuinely unused, leaving only the
+        # send_from_directory form — and this scanner went blind to
+        # dashboard.js without a single test turning red. A guard that a
+        # cleanup can silently disarm is worse than no guard, because it still
+        # reads as coverage.
+        #
+        # Note the two call shapes: `os.path.join` arrives as an Attribute,
+        # but `send_from_directory` is imported straight from flask and so
+        # arrives as a bare Name. Handling only the Attribute form was the
+        # first attempt at this fix, and it matched nothing.
+        if isinstance(func, ast.Attribute) and func.attr == "join":
+            literal_args = node.args[1:]
+        elif (
+            isinstance(func, ast.Attribute) and func.attr == "send_from_directory"
+        ) or (
+            isinstance(func, ast.Name) and func.id == "send_from_directory"
+        ):
+            literal_args = node.args[1:2]   # (directory, filename, mimetype=...)
+        else:
             continue
+
         # The first argument has to be the module's own directory.
         if not any(
             isinstance(n, ast.Name) and n.id == "__file__"
             for n in ast.walk(node.args[0])
         ):
             continue
-        for arg in node.args[1:]:
+        for arg in literal_args:
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 segments.add(arg.value)
                 break

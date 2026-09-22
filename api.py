@@ -3104,7 +3104,7 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.08); margin:2rem 0; }
 </head>
 <body>
 <h1>Haldir API</h1>
-<p class="sub">v0.1.0 — the guardian layer for AI agents</p>
+<p class="sub">v0.3.2 — the guardian layer for AI agents</p>
 <p style="margin-top:1rem;">Base URL: <code>https://haldir.xyz/v1</code></p>
 <p>Auth: <code>Authorization: Bearer hld_your_key</code> or <code>X-API-Key: hld_your_key</code></p>
 

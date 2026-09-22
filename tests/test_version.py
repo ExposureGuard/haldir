@@ -81,6 +81,13 @@ def test_the_version_looks_like_a_release() -> None:
     assert re.fullmatch(r"\d+\.\d+\.\d+", v), f"version {v!r} is not X.Y.Z"
 
 
+# Version-looking strings in api.py that are deliberately not this product's
+# version. The Prometheus text exposition format carries its own version
+# number, and it appears twice — in the docstring and in the Content-Type
+# header of /metrics. Those two are not claims about Haldir.
+_NOT_THIS_PRODUCTS_VERSION = {"0.0.4"}
+
+
 def test_every_version_literal_in_api_py_matches() -> None:
     """All of them, not the first.
 
@@ -95,9 +102,25 @@ def test_every_version_literal_in_api_py_matches() -> None:
     is the exact conversation this file opens by describing.
     """
     want = _package_version()
-    found = set(re.findall(r'"version":\s*"([^"]+)"', _read("api.py")))
+    src = _read("api.py")
+
+    # Every `"version": "x"` — the JSON surfaces.
+    found = set(re.findall(r'"version":\s*"([^"]+)"', src))
     assert found, "no version literals found in api.py — the pattern needs updating"
+
+    # And every other version-looking string, because the JSON-key pattern
+    # cannot see one written into a page. The `/docs` subtitle read
+    # "v0.1.0 — the guardian layer for AI agents" for six releases while this
+    # test passed, on the page the CLI prints as the API reference.
+    #
+    # The pattern excludes a match that is part of a longer dotted run, so an
+    # address like 0.0.0.0 is not a version.
+    found |= set(re.findall(r"(?<![\d.])v?(\d+\.\d+\.\d+)(?![\d.])", src))
+    found -= _NOT_THIS_PRODUCTS_VERSION
+
     wrong = sorted(v for v in found if v != want)
     assert not wrong, (
-        f"api.py states the version as {wrong} but the package is {want!r}"
+        f"api.py states the version as {wrong} but the package is {want!r}. "
+        f"A version string on a page or in a payload is a claim about this "
+        f"release; anything else here is drift."
     )
