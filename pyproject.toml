@@ -180,6 +180,7 @@ include = [
     "CONTRIBUTING.md",
     "CHANGELOG.md",
     "dashboard.html",
+    "dashboard.js",
     "demo_gallery.html",
     "quickstart.html",
     ".well-known",
@@ -187,6 +188,11 @@ include = [
     "blog",
     "demo",
     "docs",
+    # Read from disk at runtime by haldir_migrate (its _DEFAULT_DIR is beside
+    # its own module), not served over HTTP. Its absence was invisible for the
+    # same reason the content files' was: the directory is present for anyone
+    # running from a checkout and absent for everyone who ran pip install.
+    "migrations",
 
 ]
 
@@ -269,6 +275,7 @@ include = [
     "CONTRIBUTING.md",
     "CHANGELOG.md",
     "dashboard.html",
+    "dashboard.js",
     "demo_gallery.html",
     "quickstart.html",
     ".well-known",
@@ -276,5 +283,10 @@ include = [
     "blog",
     "demo",
     "docs",
+    # Read from disk at runtime by haldir_migrate (its _DEFAULT_DIR is beside
+    # its own module), not served over HTTP. Its absence was invisible for the
+    # same reason the content files' was: the directory is present for anyone
+    # running from a checkout and absent for everyone who ran pip install.
+    "migrations",
 
 ]

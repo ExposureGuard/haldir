@@ -3113,7 +3113,7 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.08); margin:2rem 0; }
 </head>
 <body>
 <h1>Haldir API</h1>
-<p class="sub">v0.1.0 — the guardian layer for AI agents</p>
+<p class="sub">v0.3.2 — the guardian layer for AI agents</p>
 <p style="margin-top:1rem;">Base URL: <code>https://haldir.xyz/v1</code></p>
 <p>Auth: <code>Authorization: Bearer hld_your_key</code> or <code>X-API-Key: hld_your_key</code></p>
 
@@ -3245,7 +3245,7 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.08); margin:2rem 0; }
 
 MCP_SERVER_INFO = {
     "name": "haldir",
-    "version": "0.1.0",
+    "version": "0.3.2",
     "displayName": "Haldir — AI Agent Security Gateway",
     "description": (
         "Haldir is a security and governance layer for AI agents. "
@@ -5185,7 +5185,7 @@ def healthz():
     onto Kubernetes probe semantics and answer different questions."""
     import haldir_health
     return jsonify({**haldir_health.liveness(), "status": "ok",
-                    "version": "0.1.0"})
+                    "version": "0.3.2"})
 
 
 @app.route("/livez")
@@ -5455,7 +5455,7 @@ def status_page():
 def api_index():
     return jsonify({
         "service": "haldir",
-        "version": "0.1.0",
+        "version": "0.3.2",
         "docs": "https://haldir.xyz/docs",
         "endpoints": {
             "sessions": "/v1/sessions",
@@ -5473,7 +5473,7 @@ def landing():
     if os.path.exists(landing_path):
         with open(landing_path) as f:
             return f.read(), 200, {"Content-Type": "text/html"}
-    return jsonify({"service": "haldir", "version": "0.1.0"}), 200
+    return jsonify({"service": "haldir", "version": "0.3.2"}), 200
 
 
 # ── Cloud dashboard SPA pages ────────────────────────────────────────────

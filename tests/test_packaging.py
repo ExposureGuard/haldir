@@ -347,6 +347,168 @@ def test_served_content_is_listed_for_packaging(pyproject) -> None:
     )
 
 
+# ── Read from disk at runtime, by module path rather than by HTTP ────
+
+# `haldir_migrate` discovers NNN_*.sql beside its own module and applies
+# whatever the database has not recorded yet. The directory was not packaged,
+# so an installed Haldir had no migrations at all: the runner found nothing,
+# logged "no migration files found", and the tables that only the migrations
+# create were never created.
+#
+# The visible result was a 500 on /v1/audit/sth-log — the Signed Tree Head
+# log, the transparency surface the tamper-evidence claim rests on — and
+# "no such table: sth_mirror_receipts" from the Rekor mirror. Both worked in
+# the checkout, where the directory exists, and in no installation. Same shape
+# as 0.3.0 shipping four modules of twenty-seven, and 0.3.1 shipping no
+# application content: present for the developer, absent for the user.
+MIGRATIONS_DIR = "migrations"
+
+
+def _sdist_include(pyproject: dict) -> list[str]:
+    return pyproject["tool"]["hatch"]["build"]["targets"]["sdist"].get("include", [])
+
+
+def test_the_migrations_directory_holds_sql() -> None:
+    d = os.path.join(ROOT, MIGRATIONS_DIR)
+    assert os.path.isdir(d), f"{MIGRATIONS_DIR}/ does not exist, so nothing applies"
+    sql = sorted(f for f in os.listdir(d) if f.endswith(".sql"))
+    assert sql, f"{MIGRATIONS_DIR}/ holds no .sql files, so nothing applies"
+
+
+def test_migrations_are_packaged(pyproject) -> None:
+    """Both lists, because the wheel is built *from* the sdist.
+
+    A directory missing from the sdist is missing from the wheel regardless of
+    what the wheel target says — which is why two earlier rounds of fixing only
+    the wheel's include list changed nothing at all.
+    """
+    for target, include in (
+        ("wheel", _wheel_include(pyproject)),
+        ("sdist", _sdist_include(pyproject)),
+    ):
+        assert MIGRATIONS_DIR in include, (
+            f"{MIGRATIONS_DIR}/ is read at runtime by haldir_migrate but is not "
+            f"in the {target} include list, so an installed Haldir applies no "
+            f"migrations and the tables only they create never exist"
+        )
+
+
+# ── The general form of that mistake ─────────────────────────────────
+
+# The three packaging failures above are one mistake made three times: code
+# opens a path beside its own module, the file is in the checkout, and nobody
+# asks whether it is in the package. Each was fixed with an explicit list plus
+# a test for that list — which guards the instance, not the mistake.
+#
+# This finds the instances. It reads every module the package ships, collects
+# the literal path segment each opens relative to its own directory, and
+# requires that segment to be packaged. A new
+# `open(os.path.join(os.path.dirname(__file__), "templates"))` fails here when
+# it is written, instead of in a stranger's terminal a release later.
+
+
+def _shipped_modules(include: list[str]) -> list[str]:
+    """The .py files the include list actually ships.
+
+    Derived from the packaging configuration rather than from a directory
+    listing, so this scan cannot drift from what is really packaged.
+    """
+    found: list[str] = []
+    for entry in include:
+        path = os.path.join(ROOT, entry)
+        if entry.endswith(".py") and os.path.isfile(path):
+            found.append(path)
+        elif os.path.isdir(path):
+            for dirpath, _dirnames, filenames in os.walk(path):
+                found.extend(
+                    os.path.join(dirpath, name)
+                    for name in filenames
+                    if name.endswith(".py")
+                )
+    return found
+
+
+def _paths_opened_beside_the_module(py_file: str) -> set[str]:
+    """Top-level path segments opened relative to `py_file`'s own directory.
+
+    Matches `os.path.join(os.path.dirname(<... __file__ ...>), "seg", ...)` and
+    keeps `seg` — the part that has to appear in the include lists.
+    """
+    with open(py_file, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+
+    segments: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+
+        # Two shapes read a file that has to be in the package:
+        #
+        #   os.path.join(os.path.dirname(__file__), "a", "b")
+        #   send_from_directory(os.path.dirname(__file__), "a")
+        #
+        # Matching only the first is not enough, and that is not theoretical:
+        # the dead-code sweep removed the `js_path = os.path.join(...,
+        # "dashboard.js")` line as genuinely unused, leaving only the
+        # send_from_directory form — and this scanner went blind to
+        # dashboard.js without a single test turning red. A guard that a
+        # cleanup can silently disarm is worse than no guard, because it still
+        # reads as coverage.
+        #
+        # Note the two call shapes: `os.path.join` arrives as an Attribute,
+        # but `send_from_directory` is imported straight from flask and so
+        # arrives as a bare Name. Handling only the Attribute form was the
+        # first attempt at this fix, and it matched nothing.
+        if isinstance(func, ast.Attribute) and func.attr == "join":
+            literal_args = node.args[1:]
+        elif (
+            isinstance(func, ast.Attribute) and func.attr == "send_from_directory"
+        ) or (
+            isinstance(func, ast.Name) and func.id == "send_from_directory"
+        ):
+            literal_args = node.args[1:2]   # (directory, filename, mimetype=...)
+        else:
+            continue
+
+        # The first argument has to be the module's own directory.
+        if not any(
+            isinstance(n, ast.Name) and n.id == "__file__"
+            for n in ast.walk(node.args[0])
+        ):
+            continue
+        for arg in literal_args:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                segments.add(arg.value)
+                break
+    return segments
+
+
+def test_every_path_a_shipped_module_opens_is_packaged(pyproject) -> None:
+    wheel = _wheel_include(pyproject)
+    sdist = _sdist_include(pyproject)
+
+    opened: dict[str, set[str]] = {}
+    for module in _shipped_modules(wheel):
+        for segment in _paths_opened_beside_the_module(module):
+            opened.setdefault(segment, set()).add(os.path.relpath(module, ROOT))
+
+    assert opened, (
+        "no module-relative opens were found at all, which means this scan has "
+        "stopped matching how the code opens files — not that the code became "
+        "safer"
+    )
+
+    missing = sorted(s for s in opened if s not in wheel or s not in sdist)
+    assert not missing, (
+        "opened beside a shipped module, but absent from the packaging include "
+        "lists — so they exist for the developer and not for the user: "
+        + "; ".join(
+            f"{s} (opened by {', '.join(sorted(opened[s]))})" for s in missing
+        )
+    )
+
+
 def test_served_content_directories_are_packaged(pyproject) -> None:
     """The dot-directory is the one that got missed.
 
