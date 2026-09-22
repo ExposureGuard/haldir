@@ -119,6 +119,59 @@ export interface ApprovalRule {
   [key: string]: unknown;
 }
 
+export interface RequestApprovalOptions {
+  session_id: string;
+  action: string;
+  reason: string;
+  details?: Record<string, unknown>;
+  /** Seconds until the request expires. The API reads `ttl`. */
+  ttl?: number;
+}
+
+export interface Approval {
+  request_id: string;
+  status: 'pending' | 'approved' | 'denied' | 'expired';
+  agent_id?: string;
+  tool?: string;
+  action?: string;
+  amount?: number;
+  reason?: string;
+  expires_at?: number;
+  decided_by?: string;
+  decision_note?: string;
+  [key: string]: unknown;
+}
+
+export interface DecideApprovalOptions {
+  /**
+   * The decision note. Named `note` because that is what
+   * `POST /v1/approvals/<id>/{approve,deny}` reads — sending it under any
+   * other name is accepted by the API and then discarded.
+   */
+  note?: string;
+  decidedBy?: string;
+}
+
+export interface WebhookInput {
+  url: string;
+  name?: string;
+  events?: string[];
+}
+
+export interface Webhook {
+  webhook_id?: number;
+  url: string;
+  name?: string;
+  events?: string[];
+  active?: boolean;
+  fire_count?: number;
+  fail_count?: number;
+  /** Whether the endpoint has a signing secret. The secret itself is never
+   *  returned after registration. */
+  signed?: boolean;
+  [key: string]: unknown;
+}
+
 export class Client {
   readonly baseUrl: string;
   readonly apiKey: string;
@@ -143,4 +196,19 @@ export class Client {
   getSpend(options?: GetSpendOptions): Promise<SpendResult>;
 
   createApprovalRule(rule: ApprovalRule): Promise<Record<string, unknown>>;
+
+  // The approvals surface. These eight were implemented and documented in the
+  // README but never declared, so a TypeScript consumer could not call any of
+  // them — the whole human-in-the-loop path was invisible to the type checker,
+  // which is the audience `index.d.ts` exists for.
+  requestApproval(request: RequestApprovalOptions): Promise<Approval>;
+  getApproval(requestId: string): Promise<Approval>;
+  approveRequest(requestId: string, options?: DecideApprovalOptions): Promise<{ approved: boolean; request_id: string }>;
+  denyRequest(requestId: string, options?: DecideApprovalOptions): Promise<{ denied: boolean; request_id: string }>;
+  listPendingApprovals(): Promise<{ count: number; requests: Approval[] }>;
+
+  createWebhook(webhook: WebhookInput): Promise<Webhook>;
+  listWebhooks(): Promise<{ webhooks: Webhook[] }>;
+
+  getUsage(): Promise<Record<string, unknown>>;
 }

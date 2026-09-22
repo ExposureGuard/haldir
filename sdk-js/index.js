@@ -371,8 +371,17 @@ class Client {
    * @param {string} requestId
    * @returns {Promise<object>}
    */
-  async approveRequest(requestId) {
-    return this._request("POST", `/v1/approvals/${requestId}/approve`);
+  async approveRequest(requestId, { note, decidedBy } = {}) {
+    // Takes the same options as `denyRequest` — the route reads `note` and
+    // `decided_by` — so an approval can record who decided it and why. It
+    // previously sent no body at all, which made `decided_by` permanently
+    // empty on the approval record.
+    const body = {};
+    if (note !== undefined) body.note = note;
+    if (decidedBy !== undefined) body.decided_by = decidedBy;
+    return this._request("POST", `/v1/approvals/${requestId}/approve`, {
+      body: Object.keys(body).length ? body : undefined,
+    });
   }
 
   /**
@@ -383,9 +392,18 @@ class Client {
    * @param {string} [options.reason] - Denial reason
    * @returns {Promise<object>}
    */
-  async denyRequest(requestId, { reason } = {}) {
-    const body = reason ? { reason } : undefined;
-    return this._request("POST", `/v1/approvals/${requestId}/deny`, { body });
+  async denyRequest(requestId, { note, decidedBy } = {}) {
+    // `note`, not `reason`. POST /v1/approvals/<id>/deny reads `note` (and
+    // `decided_by`); this sent `reason`, so a denial's explanation was
+    // accepted, transmitted, and silently discarded — verified against the
+    // API before the change. The README documented `{ reason }`, which is
+    // where the wrong name came from.
+    const body = {};
+    if (note !== undefined) body.note = note;
+    if (decidedBy !== undefined) body.decided_by = decidedBy;
+    return this._request("POST", `/v1/approvals/${requestId}/deny`, {
+      body: Object.keys(body).length ? body : undefined,
+    });
   }
 
   /**
