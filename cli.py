@@ -1636,15 +1636,6 @@ def cmd_serve(args: argparse.Namespace) -> None:
         print("    haldir overview")
         print("    haldir session create --agent my-agent --scopes read")
         print()
-        # The tamper demo is the product's strongest thirty seconds: it
-        # rewrites a real row in this instance's audit log and the verdict
-        # flips from verified to tampered, using the same Merkle code the API
-        # ships. The README points at it; the command that just started the
-        # server did not, which left the most convincing thing Haldir does
-        # two clicks further away than the docs assumed.
-        print("  Watch it catch a tamper — the same Merkle code this API serves:")
-        print(f"    {base_url}/demo/tamper")
-        print()
         print("  Point an MCP client at this instance:")
         print(f"    HALDIR_BASE_URL={base_url} HALDIR_API_KEY={api_key} haldir mcp serve")
         if note:
@@ -1654,6 +1645,19 @@ def cmd_serve(args: argparse.Namespace) -> None:
         print("  Mint a key:")
         print(f"    curl -s -X POST {base_url}/v1/keys \\")
         print("      -H 'Content-Type: application/json' -d '{\"name\":\"me\"}'")
+
+    # Printed in both modes, deliberately. The tamper demo is the product's
+    # strongest thirty seconds — it rewrites a real row in this instance's
+    # audit log and the verdict flips from verified to tampered, using the
+    # same Merkle code the API serves.
+    #
+    # It was inside the `if api_key:` branch above, which hid it in exactly
+    # the mode where an operator has nothing else to look at yet. The demo
+    # route carries no `require_api_key`, so it works on a --no-key instance
+    # too; there was never a reason to gate the pointer on a key.
+    print()
+    print("  Watch it catch a tamper — the same Merkle code this API serves:")
+    print(f"    {base_url}/demo/tamper")
 
     print()
     print(f"  API reference: {base_url}/docs")
