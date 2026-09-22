@@ -153,6 +153,9 @@ class WebhookConfig:
     active: bool = True
     secret: str = ""               # HMAC-SHA256 shared secret; "" = unsigned
     webhook_id: int = 0            # DB row id; 0 until persisted
+    tenant_id: str = ""            # Owning tenant. An event is delivered only
+                                   # to endpoints belonging to the tenant that
+                                   # raised it.
     created_at: float = field(default_factory=time.time)
     last_fired: float = 0.0
     fire_count: int = 0
@@ -223,6 +226,11 @@ class WebhookManager:
             self._webhooks.append(WebhookConfig(
                 url=r["url"],
                 name=r["name"],
+                # Both were read past before: `tenant_id` decides who an event
+                # is delivered to, and `webhook_id` lets the counters address
+                # one row rather than every row sharing a URL.
+                tenant_id=(r["tenant_id"] if "tenant_id" in keys else "") or "",
+                webhook_id=(r["id"] if "id" in keys else 0),
                 events=json.loads(r["events"]),
                 active=bool(r["active"]),
                 secret=(r["secret"] if "secret" in keys else "") or "",
@@ -276,6 +284,7 @@ class WebhookManager:
         wh = WebhookConfig(
             url=url,
             name=name,
+            tenant_id=tenant_id,
             events=events or ["all"],
             secret=secret,
         )
@@ -297,7 +306,13 @@ class WebhookManager:
 
     def fire(self, event_type: str, payload: dict[str, Any],
              tenant_id: str = "") -> str:
-        """Fire an event to all matching webhooks (non-blocking).
+        """Fire an event to this tenant's matching webhooks (non-blocking).
+
+        `tenant_id` selects the endpoints, it is not merely recorded. It used
+        to be passed straight through to the delivery log while the loop
+        below dispatched to every registered endpoint in the process — so one
+        tenant's anomaly alerts, budget events, approval requests and full
+        compliance evidence packs were delivered to every other tenant's URLs.
 
         Returns the `event_id` (UUID) assigned to this fire. All
         deliveries to all matching webhook endpoints share the same
@@ -313,6 +328,8 @@ class WebhookManager:
 
         for wh in self._webhooks:
             if not wh.active:
+                continue
+            if wh.tenant_id != tenant_id:
                 continue
             if "all" not in wh.events and event_type not in wh.events:
                 continue
@@ -431,15 +448,34 @@ class WebhookManager:
             duration_ms = int((time.time() - started) * 1000)
             return (0, "", f"{type(e).__name__}: {e}", duration_ms)
 
+    # Counters address one endpoint's row.
+    #
+    # By id when it has one. Matching on `url` meant two tenants that
+    # registered the same endpoint — a shared Slack receiver, say — shared a
+    # single set of counters, so one tenant's failures surfaced on the
+    # other's dashboard.
+    #
+    # The two statements are written out rather than assembled from a clause
+    # and interpolated. Assembling them is what bandit's B608
+    # (string-built SQL) flags, and the gate is right to: the safe form costs
+    # four lines and removes the question. The values were always bound
+    # parameters; only the fixed text was interpolated.
+
     def _mark_success(self, wh: WebhookConfig) -> None:
         wh.last_fired = time.time()
         wh.fire_count += 1
         conn = self._get_db()
         if conn:
-            conn.execute(
-                "UPDATE webhooks SET last_fired = ?, fire_count = ? WHERE url = ?",
-                (wh.last_fired, wh.fire_count, wh.url),
-            )
+            if wh.webhook_id:
+                conn.execute(
+                    "UPDATE webhooks SET last_fired = ?, fire_count = ? WHERE id = ?",
+                    (wh.last_fired, wh.fire_count, wh.webhook_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE webhooks SET last_fired = ?, fire_count = ? WHERE url = ?",
+                    (wh.last_fired, wh.fire_count, wh.url),
+                )
             conn.commit()
             conn.close()
 
@@ -451,10 +487,16 @@ class WebhookManager:
         wh.fail_count += 1
         conn = self._get_db()
         if conn:
-            conn.execute(
-                "UPDATE webhooks SET last_fired = ?, fail_count = ? WHERE url = ?",
-                (wh.last_fired, wh.fail_count, wh.url),
-            )
+            if wh.webhook_id:
+                conn.execute(
+                    "UPDATE webhooks SET last_fired = ?, fail_count = ? WHERE id = ?",
+                    (wh.last_fired, wh.fail_count, wh.webhook_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE webhooks SET last_fired = ?, fail_count = ? WHERE url = ?",
+                    (wh.last_fired, wh.fail_count, wh.url),
+                )
             conn.commit()
             conn.close()
 
@@ -575,11 +617,21 @@ class WebhookManager:
             "reason": reason,
         }, tenant_id=tenant_id)
 
-    def list_webhooks(self) -> list[dict[str, Any]]:
-        # Note: secret is NOT returned. Once shown at registration time,
-        # it lives only in the DB — receivers must persist their own copy.
+    def list_webhooks(self, tenant_id: str = "") -> list[dict[str, Any]]:
+        """List this tenant's endpoints.
+
+        Unscoped, this returned every tenant's endpoint URLs, names and event
+        subscriptions to any caller holding `webhooks:read` — which is also
+        how one tenant learned where to aim. `webhook_id` is included because
+        rotation and deletion address a row by id, and its absence left both
+        unreachable through the API.
+
+        Note: secret is NOT returned. Once shown at registration time,
+        it lives only in the DB — receivers must persist their own copy.
+        """
         return [
             {
+                "webhook_id": wh.webhook_id,
                 "url": wh.url,
                 "name": wh.name,
                 "events": wh.events,
@@ -589,6 +641,7 @@ class WebhookManager:
                 "signed": bool(wh.secret),
             }
             for wh in self._webhooks
+            if wh.tenant_id == tenant_id
         ]
 
     # ── Rotation ────────────────────────────────────────────────────

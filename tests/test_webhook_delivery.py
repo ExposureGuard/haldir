@@ -216,7 +216,10 @@ def test_gives_up_after_max_attempts(receiver, manager) -> None:
 def test_every_attempt_is_logged(receiver, manager) -> None:
     rec, url = receiver
     rec.status_queue = [500, 200]
-    wh = manager.register(url=url, events=["all"])
+    # Registered under the same tenant it is fired as. Delivery is scoped by
+    # tenant now, and this test is about attempt logging, not routing — an
+    # unscoped registration would simply not be delivered to.
+    wh = manager.register(url=url, events=["all"], tenant_id="t1")
     event_id = manager.fire("anomaly", {"agent": "a"}, tenant_id="t1")
     _wait_until(lambda: len(rec.received) == 2, timeout_s=30)
 
@@ -235,21 +238,39 @@ def test_every_attempt_is_logged(receiver, manager) -> None:
 
 
 def test_list_deliveries_filters_by_tenant(receiver, manager) -> None:
+    """Two tenants, two registrations.
+
+    This previously registered ONE endpoint, fired as both tenants, and then
+    asserted the delivery *rows* carried different tenant labels — which they
+    did, because the label comes from the `fire()` argument. The endpoint
+    received both tenants' events either way, so the assertion described the
+    leak rather than catching it, under a comment reading "No cross-tenant
+    leakage." With a registration per tenant the claim is finally testable:
+    each tenant's log must hold only its own events.
+    """
     _, url = receiver
-    manager.register(url=url, events=["all"])
+    manager.register(url=url, events=["all"], tenant_id="alpha")
+    manager.register(url=url, events=["all"], tenant_id="beta")
     manager.fire("anomaly", {"agent": "a"}, tenant_id="alpha")
     manager.fire("anomaly", {"agent": "b"}, tenant_id="beta")
-    _wait_until(lambda: len(manager.list_deliveries("alpha")) >= 1, timeout_s=5)
-    _wait_until(lambda: len(manager.list_deliveries("beta"))  >= 1, timeout_s=5)
+    _wait_until(lambda: len(manager.list_deliveries("alpha")) >= 1, timeout_s=15)
+    _wait_until(lambda: len(manager.list_deliveries("beta"))  >= 1, timeout_s=15)
 
     alpha = manager.list_deliveries("alpha")
     beta  = manager.list_deliveries("beta")
     assert all(d["event_id"] for d in alpha)
     assert all(d["event_id"] for d in beta)
-    # No cross-tenant leakage.
+
+    # The assertion that was missing: each log holds only its own tenant's
+    # events. Under the old behaviour both logs held both events.
     alpha_ids = {d["event_id"] for d in alpha}
     beta_ids  = {d["event_id"] for d in beta}
-    assert alpha_ids.isdisjoint(beta_ids)
+    assert alpha_ids.isdisjoint(beta_ids), (
+        "one tenant's delivery log contains another tenant's events"
+    )
+    assert len(alpha) == 1 and len(beta) == 1, (
+        f"expected one delivery per tenant, got alpha={len(alpha)} beta={len(beta)}"
+    )
 
 
 # ── HTTP endpoint integration ──────────────────────────────────────────

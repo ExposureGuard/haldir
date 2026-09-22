@@ -1988,6 +1988,7 @@ def request_approval():
         reason=data.get("reason", ""),
         details=data.get("details"),
         ttl=int(data.get("ttl", 3600)),
+        tenant_id=tenant,
     )
     response = {
         "request_id": req.request_id,
@@ -2002,7 +2003,8 @@ def request_approval():
 @require_api_key
 @require_scope("approvals:read")
 def check_approval(request_id):
-    req = approval_engine.check(request_id)
+    tenant = getattr(request, "tenant_id", "")
+    req = approval_engine.check(request_id, tenant_id=tenant)
     if not req:
         return jsonify({"error": "Approval request not found"}), 404
     return jsonify({
@@ -2027,6 +2029,7 @@ def approve_request(request_id):
         request_id,
         decided_by=data.get("decided_by", ""),
         note=data.get("note", ""),
+        tenant_id=getattr(request, "tenant_id", ""),
     )
     if not ok:
         return jsonify({"error": "Cannot approve — not found, already decided, or expired"}), 400
@@ -2042,6 +2045,7 @@ def deny_request(request_id):
         request_id,
         decided_by=data.get("decided_by", ""),
         note=data.get("note", ""),
+        tenant_id=getattr(request, "tenant_id", ""),
     )
     if not ok:
         return jsonify({"error": "Cannot deny — not found, already decided, or expired"}), 400
@@ -2052,7 +2056,10 @@ def deny_request(request_id):
 @require_api_key
 @require_scope("approvals:read")
 def pending_approvals():
-    pending = approval_engine.get_pending(agent_id=request.args.get("agent_id"))
+    tenant = getattr(request, "tenant_id", "")
+    pending = approval_engine.get_pending(
+        agent_id=request.args.get("agent_id"), tenant_id=tenant,
+    )
     return jsonify({
         "count": len(pending),
         "requests": [
@@ -2134,7 +2141,9 @@ def register_webhook():
 @require_api_key
 @require_scope("webhooks:read")
 def list_webhooks():
-    return jsonify({"webhooks": webhook_mgr.list_webhooks()})
+    return jsonify({
+        "webhooks": webhook_mgr.list_webhooks(getattr(request, "tenant_id", "")),
+    })
 
 
 @app.route("/v1/webhooks/<int:webhook_id>/rotate-secret", methods=["POST"])
