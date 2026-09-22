@@ -11,6 +11,7 @@ Run: python -m pytest tests/test_mcp_catalog.py -v
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -81,6 +82,40 @@ def test_doc_states_the_current_tool_count(doc: str) -> None:
         pytest.skip(f"{doc} makes no tool-count claim")
     assert claims == {len(TOOLS)}, (
         f"{doc} claims {sorted(claims)} tools; the catalog has {len(TOOLS)}"
+    )
+
+
+def test_agent_json_states_the_current_tool_count() -> None:
+    """The same claim, in the document agents read for discovery.
+
+    `.well-known/agent.json` said `mcp_stdio.tool_count: 18` while the stdio
+    catalog held 19. The prose documents are checked above; this one is not
+    prose — it is the machine-readable file an MCP client or a registry
+    parses to decide what it will get, and nothing was comparing it to the
+    catalog it describes.
+    """
+    body = json.loads(_read(".well-known/agent.json"))
+
+    # Found by walking rather than by a fixed path, so moving the field in the
+    # document does not quietly turn this into a test of nothing.
+    found: list[tuple[str, int]] = []
+
+    def walk(node: object, path: str = "") -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "tool_count" and isinstance(value, int):
+                    found.append((f"{path}.{key}", value))
+                walk(value, f"{path}.{key}")
+
+    walk(body)
+    assert found, (
+        "agent.json states no tool_count at all — this test needs updating "
+        "rather than passing"
+    )
+
+    wrong = [(p, v) for p, v in found if v != len(TOOLS)]
+    assert not wrong, (
+        f"agent.json advertises {wrong}; the catalog has {len(TOOLS)}"
     )
 
 
