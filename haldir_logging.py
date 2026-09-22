@@ -177,7 +177,17 @@ def configure_logging(level: str | None = None, json_output: bool | None = None)
     if json_output is None:
         json_output = os.environ.get("HALDIR_LOG_JSON", "1") != "0"
 
-    handler = logging.StreamHandler(sys.stdout)
+    # stderr, not stdout. Log records are diagnostics; stdout belongs to the
+    # program's own output. Sharing the stream put a raw JSON record in the
+    # middle of `haldir serve`'s startup box, which reads as a crash — and,
+    # more seriously, meant anything capturing stdout received log lines
+    # interleaved with the payload it was parsing: `haldir overview | jq`,
+    # `haldir audit --json`, a test harness, or an agent driving the CLI.
+    #
+    # Nothing is lost by moving it. Container runtimes and process managers
+    # collect both streams, and `2>&1` still merges them for anyone who
+    # wants the old view.
+    handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(JsonFormatter() if json_output else TextFormatter())
 
     root = logging.getLogger()
