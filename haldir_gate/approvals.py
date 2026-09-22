@@ -39,6 +39,8 @@ class ApprovalRequest:
     agent_id: str
     action: str
     tool: str
+    tenant_id: str = ""                  # Whose request this is. Every read
+                                         # and every decision is scoped by it.
     details: dict = field(default_factory=dict)
     reason: str = ""                     # Why approval is needed
     amount: float = 0.0                  # If spend-related
@@ -105,6 +107,7 @@ class ApprovalEngine:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS approval_requests (
                     request_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL DEFAULT '',
                     session_id TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
                     action TEXT NOT NULL,
@@ -120,8 +123,18 @@ class ApprovalEngine:
                     decision_note TEXT NOT NULL DEFAULT ''
                 )
             """)
+            # A database created before this column existed gets it added
+            # rather than left to fail every scoped query below. SQLite has
+            # no IF NOT EXISTS for ADD COLUMN, so the error is the check.
+            try:
+                conn.execute(
+                    "ALTER TABLE approval_requests ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''"
+                )
+            except Exception:  # noqa: BLE001 — already present
+                pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_approvals_status ON approval_requests(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_approvals_agent ON approval_requests(agent_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_approvals_tenant ON approval_requests(tenant_id)")
             conn.commit()
             conn.close()
 
@@ -169,14 +182,21 @@ class ApprovalEngine:
     def request_approval(self, session: Any, tool: str, action: str,
                          amount: float = 0.0, reason: str = "",
                          details: dict | None = None,
-                         ttl: int = 3600) -> ApprovalRequest:
-        """Create a pending approval request."""
+                         ttl: int = 3600, tenant_id: str = "") -> ApprovalRequest:
+        """Create a pending approval request.
+
+        `tenant_id` is stored, not merely accepted. It is the only thing that
+        scopes the read and decision paths below, and until it was recorded
+        here every request was filed under the empty tenant — which is how
+        one tenant came to read, list and approve another's.
+        """
         req = ApprovalRequest(
             request_id=f"apr_{secrets.token_urlsafe(16)}",
             session_id=session.session_id,
             agent_id=session.agent_id,
             action=action,
             tool=tool,
+            tenant_id=tenant_id,
             details=details or {},
             reason=reason,
             amount=amount,
@@ -188,9 +208,10 @@ class ApprovalEngine:
         if conn:
             conn.execute(
                 "INSERT INTO approval_requests "
-                "(request_id, session_id, agent_id, action, tool, details, reason, amount, status, created_at, expires_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (req.request_id, req.session_id, req.agent_id, req.action, req.tool,
+                "(request_id, tenant_id, session_id, agent_id, action, tool, details, reason, amount, status, created_at, expires_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (req.request_id, req.tenant_id, req.session_id, req.agent_id,
+                 req.action, req.tool,
                  json.dumps(req.details), req.reason, req.amount, req.status.value,
                  req.created_at, req.expires_at)
             )
@@ -202,22 +223,36 @@ class ApprovalEngine:
 
         return req
 
-    def approve(self, request_id: str, decided_by: str = "", note: str = "") -> bool:
-        """Approve a pending request."""
-        return self._decide(request_id, ApprovalStatus.APPROVED, decided_by, note)
+    def approve(self, request_id: str, decided_by: str = "", note: str = "",
+                tenant_id: str = "") -> bool:
+        """Approve a pending request belonging to `tenant_id`."""
+        return self._decide(request_id, ApprovalStatus.APPROVED, decided_by, note,
+                            tenant_id=tenant_id)
 
-    def deny(self, request_id: str, decided_by: str = "", note: str = "") -> bool:
-        """Deny a pending request."""
-        return self._decide(request_id, ApprovalStatus.DENIED, decided_by, note)
+    def deny(self, request_id: str, decided_by: str = "", note: str = "",
+             tenant_id: str = "") -> bool:
+        """Deny a pending request belonging to `tenant_id`."""
+        return self._decide(request_id, ApprovalStatus.DENIED, decided_by, note,
+                            tenant_id=tenant_id)
 
     def _decide(self, request_id: str, status: ApprovalStatus,
-                decided_by: str, note: str) -> bool:
+                decided_by: str, note: str, tenant_id: str = "") -> bool:
+        """Decide a request, but only one filed under `tenant_id`.
+
+        Another tenant's request is reported exactly as a nonexistent one.
+        Answering "forbidden" would confirm the id exists, which is the
+        enumeration oracle this is meant to close.
+        """
         req = self._requests.get(request_id)
+        if req is not None and req.tenant_id != tenant_id:
+            req = None
 
         conn = self._get_db()
         if not req and conn:
-            row = conn.execute("SELECT * FROM approval_requests WHERE request_id = ?",
-                               (request_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM approval_requests WHERE request_id = ? AND tenant_id = ?",
+                (request_id, tenant_id)
+            ).fetchone()
             if row:
                 req = self._row_to_request(row)
                 self._requests[request_id] = req
@@ -257,15 +292,22 @@ class ApprovalEngine:
 
         return True
 
-    def check(self, request_id: str) -> ApprovalRequest | None:
-        """Check the status of an approval request. Used by agents to poll."""
+    def check(self, request_id: str, tenant_id: str = "") -> ApprovalRequest | None:
+        """Check the status of an approval request. Used by agents to poll.
+
+        Returns None for another tenant's request — indistinguishable from a
+        request that does not exist, deliberately.
+        """
         req = self._requests.get(request_id)
+        if req is not None and req.tenant_id != tenant_id:
+            req = None
 
         if not req:
             conn = self._get_db()
             if conn:
-                row = conn.execute("SELECT * FROM approval_requests WHERE request_id = ?",
-                                   (request_id,)).fetchone()
+                row = conn.execute(
+                    "SELECT * FROM approval_requests WHERE request_id = ? AND tenant_id = ?",
+                    (request_id, tenant_id)).fetchone()
                 conn.close()
                 if row:
                     req = self._row_to_request(row)
@@ -282,45 +324,58 @@ class ApprovalEngine:
 
         return req
 
-    def get_pending(self, agent_id: str | None = None) -> list[ApprovalRequest]:
-        """Get all pending approval requests."""
+    def get_pending(self, agent_id: str | None = None,
+                    tenant_id: str = "") -> list[ApprovalRequest]:
+        """Get this tenant's pending approval requests.
+
+        Unscoped, this returned every tenant's queue — which handed any
+        caller the request ids they would otherwise have to guess.
+        """
         conn = self._get_db()
         if conn:
             if agent_id:
                 rows = conn.execute(
-                    "SELECT * FROM approval_requests WHERE status = 'pending' AND agent_id = ? ORDER BY created_at DESC",
-                    (agent_id,)
+                    "SELECT * FROM approval_requests WHERE status = 'pending' AND tenant_id = ? AND agent_id = ? ORDER BY created_at DESC",
+                    (tenant_id, agent_id)
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM approval_requests WHERE status = 'pending' ORDER BY created_at DESC"
+                    "SELECT * FROM approval_requests WHERE status = 'pending' AND tenant_id = ? ORDER BY created_at DESC",
+                    (tenant_id,)
                 ).fetchall()
             conn.close()
             return [self._row_to_request(r) for r in rows]
         return [r for r in self._requests.values()
-                if r.status == ApprovalStatus.PENDING and not r.is_expired]
+                if r.status == ApprovalStatus.PENDING and not r.is_expired
+                and r.tenant_id == tenant_id]
 
-    def get_history(self, agent_id: str | None = None, limit: int = 50) -> list[ApprovalRequest]:
-        """Get approval history."""
+    def get_history(self, agent_id: str | None = None, limit: int = 50,
+                    tenant_id: str = "") -> list[ApprovalRequest]:
+        """Get this tenant's approval history."""
         conn = self._get_db()
         if conn:
             if agent_id:
                 rows = conn.execute(
-                    "SELECT * FROM approval_requests WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?",
-                    (agent_id, limit)
+                    "SELECT * FROM approval_requests WHERE tenant_id = ? AND agent_id = ? ORDER BY created_at DESC LIMIT ?",
+                    (tenant_id, agent_id, limit)
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM approval_requests ORDER BY created_at DESC LIMIT ?",
-                    (limit,)
+                    "SELECT * FROM approval_requests WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?",
+                    (tenant_id, limit)
                 ).fetchall()
             conn.close()
             return [self._row_to_request(r) for r in rows]
-        return list(self._requests.values())[-limit:]
+        return [r for r in self._requests.values() if r.tenant_id == tenant_id][-limit:]
 
     def _row_to_request(self, row: Any) -> ApprovalRequest:
+        keys = row.keys() if hasattr(row, "keys") else []
         return ApprovalRequest(
             request_id=row["request_id"],
+            # Defensive: a row read from a database that predates the column
+            # has no tenant, and an unattributed request must not be visible
+            # to a tenant that happens to match on everything else.
+            tenant_id=row["tenant_id"] if "tenant_id" in keys else "",
             session_id=row["session_id"],
             agent_id=row["agent_id"],
             action=row["action"],
