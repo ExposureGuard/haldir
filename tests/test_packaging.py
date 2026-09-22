@@ -394,6 +394,95 @@ def test_migrations_are_packaged(pyproject) -> None:
         )
 
 
+# ── The general form of that mistake ─────────────────────────────────
+
+# The three packaging failures above are one mistake made three times: code
+# opens a path beside its own module, the file is in the checkout, and nobody
+# asks whether it is in the package. Each was fixed with an explicit list plus
+# a test for that list — which guards the instance, not the mistake.
+#
+# This finds the instances. It reads every module the package ships, collects
+# the literal path segment each opens relative to its own directory, and
+# requires that segment to be packaged. A new
+# `open(os.path.join(os.path.dirname(__file__), "templates"))` fails here when
+# it is written, instead of in a stranger's terminal a release later.
+
+
+def _shipped_modules(include: list[str]) -> list[str]:
+    """The .py files the include list actually ships.
+
+    Derived from the packaging configuration rather than from a directory
+    listing, so this scan cannot drift from what is really packaged.
+    """
+    found: list[str] = []
+    for entry in include:
+        path = os.path.join(ROOT, entry)
+        if entry.endswith(".py") and os.path.isfile(path):
+            found.append(path)
+        elif os.path.isdir(path):
+            for dirpath, _dirnames, filenames in os.walk(path):
+                found.extend(
+                    os.path.join(dirpath, name)
+                    for name in filenames
+                    if name.endswith(".py")
+                )
+    return found
+
+
+def _paths_opened_beside_the_module(py_file: str) -> set[str]:
+    """Top-level path segments opened relative to `py_file`'s own directory.
+
+    Matches `os.path.join(os.path.dirname(<... __file__ ...>), "seg", ...)` and
+    keeps `seg` — the part that has to appear in the include lists.
+    """
+    with open(py_file, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+
+    segments: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "join"):
+            continue
+        # The first argument has to be the module's own directory.
+        if not any(
+            isinstance(n, ast.Name) and n.id == "__file__"
+            for n in ast.walk(node.args[0])
+        ):
+            continue
+        for arg in node.args[1:]:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                segments.add(arg.value)
+                break
+    return segments
+
+
+def test_every_path_a_shipped_module_opens_is_packaged(pyproject) -> None:
+    wheel = _wheel_include(pyproject)
+    sdist = _sdist_include(pyproject)
+
+    opened: dict[str, set[str]] = {}
+    for module in _shipped_modules(wheel):
+        for segment in _paths_opened_beside_the_module(module):
+            opened.setdefault(segment, set()).add(os.path.relpath(module, ROOT))
+
+    assert opened, (
+        "no module-relative opens were found at all, which means this scan has "
+        "stopped matching how the code opens files — not that the code became "
+        "safer"
+    )
+
+    missing = sorted(s for s in opened if s not in wheel or s not in sdist)
+    assert not missing, (
+        "opened beside a shipped module, but absent from the packaging include "
+        "lists — so they exist for the developer and not for the user: "
+        + "; ".join(
+            f"{s} (opened by {', '.join(sorted(opened[s]))})" for s in missing
+        )
+    )
+
+
 def test_served_content_directories_are_packaged(pyproject) -> None:
     """The dot-directory is the one that got missed.
 
