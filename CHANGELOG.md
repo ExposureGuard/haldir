@@ -3,6 +3,70 @@
 All notable changes to Haldir are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] — 2026-09-23
+
+The "provable boundaries" release. Two authorization failures closed — one
+cross-tenant, where any tenant could read *and approve* any other tenant's
+requests — plus the SSRF fix, and the first tooling built for outside testers.
+
+The theme is one this project keeps meeting: **two halves of an interface that
+each look correct alone, and nothing comparing them.** A schema and a route. A
+declaration file and an implementation. A build-context list and a gitignore. A
+scanner and the source it scans. Every fix below carries a test that *is* the
+comparison, checked in the negative direction too — a guard that cannot fail is
+worse than none.
+
+### Security
+
+- **Cross-tenant isolation.** Any tenant could read and approve any other
+  tenant's requests, and every tenant's webhooks received every tenant's events.
+- **The proxy would fetch any URL a tenant registered.** `register_upstream`
+  took a URL, stored it and fetched it during tool discovery — no scheme check,
+  no address check — and returned part of the response body in the registration
+  reply. Webhooks and approvals already ran `safe_outbound_url`; the proxy did
+  not call it. Now guarded at registration and at both fetch sites, with
+  redirects no longer followed (a public URL answering 302 to loopback passes a
+  registration-time check and is then fetched at the address it redirected to).
+- **An MCP approval argument was accepted, validated, and silently discarded** —
+  the third instance of that shape in this tree, after the SDK `ttl` and the JS
+  `denyRequest` reason.
+
+### Added
+
+- **`haldir_probes`** — a disposable fixture for the three properties a
+  reviewer named as the ones they would attack first: mid-call revocation,
+  timeout-after-commit retries, and audit read-back after reconnect. Each probe
+  carries a control, so a check that always answers "no" cannot pass, and the
+  read-back probe edits a row behind the server's back to prove the verifier
+  can fail.
+- **`demo_quickstart`** — one file that bootstraps a throwaway virtualenv, runs
+  the probes, and deletes everything. Also the entry point for the bundled demo
+  binary.
+- **A break-it playground on `/demo`** — four steps walk the happy path, then
+  three try to break it: spend past the cap, revoke the session mid-flight, act
+  after revocation.
+
+### Fixed
+
+- **`from haldir import ...` had never worked**, and every published example
+  used it — the README, the integration READMEs, six blog posts, the CHANGELOG.
+  The distribution is `haldir`; it shipped no module by that name.
+- **The quickstart animation imported a class that does not exist** (`Haldir`,
+  for `HaldirClient`) and printed a field the response does not contain. It also
+  advertised `0.3.0` for two releases.
+- **A permanently dead webhook was counted as a successful one.**
+- **An omitted `ttl` was sent as `null`**, so two integrations' quickstarts
+  400'd on the first call.
+- **A denial's reason was silently discarded** by the JS SDK, and eight of its
+  methods had no types.
+- **Private notes were baked into the published image**, and the Glama
+  container never started.
+- **Both npm packages declared MIT and shipped no license file.**
+- **The agent card undercounted the tools**, and the sitemap omitted six posts.
+- **`first thirty seconds`** — logs went to stdout and the demo went unmentioned.
+- **Dead-code sweep**, plus a correctness lint gate and the integration suites
+  CI never ran.
+
 ## [0.3.2] — 2026-09-21
 
 The "Postgres correctness" release. Haldir's documented enterprise backend —

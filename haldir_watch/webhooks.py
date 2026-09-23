@@ -400,7 +400,7 @@ class WebhookManager:
         ts = int(time.time())
         headers = {
             "Content-Type":              "application/json",
-            "User-Agent":                "Haldir/0.3.2",
+            "User-Agent":                "Haldir/0.4.0",
             "X-Haldir-Event":            event_type,
             "X-Haldir-Timestamp":        str(ts),
             "X-Haldir-Webhook-Id":       event_id,

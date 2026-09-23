@@ -1,6 +1,6 @@
 {
   "name": "haldir",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "The guardian layer for AI agents — identity, secrets, audit, proxy enforcement via MCP",
   "url": "https://haldir.xyz",
   "mcpEndpoint": "https://haldir.xyz/mcp",

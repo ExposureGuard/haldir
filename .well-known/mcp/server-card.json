@@ -2,7 +2,7 @@
   "$schema": "https://modelcontextprotocol.io/schemas/server-card/v1.json",
   "name": "haldir",
   "display_name": "Haldir — AI Agent Governance",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "summary": "Scoped sessions, encrypted vault, immutable + tamper-evident audit log, RFC 6962 Merkle proofs, and SOC2 audit-prep evidence packs for AI agents.",
   "description": "Haldir is the governance layer agents connect to before calling tools. Use it to: mint scoped sessions with spend limits and TTLs (Gate); store and retrieve encrypted secrets with AES-256-GCM + AAD binding (Vault); log every tool call to a SHA-256 hash-chained + RFC 6962 Merkle-signed audit trail with anomaly detection (Watch); request human-in-the-loop approvals; generate signed audit-prep evidence packs for SOC2 workpapers; and proxy MCP tool calls through a policy enforcement layer.\n\nThe tamper-evidence story is cryptographic, not monitoring: every audit log has a Signed Tree Head an auditor can pin, and inclusion/consistency proofs verify offline with the same primitive Certificate Transparency uses for the global WebPKI.",
   "vendor": {
