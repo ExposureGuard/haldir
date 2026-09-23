@@ -475,7 +475,13 @@ def probe_audit_readback(c: Client, db_path: str | None) -> bool:
 
 # ── Entry point ─────────────────────────────────────────────────────────
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run the probes. `argv` defaults to sys.argv.
+
+    Taking argv is what lets a bundled build call this in-process: a
+    PyInstaller binary has no `-m`, so it cannot re-invoke this file as a
+    module and must call it as a function instead.
+    """
     ap = argparse.ArgumentParser(
         description="Three probes against a Haldir instance.",
         epilog="With --serve this starts a throwaway instance, probes it, and "
@@ -490,7 +496,7 @@ def main() -> int:
     ap.add_argument("--db", default=None,
                     help="path to the SQLite file behind the server, "
                          "for probe 3's tamper control")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     proc: subprocess.Popen | None = None
     try:
