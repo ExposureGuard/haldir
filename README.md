@@ -80,15 +80,18 @@ The sidebar on the left takes you anywhere. The numbered markers point at the pa
 
 ### Play with it yourself
 
-Three things run live, no signup, straight from these links:
-
 All of these ship inside the package and are served by `haldir serve`, so they work on your machine with no account and nothing to deploy:
 
 → **The tamper demo** at `/demo/tamper` — the one in the GIF above. Rewrite a real log row and watch the inclusion proof stop matching the Merkle root. Nothing is simulated; it is the same Merkle code the API ships.
 
-→ **The playground** at `/demo` — walks you through minting a key, opening a scoped session, checking a permission and writing to the audit trail, against a sandbox tenant of your own.
+→ **The playground** at `/demo` — four steps walk the happy path (mint a key, open a scoped session, check a permission, write to the audit trail), then **three try to break it**: spend past the cap, revoke the session mid-flight, and act after revocation. Pick a scope that was never granted in step 03 to see a denial as well as an approval.
 
 → **The gallery** at `/gallery` — every screenshot on this page in one place, if you'd rather look than read.
+
+**Want something to run without installing anything?** There is a one-file
+demo binary — no Python, no clone — and a three-probe fixture that ships with
+the package. Both are in **[DEMO.md](DEMO.md)**: what to run, what you'll see,
+and what each probe is built to catch.
 
 ### The rest of the API
 
@@ -167,7 +170,9 @@ haldir webhooks deliveries             # last 20 retry attempts
 haldir migrate up                      # apply pending schema migrations
 ```
 
-Every command takes `--json` for scripts. `haldir --help` for the full surface.
+`haldir --help` lists every command and **[CLI.md](CLI.md)** is the full
+reference — what each one does, the flags it takes, and which commands support
+`--json` (not all of them do; the reference says which).
 
 ---
 
