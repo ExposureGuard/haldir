@@ -68,11 +68,15 @@ A session is the unit of governance — an agent's identity, its scopes, and its
 spend ceiling. Every other call references one.
 
 ```bash
-haldir session create --agent my-agent --scopes read,execute --spend-limit 5.00
+haldir session create --agent my-agent --scopes read,execute --budget 5.00
 haldir session get ses_xxx
-haldir session check ses_xxx execute
+haldir session check ses_xxx --scope execute
 haldir session revoke ses_xxx
 ```
+
+`create` takes `--agent` (required), `--scopes` (comma-separated), `--ttl`
+(seconds, default 3600) and `--budget` (USD). The other three take the session
+id as a positional argument; `check` takes the scope as `--scope`.
 
 `check` is the one your wrapper calls before acting: it returns whether the
 session may use that scope **right now**, so a revocation takes effect on the
@@ -85,16 +89,24 @@ through Haldir and never hold the raw value.
 
 ```bash
 haldir secret store stripe_key sk_live_xxx
-haldir secret get stripe_key
+haldir secret get stripe_key                 # requires --session; see below
 haldir secret list
 haldir secret delete stripe_key
 ```
 
+`store` takes the name and value positionally, and `--scope` to set the scope
+required to read it back. **`get` is scope-gated** — it needs
+`--session ses_xxx`, and without one the API answers 400 rather than returning
+the value. `list` returns names, never values.
+
 ## Payments
 
 ```bash
-haldir pay authorize --session ses_xxx --amount 29.99 --description "API subscription"
+haldir pay authorize ses_xxx 29.99 --description "API subscription"
 ```
+
+Both the session id and the amount are positional. `--currency` defaults to
+USD.
 
 Authorizes against the session's spend cap. Over the cap it is **refused**, not
 logged-and-allowed.
@@ -106,7 +118,7 @@ into an RFC 6962 Merkle tree with Ed25519 Signed Tree Heads — so an auditor ca
 verify offline that history was not edited.
 
 ```bash
-haldir audit log --session ses_xxx --tool stripe --action charge --cost 0.50
+haldir audit log ses_xxx --tool stripe --action charge --cost 0.50
 haldir audit trail --agent my-agent --limit 50
 haldir audit stats
 haldir audit spend
@@ -120,7 +132,7 @@ Verification, for an auditor who does not trust the server:
 haldir audit tree-head                    # the current Signed Tree Head
 haldir audit prove aud_xxx                # inclusion proof for one entry
 haldir audit verify-proof proof.json      # verify it offline
-haldir audit consistency --first 100 --second 250
+haldir audit consistency 100 250          # earlier size, later size
 ```
 
 `verify-proof` is the one that matters: it takes the archived proof and
@@ -135,7 +147,7 @@ and every call is evaluated before it is forwarded.
 ```bash
 haldir proxy register stripe https://mcp.example.com/stripe
 haldir proxy tools
-haldir proxy call stripe.charge --arg amount=29.99
+haldir proxy call stripe.charge --args '{"amount": 29.99}' --session ses_xxx
 haldir proxy policy add --type allow_list --tools list_customers,get_invoice
 ```
 
@@ -171,7 +183,7 @@ wrong; `ready` answers yes or no.
 
 ```bash
 haldir webhooks deliveries              # recent attempts, with status codes
-haldir webhooks rotate <id-or-url>      # rotate the HMAC secret
+haldir webhooks rotate 3                # rotate the HMAC secret (numeric id)
 ```
 
 Rotation keeps the previous secret valid for an overlap window, so a receiver
