@@ -3967,7 +3967,14 @@ def register_upstream():
     cached = _idempotency_lookup("/v1/proxy/upstreams", data, tenant)
     if cached is not None:
         return cached
-    server = proxy.register_upstream(name, url)
+    try:
+        server = proxy.register_upstream(name, url)
+    except UnsafeURL as e:
+        # A refused URL is the caller's mistake, not a server fault. Same
+        # handling as the webhook route: without it this surfaced as a 500
+        # with a traceback in the log, which tells the caller nothing about
+        # which part of the URL was the problem.
+        return jsonify({"error": str(e), "code": "unsafe_url"}), 400
     resp = {
         "registered": True,
         "name": name,

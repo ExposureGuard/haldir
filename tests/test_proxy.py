@@ -19,6 +19,7 @@ Run: python -m pytest tests/test_proxy.py -v
 from __future__ import annotations
 
 import datetime
+import json
 import os
 import sys
 
@@ -27,6 +28,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from haldir_gate.proxy import HaldirProxy, UpstreamServer
+from haldir_outbound import UnsafeURL
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
@@ -49,20 +51,110 @@ def session() -> _StubSession:
 
 # ── Upstream registration ────────────────────────────────────────────────
 
-def test_register_upstream_stores_server(proxy: HaldirProxy) -> None:
+def test_register_upstream_stores_server(proxy: HaldirProxy, monkeypatch) -> None:
     # register_upstream fires a discovery request at the upstream; with no
     # upstream running the server is marked unhealthy. We only assert the
     # registration bookkeeping (url, presence), not network-dependent state.
+    #
+    # The private-address opt-out is set because this stub lives on loopback.
+    # That is the self-hosted case the switch exists for; the guard itself is
+    # asserted separately, below.
+    monkeypatch.setenv("HALDIR_ALLOW_PRIVATE_OUTBOUND", "1")
     proxy.register_upstream("stripe", "http://127.0.0.1:1")
     assert "stripe" in proxy._upstreams
     assert proxy._upstreams["stripe"].url == "http://127.0.0.1:1"
 
 
-def test_register_upstream_initial_state_sane(proxy: HaldirProxy) -> None:
+def test_register_upstream_initial_state_sane(proxy: HaldirProxy, monkeypatch) -> None:
+    monkeypatch.setenv("HALDIR_ALLOW_PRIVATE_OUTBOUND", "1")
     proxy.register_upstream("github", "http://127.0.0.1:1")
     u = proxy._upstreams["github"]
     assert u.total_calls == 0
     assert u.total_errors == 0
+
+
+# ── Upstream URLs are guarded the way webhook URLs are ───────────────────
+#
+# The URL is tenant-supplied on the hosted service, which puts it in the same
+# class as a webhook URL — but it was not checked at all. An upstream pointed
+# at the metadata endpoint was accepted, fetched during tool discovery, and
+# its response body returned in the registration reply.
+
+@pytest.fixture
+def discovery_calls(monkeypatch) -> list[str]:
+    """Record what registration would have fetched, without fetching it.
+
+    register_upstream fires a real tools/list request at whatever URL it is
+    given. Stubbing it keeps these tests off the network and lets them assert
+    the stronger property — not only that a bad URL is refused, but that no
+    request was made to it at all.
+    """
+    calls: list[str] = []
+    monkeypatch.setattr(HaldirProxy, "_discover_tools",
+                        lambda self, server: calls.append(server.url))
+    return calls
+
+
+@pytest.mark.parametrize("url", [
+    "file:///etc/passwd",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://127.0.0.1:8000/healthz",
+    "http://[::1]:8000/",
+])
+def test_a_refused_upstream_url_is_not_registered(proxy: HaldirProxy,
+                                                  url: str,
+                                                  discovery_calls) -> None:
+    """Refused, refused before it is stored, and never fetched."""
+    with pytest.raises(UnsafeURL):
+        proxy.register_upstream("probe", url)
+    assert "probe" not in proxy._upstreams
+    assert discovery_calls == []
+
+
+def test_a_public_upstream_url_is_accepted(proxy: HaldirProxy,
+                                           discovery_calls) -> None:
+    """The control. Without this, the test above would also pass against a
+    guard that refuses everything, which is not a guard."""
+    proxy.register_upstream("probe", "https://example.com/mcp")
+    assert proxy._upstreams["probe"].url == "https://example.com/mcp"
+    assert discovery_calls == ["https://example.com/mcp"]
+
+
+def test_a_private_upstream_is_allowed_when_the_opt_out_is_set(
+        proxy: HaldirProxy, monkeypatch, discovery_calls) -> None:
+    """Self-hosted deployments point upstreams at internal services — this
+    module's own config example is `http://localhost:3001`. The opt-out is
+    what stops the guard being security theatre for them."""
+    monkeypatch.setenv("HALDIR_ALLOW_PRIVATE_OUTBOUND", "1")
+    proxy.register_upstream("local", "http://127.0.0.1:1")
+    assert "local" in proxy._upstreams
+
+
+def test_the_opt_out_still_honours_its_original_name(
+        proxy: HaldirProxy, monkeypatch, discovery_calls) -> None:
+    """HALDIR_ALLOW_PRIVATE_WEBHOOKS shipped first. Two switches for one
+    decision is how a deployment ends up with the check relaxed in one place
+    and enforced in the other, so the old name stays an alias."""
+    monkeypatch.setenv("HALDIR_ALLOW_PRIVATE_WEBHOOKS", "1")
+    proxy.register_upstream("local", "http://127.0.0.1:1")
+    assert "local" in proxy._upstreams
+
+
+def test_a_call_to_an_upstream_that_is_now_private_is_refused(
+        proxy: HaldirProxy) -> None:
+    """The call-time re-check, asserted directly.
+
+    Registration-time checking alone cannot hold: a name that resolved to a
+    public address then can resolve inward by the time a call is made. This
+    builds the server by hand to reach that path without a rebinding DNS
+    server, and asserts the call carries no arguments anywhere.
+    """
+    server = UpstreamServer(name="rebound", url="http://127.0.0.1:8000/mcp")
+    result = proxy._forward(server, "some_tool", {"secret": "value"})
+
+    assert result.get("isError") is True
+    body = json.dumps(result)
+    assert "not a public address" in body
 
 
 # ── No policies = all calls pass ─────────────────────────────────────────

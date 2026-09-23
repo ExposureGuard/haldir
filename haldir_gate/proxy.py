@@ -40,6 +40,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from haldir_outbound import safe_outbound_url
+
 
 @dataclass
 class UpstreamServer:
@@ -85,7 +87,19 @@ class HaldirProxy:
         self._db_path = db_path
 
     def register_upstream(self, name: str, url: str) -> UpstreamServer:
-        """Register an upstream MCP server to proxy through."""
+        """Register an upstream MCP server to proxy through.
+
+        Raises UnsafeURL if `url` is not one Haldir may fetch.
+
+        Checked before the server is stored, not only before it is called, so
+        a refused URL never becomes a registered upstream that a later call
+        would reach. The URL here is tenant-supplied on the hosted service,
+        which puts it in the same class as a webhook URL: without this, a
+        tenant could point an upstream at the metadata endpoint or at any
+        internal service and read the body back out of the registration
+        response.
+        """
+        safe_outbound_url(url)
         server = UpstreamServer(name=name, url=url)
         self._upstreams[name] = server
         # Discover tools from upstream
@@ -96,12 +110,22 @@ class HaldirProxy:
         """Call tools/list on an upstream server to discover its tools."""
         try:
             import httpx
+            # Re-checked here and not only at registration: a name that
+            # resolved to a public address then can resolve to 127.0.0.1 by
+            # the time it is fetched, which is the DNS-rebinding shape a
+            # registration-time check never sees.
+            safe_outbound_url(server.url)
             resp = httpx.post(
                 server.url,
                 json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
                 headers={"Content-Type": "application/json"},
                 timeout=15,
-                follow_redirects=True,
+                # Not followed. A public URL answering 302 to a loopback
+                # address passes the check above and is then fetched at the
+                # address it redirected to — the check bypassed rather than
+                # satisfied. MCP JSON-RPC endpoints do not legitimately
+                # redirect.
+                follow_redirects=False,
             )
             server._raw_status = resp.status_code
             server._raw_body = resp.text[:500]
@@ -266,6 +290,10 @@ class HaldirProxy:
 
         try:
             import httpx
+            # Same re-check as discovery, and for the same reason: this is
+            # the call that carries the agent's arguments, so it is the one
+            # worth reaching the internal network with.
+            safe_outbound_url(server.url)
             resp = httpx.post(
                 server.url,
                 json={
@@ -276,7 +304,7 @@ class HaldirProxy:
                 },
                 headers={"Content-Type": "application/json"},
                 timeout=30,
-                follow_redirects=True,
+                follow_redirects=False,
             )
             data = resp.json()
             return dict(data.get("result", {"content": [{"type": "text", "text": "Empty response"}]}))
