@@ -149,12 +149,20 @@ class APIClient:
         return h
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict:
-        """Make a request, return parsed JSON. Exits on error."""
+        """Make a request, return parsed JSON. Exits on error.
+
+        Caller-supplied headers are merged over the defaults rather than
+        forwarded, because `headers` is also passed below — so a caller with
+        one of its own was a duplicate keyword argument, not an override.
+        `haldir secret get --session` did exactly that and died with a
+        TypeError before the request was made.
+        """
         url = f"{self.base_url}{path}"
+        headers = {**self._headers(), **(kwargs.pop("headers", None) or {})}
         try:
             resp = httpx.request(
                 method, url,
-                headers=self._headers(),
+                headers=headers,
                 timeout=30.0,
                 **kwargs,
             )
