@@ -24,6 +24,28 @@ from __future__ import annotations
 import os
 
 
+def _package_version() -> str:
+    """The version this animation advertises, read from pyproject.toml.
+
+    Read rather than written here. The hardcoded "haldir-0.3.0" this
+    replaced was two releases stale by the time anyone looked, and this SVG
+    is the first thing a visitor to the README sees — an install line that
+    names a version nobody can get is a poor first sentence.
+
+    Parsed by hand rather than with tomllib, which is 3.11+ while this
+    package supports 3.10.
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "pyproject.toml"), encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("version"):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    raise RuntimeError("no version line in pyproject.toml")
+
+
+VERSION = _package_version()
+
+
 # ── Script ─────────────────────────────────────────────────────────────
 #
 # Each entry is (delay_seconds_from_start, kind, text).
@@ -35,34 +57,41 @@ import os
 #   kind "result"  → REPL return value, yellow
 #   kind "blank"   → empty spacer line
 #
+# Every line below was run against a live instance and pasted back. The
+# script this replaced imported a class named `Haldir` that has never
+# existed, and printed a `chain_verified` field the response does not
+# contain, so a reader who copied it failed on the first line.
+#
+# Spelled that way on purpose: it is what the fix was, not an example to
+# copy. `tests/test_public_api.py` reads this file for importable names and
+# would rightly flag the literal version of it.
+#
 FRAMES: list[tuple[float, str, str]] = [
     (0.0,  "prompt",  "pip install haldir"),
-    (0.6,  "output",  "Successfully installed haldir-0.3.0"),
+    (0.6,  "output",  f"Successfully installed haldir-{VERSION}"),
     (1.4,  "blank",   ""),
-    (1.8,  "prompt",  "export HALDIR_API_KEY=hld_live_..."),
+    (1.8,  "prompt",  "export HALDIR_API_KEY=hld_..."),
     (2.6,  "blank",   ""),
     (3.0,  "prompt",  "python"),
-    (3.5,  "repl",    "from haldir import Haldir"),
-    (4.2,  "repl",    "h = Haldir()"),
-    (5.0,  "repl",    's = h.create_session('),
-    (5.3,  "repl",    '    agent_id="my-agent",'),
-    (5.6,  "repl",    '    scopes=["read", "execute"],'),
-    (5.9,  "repl",    '    spend_limit=5.00)'),
-    (6.8,  "repl",    "s.session_id"),
-    (7.2,  "result",  "'ses_abc123def456'"),
-    (8.0,  "blank",   ""),
-    (8.4,  "comment", "# Every agent call: check -> act -> log"),
-    (9.2,  "repl",    'h.check_permission(s.session_id, "execute")'),
-    (9.9,  "result",  "{'allowed': True, 'remaining_budget': 5.00}"),
-    (10.8, "blank",   ""),
-    (11.2, "repl",    "h.log_action("),
-    (11.5, "repl",    "    session_id=s.session_id,"),
-    (11.8, "repl",    '    tool="stripe", action="charge",'),
-    (12.1, "repl",    "    cost_usd=0.50)"),
-    (12.9, "result",  "{'entry_id': 'aud_789', 'chain_verified': True}"),
-    (13.7, "blank",   ""),
-    (14.1, "comment", "# Audit trail is tamper-evident. Spend is capped."),
-    (14.9, "comment", "# Your agent is governed."),
+    (3.5,  "repl",    "from haldir import HaldirClient"),
+    (4.2,  "repl",    'h = HaldirClient(api_key="hld_...",'),
+    (4.5,  "repl",    '                   base_url="http://127.0.0.1:8000")'),
+    (5.2,  "repl",    's = h.create_session("my-agent",'),
+    (5.5,  "repl",    '    scopes=["read", "execute"],'),
+    (5.8,  "repl",    '    spend_limit=5.00)'),
+    (6.6,  "repl",    's["session_id"]'),
+    (7.0,  "result",  "'ses_abc123def456'"),
+    (7.8,  "blank",   ""),
+    (8.2,  "comment", "# Every agent call: check -> act -> log"),
+    (9.0,  "repl",    'h.check_permission(s["session_id"], "execute")'),
+    (9.7,  "result",  "{'allowed': True, 'scope': 'execute'}"),
+    (10.6, "blank",   ""),
+    (11.0, "repl",    'h.log_action(s["session_id"], "stripe",'),
+    (11.3, "repl",    '             "charge", 0.50)'),
+    (12.1, "result",  "{'entry_id': 'aud_789', 'logged': True}"),
+    (12.9, "blank",   ""),
+    (13.3, "comment", "# Audit trail is tamper-evident. Spend is capped."),
+    (14.1, "comment", "# Your agent is governed."),
 ]
 
 LOOP_SECONDS = 18.0           # one full cycle before restart

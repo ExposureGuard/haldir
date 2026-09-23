@@ -58,6 +58,12 @@ def _stated_versions() -> dict[str, str]:
         # before writing a bug report, so it disagreeing with the package is
         # the same failure this test exists to prevent.
         "haldir.py":            r'^__version__ = "([^"]+)"',
+        # The quickstart animation. It opens the README and sits at the top of
+        # /demo, and it advertised `haldir-0.3.0` for two releases — an install
+        # line naming a version nobody could get. It is now generated from
+        # pyproject.toml, and this asserts the generated file was regenerated
+        # rather than edited by hand.
+        "demo/quickstart.svg":  r"haldir-([0-9][0-9.]*)",
     }
     for rel, pat in patterns.items():
         m = re.search(pat, _read(rel), re.M)
