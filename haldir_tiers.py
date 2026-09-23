@@ -22,21 +22,33 @@ test instead of reaching a customer.
 
 ## The usage model
 
-Cloud and API are usage-based on **API calls to /v1/***. A monthly platform
-fee buys an allowance of those calls, and usage past the allowance is billed
-rather than refused. The allowances are sized so the agent count on a plan is
-actually usable at it, which the previous numbers were not:
+Cloud and API are **pure usage billing**: one rate per API call to /v1/*, and
+no subscription. Nothing recurs, there is nothing to upgrade to, and an
+account that makes no calls owes nothing.
 
-    Pro allowed 10 agents and 50,000 API calls/month. One agent costs 86,400
-    of them (see the assumptions below), so the plan ran out less than
-    two-thirds of the way through a single agent's month — while advertising
-    ten. The ceiling would have been hit mid-task by an agent whose whole
-    purpose is to be audited.
+This replaced a $99/month plan with a 2.5M-call allowance and an overage
+rate. That shape needed two numbers that had to agree with each other — the
+allowance and the rate — plus an agent count the allowance had to be sized
+against, and it had been got wrong three times. A single rate has one number
+and no arithmetic to get wrong.
 
-Metering API calls rather than seats or agents is what lets a plan express
-the difference between a fleet doing nothing and a fleet doing work. It has
-one consequence worth naming: the meter counts calls, including the ones that
-do nothing, so a customer polling in a loop pays for the polling. That is the
+    RATE_USD_PER_CALL is $40 per million. That matches the effective rate the
+    subscription charged at its own allowance ($99 / 2.5M = $39.60/M), so a
+    customer using what the old plan included pays about what they paid
+    before. It is deliberately below the old $100/M overage rate, which
+    existed to make upgrading attractive; with nothing to upgrade to, that
+    reason is gone and the number it justified is not.
+
+Free is the exception and stays an allowance, because there is no card on
+file to bill: 10,000 calls a month, hard-capped, one agent. The agent cap
+survives on free alone — usage alone cannot express "do not run a fleet on
+somebody else's unmetered allowance", since one runaway agent can burn the
+whole allowance in hours.
+
+Metering API calls rather than seats or agents is what lets the price express
+the difference between a fleet doing nothing and a fleet doing work. One
+consequence worth naming: the meter counts calls, including the ones that do
+nothing, so a customer polling in a loop pays for the polling. That is the
 normal shape of an API product and it is why the plan cards say "API calls"
 rather than the vaguer "actions" the column is still named after.
 """
@@ -56,6 +68,25 @@ from typing import Any
 # wrong because of it. The field name is kept for compatibility with the
 # usage table and the API surface; the unit it holds is an API call.
 METERED_UNIT = "API call"
+
+# What one API call costs, in USD, on the metered plan.
+#
+# $0.00004 = $40 per million. Written as a per-call number because that is the
+# unit the meter counts and the unit `overage_cost()` multiplies; the per-
+# million figure is the one humans compare, so it is stated here and rendered
+# on the pricing page rather than living only in someone's head.
+#
+# Kept equal to the effective rate the retired $99/2.5M plan charged
+# ($39.60/M) so that moving to pure usage did not silently reprice anybody.
+RATE_USD_PER_CALL = 0.00004
+RATE_USD_PER_MILLION = RATE_USD_PER_CALL * 1_000_000
+
+# Calls a free tenant gets each month before it is refused. Free has no card
+# on file, so this is a ceiling rather than an allowance to bill past.
+FREE_CALLS_PER_MONTH = 10_000
+
+# Free is also the only plan with an agent cap — see the docstring.
+FREE_AGENTS = 1
 
 # ── Sizing assumptions ───────────────────────────────────────────────
 #
@@ -90,12 +121,12 @@ def api_calls_per_agent_per_month() -> int:
 TIERS: dict[str, dict[str, Any]] = {
     "free": {
         "label": "Free",
-        "agents": 1,
+        "agents": FREE_AGENTS,
         # ~7 days of continuous single-agent use. The old 1,000 was about
         # seventeen hours: too short to decide anything, and far too short to
         # produce the audit evidence the product is sold on — you cannot
         # evaluate a compliance tool on a workpaper it cannot fill.
-        "actions_per_month": 10_000,
+        "actions_per_month": FREE_CALLS_PER_MONTH,
         "price_usd_month": 0,
         # No card on file, so no overage: the allowance is the allowance.
         "overage_usd_per_action": None,
@@ -109,28 +140,30 @@ TIERS: dict[str, dict[str, Any]] = {
             "Community support",
         ],
     },
-    "pro": {
-        "label": "Pro",
-        "agents": 25,
-        # Sized to the agent count, with headroom: 25 agents x 86,400 =
-        # 2,160,000, so the allowance has to clear that. This is the number
-        # that makes the plan's own agent limit meaningful, and it has been
-        # wrong twice — first 50,000 (a tenth of one agent), then 1,000,000
-        # (a rounder figure 80,000 short), then 1,500,000 sized against a
-        # unit that was not the one being metered. Each time the arithmetic
-        # test caught it, which is the reason that test exists.
-        "actions_per_month": 2_500_000,
-        "price_usd_month": 99,
-        # $100 per additional million, about 2.5x the effective included rate
-        # of $99/2.5M — the usual shape for overage. It has to stay above the
-        # included rate or nobody would ever upgrade; they would just run
-        # past the cap.
-        "overage_usd_per_action": 0.0001,
+    "usage": {
+        "label": "Usage",
+        # No agent limit. Agent count was a plan dimension when a plan had to
+        # be sized to it; with one rate and no subscription there is nothing
+        # for a cap to protect, and the customer is paying per call either
+        # way. The free-tier cap is a separate thing — see the docstring.
+        "agents": 999_999,
+        # None, not 0: no calls are included, and 0 would render as an
+        # allowance of zero on the card and as "remaining: 0" in the rate
+        # limit headers — a limit that reads as already exceeded rather than
+        # as one that does not exist.
+        "actions_per_month": None,
+        # Nothing recurs on any plan now. The key is kept because the pricing
+        # page and the tests read it, and because deleting it would make
+        # "does this recur?" a question about a missing key rather than a
+        # stated zero.
+        "price_usd_month": 0,
+        "overage_usd_per_action": RATE_USD_PER_CALL,
         "hard_cap": False,
-        "blurb": "For teams running multiple agents in production.",
+        "blurb": "Pay for what you call. No subscription, no minimum.",
         "features": [
             "Everything in Free",
-            "Usage-based: overage billed, never blocked",
+            "No monthly fee — pay only for calls you make",
+            "Unlimited agents",
             "Anomaly detection",
             "Webhooks (Slack, Discord)",
             "Human-in-the-loop approvals",
@@ -175,14 +208,24 @@ def feature_lines(tier: str) -> list[str]:
         f"{agents} agent" if agents == 1 else
         f"{agents} agents"
     )
-    included = plan.get("actions_per_month", 0)
-    if included >= 999_999_999:
+    included = plan.get("actions_per_month")
+    rate = plan.get("overage_usd_per_action")
+    if included is None:
+        # Nothing is included, so there is nothing to be "beyond" — the rate
+        # is the whole card, not an overage note under an allowance.
+        if rate is not None:
+            lines.append(
+                f"${RATE_USD_PER_MILLION:,.0f} per million API calls"
+            )
+        lines.append("No monthly fee and no minimum — idle costs nothing")
+    elif included >= 999_999_999:
         lines.append("Unlimited API calls / month")
     else:
         lines.append(f"{included:,} API calls / month included")
-    rate = plan.get("overage_usd_per_action")
-    if rate is not None:
-        lines.append(f"${rate:,.4f} per API call beyond that, billed not blocked")
+        if rate is not None:
+            lines.append(
+                f"${rate:,.4f} per API call beyond that, billed not blocked"
+            )
     lines.extend(plan.get("features", []))
     return lines
 
@@ -191,10 +234,29 @@ def feature_lines(tier: str) -> list[str]:
 # mapping — must not silently become Enterprise.
 DEFAULT_TIER = "free"
 
+# Plans that were renamed, pointing at what they are now.
+#
+# "pro" was a $99/month subscription. A `subscriptions` row written by that
+# version still says "pro", and the fallback above would resolve it to free —
+# dropping a paying tenant onto the 10,000-call hard cap mid-month. An alias
+# rather than a duplicate entry, so there is one plan body and no second copy
+# to drift.
+RENAMED_TIERS = {"pro": "usage"}
 
-def limits(tier: str) -> dict[str, Any]:
-    """The plan dict for `tier`, falling back to free."""
-    return TIERS.get(tier or DEFAULT_TIER, TIERS[DEFAULT_TIER])
+
+def limits(tier: str, table: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """The plan dict for `tier`, falling back to free.
+
+    `table` defaults to TIERS. It is a parameter because a caller may hold
+    its own reference to the table — api.py's TIER_LIMITS, which nine test
+    modules replace to lift the free-tier agent cap. Resolving through TIERS
+    directly would walk straight past that replacement: the fixture would
+    lift a cap nobody reads, and the suite would start 403-ing on "Agent
+    limit reached" in files that never mentioned agents.
+    """
+    tbl = TIERS if table is None else table
+    key = RENAMED_TIERS.get(tier or "", tier or DEFAULT_TIER)
+    return tbl.get(key, tbl[DEFAULT_TIER])
 
 
 def overage_cost(tier: str, actions_over: int) -> float | None:

@@ -19,7 +19,7 @@ Returned shape (build_overview):
 
     {
       "tenant_id":   "...",
-      "tier":        "free" | "pro" | "enterprise",
+      "tier":        "free" | "usage" | "enterprise",
       "generated_at": "2026-04-19T...Z",
       "usage": {
           "actions_this_month":    int,
@@ -94,10 +94,23 @@ def build_overview(
     """Compose the dashboard payload. Every section is computed from
     SQL aggregates so a tenant with millions of rows still resolves in
     a handful of milliseconds."""
-    limits = tier_limits or _DEFAULT_TIER_LIMITS
-
     tier = _tier(db_path, tenant_id)
-    tier_caps = limits.get(tier, limits["free"])
+    if tier_limits is None:
+        # Through haldir_tiers.limits(), which carries the rename table. The
+        # raw dict does not, so a tenant whose stored tier still says "pro"
+        # would be dashboarded against free's cap while the rate limiter
+        # billed them as usage — two answers, one tenant.
+        #
+        # The table is passed rather than defaulted, so this module still
+        # holds the same table object api.py does — which
+        # tests/test_tiers.py asserts, and which is what makes a replacement
+        # of it visible here.
+        tier_caps = haldir_tiers.limits(tier, _DEFAULT_TIER_LIMITS)
+    else:
+        # A caller-supplied table (tests) is honoured as given, with the
+        # rename applied so the key it looks up exists if the table has it.
+        key = haldir_tiers.RENAMED_TIERS.get(tier, tier)
+        tier_caps = tier_limits.get(key, tier_limits["free"])
 
     return {
         "tenant_id":    tenant_id,
@@ -150,14 +163,23 @@ def _usage(db_path: str, tenant_id: str, tier_caps: dict[str, int]) -> dict[str,
         conn.close()
     actions = int(row["action_count"]) if row else 0
     spend = float(row["total_spend_usd"]) if row else 0.0
-    cap = int(tier_caps.get("actions_per_month", 0))
+    # None means the plan includes no calls at all, so `int()` on it is a
+    # TypeError rather than a zero — handled here rather than with a default,
+    # because a default would silently turn "every call is billable" into
+    # "nothing is".
+    raw_cap = tier_caps.get("actions_per_month")
+    cap = int(raw_cap) if raw_cap is not None else None
     pct = (actions / cap) if cap else 0.0
 
     # Usage past the allowance is billed on metered plans rather than refused,
     # so it has to be visible — a customer who cannot see what they are
     # accruing cannot make a decision about it, and an overage that only
     # appears on an invoice a month later reads as a billing error.
-    over = max(0, actions - cap) if cap else 0
+    #
+    # With no allowance, every call is past it. Falling into the `if cap`
+    # branch would report zero overage for the plan whose entire revenue is
+    # the overage — a dashboard reading $0.00 while the limiter bills.
+    over = actions if cap is None else (max(0, actions - cap) if cap else 0)
     tier = _tier(db_path, tenant_id)
     overage_usd = haldir_tiers.overage_cost(tier, over)
 

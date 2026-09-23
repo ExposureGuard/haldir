@@ -58,6 +58,11 @@ def _stated_versions() -> dict[str, str]:
         # before writing a bug report, so it disagreeing with the package is
         # the same failure this test exists to prevent.
         "haldir.py":            r'^__version__ = "([^"]+)"',
+        # The marketing page's schema.org block — what a crawler reads to
+        # learn which version this is. It sat at 0.3.0 through 0.3.1 and
+        # 0.3.2 with nothing comparing it, because every discovery-surface
+        # pattern above points at `.well-known/` and this one is not there.
+        "landing/index.html":   r'"softwareVersion":\s*"([^"]+)"',
     }
     for rel, pat in patterns.items():
         m = re.search(pat, _read(rel), re.M)
