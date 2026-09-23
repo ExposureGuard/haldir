@@ -42,17 +42,25 @@ ALLOWED_SCHEMES = ("http", "https")
 
 # Opt-out for the address check only, for self-hosted deployments.
 #
-# On the hosted service a webhook URL is attacker-controlled: any tenant can
-# register one, so it must not be able to reach the metadata endpoint or the
-# internal network. Self-hosted is the other way round — the operator owns
-# both ends, and pointing a webhook at an internal service (a Slack relay, a
-# ticketing bridge, something on the private subnet) is a normal thing to
-# want. Refusing it by default there would be security theatre that pushes
-# people to disable the check entirely.
+# On the hosted service an outbound URL is attacker-controlled: any tenant can
+# register a webhook or a proxy upstream, so neither may reach the metadata
+# endpoint or the internal network. Self-hosted is the other way round — the
+# operator owns both ends, and pointing a webhook at an internal service (a
+# Slack relay, a ticketing bridge, something on the private subnet) is a
+# normal thing to want. Refusing it by default there would be security
+# theatre that pushes people to disable the check entirely.
 #
-# Set HALDIR_ALLOW_PRIVATE_WEBHOOKS=1 to permit private addresses. It does
+# Set HALDIR_ALLOW_PRIVATE_OUTBOUND=1 to permit private addresses. It does
 # not relax the scheme check.
-ALLOW_PRIVATE_ENV = "HALDIR_ALLOW_PRIVATE_WEBHOOKS"
+ALLOW_PRIVATE_ENV = "HALDIR_ALLOW_PRIVATE_OUTBOUND"
+
+# The name this shipped under, when webhooks were the only caller.
+#
+# It is accepted as an alias rather than kept as a parallel setting: the
+# proxy needs the same opt-out for the same reason, and two switches for one
+# decision is how a deployment ends up with the check relaxed in one place
+# and enforced in the other.
+ALLOW_PRIVATE_ENV_LEGACY = "HALDIR_ALLOW_PRIVATE_WEBHOOKS"
 
 
 class UnsafeURL(ValueError):
@@ -60,8 +68,10 @@ class UnsafeURL(ValueError):
 
 
 def _private_allowed() -> bool:
-    return os.environ.get(ALLOW_PRIVATE_ENV, "").strip().lower() in (
-        "1", "true", "yes", "on",
+    on = ("1", "true", "yes", "on")
+    return any(
+        os.environ.get(var, "").strip().lower() in on
+        for var in (ALLOW_PRIVATE_ENV, ALLOW_PRIVATE_ENV_LEGACY)
     )
 
 
@@ -123,10 +133,10 @@ def safe_outbound_url(url: str) -> str:
     public now and private a moment later. That is why callers check at
     delivery time as well as at registration.
 
-    The address half is skipped entirely when HALDIR_ALLOW_PRIVATE_WEBHOOKS
-    is set — see the note on that constant. The scheme and credential checks
-    are not, so a self-hosted deployment can still not be talked into
-    reading a file.
+    The address half is skipped entirely when HALDIR_ALLOW_PRIVATE_OUTBOUND
+    (or the older HALDIR_ALLOW_PRIVATE_WEBHOOKS) is set — see the note on
+    that constant. The scheme and credential checks are not, so a
+    self-hosted deployment can still not be talked into reading a file.
     """
     if not isinstance(url, str) or not url.strip():
         raise UnsafeURL("webhook URL is empty")
