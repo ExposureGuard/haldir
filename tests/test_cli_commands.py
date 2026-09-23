@@ -306,3 +306,61 @@ def test_migrate_up_then_status(tmp_path, monkeypatch, capsys) -> None:
     cli.cmd_migrate(_ns(db_path=db, migrate_command="verify"))
     out3 = capsys.readouterr().out
     assert "match" in out3
+
+
+# ── secret get — the header merge in APIClient.request ────────────────
+#
+# `haldir secret get --session` was unreachable. `request()` supplies its own
+# `headers=`, so the caller passing one as well was a duplicate keyword
+# argument — a TypeError raised before the request was made, not an override:
+#
+#   TypeError: httpx.request() got multiple values for keyword argument 'headers'
+
+def test_request_merges_a_callers_headers_with_its_own(monkeypatch) -> None:
+    """Asserted directly on request(), because that is where it broke."""
+    sent: dict[str, Any] = {}
+
+    def capture(method: str, url: str, **kwargs: Any) -> httpx.Response:
+        sent.update(kwargs)
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(cli.httpx, "request", capture)
+    client = cli.APIClient(api_key="hld_test", base_url="http://test.invalid")
+    client.request("GET", "/v1/secrets/k1", headers={"X-Session-ID": "ses_1"})
+
+    # The caller's header survives...
+    assert sent["headers"]["X-Session-ID"] == "ses_1"
+    # ...and so does the one request() adds itself, which is the half a
+    # naive `kwargs.setdefault("headers", ...)` would have dropped.
+    assert sent["headers"]["Authorization"] == "Bearer hld_test"
+    assert sent["headers"]["Content-Type"] == "application/json"
+
+
+def test_request_still_works_without_caller_headers(monkeypatch) -> None:
+    """The control: the merge must not require a caller to pass any."""
+    sent: dict[str, Any] = {}
+
+    def capture(method: str, url: str, **kwargs: Any) -> httpx.Response:
+        sent.update(kwargs)
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(cli.httpx, "request", capture)
+    cli.APIClient(api_key="hld_test", base_url="http://test.invalid").request("GET", "/v1/audit")
+
+    assert sent["headers"]["Authorization"] == "Bearer hld_test"
+
+
+def test_secret_get_with_a_session_reaches_the_api(mock_transport, capsys) -> None:
+    """The command end to end, through the mock transport.
+
+    Before the fix this did not fail an assertion — it raised TypeError out
+    of httpx before any request existed, so no mock route was ever hit.
+    """
+    mock_transport.add("GET", "/v1/secrets/stripe_key",
+                       json_body={"name": "stripe_key", "value": "sk_live_xxx"})
+
+    cli.cmd_secret_get(_ns(name="stripe_key", session="ses_1"))
+
+    out = capsys.readouterr().out
+    assert "stripe_key" in out
+    assert "sk_live_xxx" in out
