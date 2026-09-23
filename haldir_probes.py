@@ -2,12 +2,16 @@
 """
 Haldir tester probes — three things worth trying to break.
 
+    python3 -m haldir_probes --serve
+
+That starts a throwaway instance on a free port, drives the three probes
+against it, and deletes the whole thing — no account, nothing to configure,
+nothing left behind. Stdlib only. Exit code is 0 only if every probe passed.
+
+To point it at an instance you already have running instead:
+
     haldir serve                # in one terminal
     python3 -m haldir_probes    # in another
-
-Stdlib only, no account, nothing to install. It mints a demo key, drives
-three probes against the running instance, and prints what it observed.
-Exit code is 0 only if every probe passed.
 
 The probes are the three a reviewer of this project said they would break
 first, so they are the three worth handing over pre-broken:
@@ -44,8 +48,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import socket
 import sqlite3
+import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -266,6 +275,73 @@ def probe_timeout_after_commit(c: Client) -> bool:
 
 # ── Probe 3 ─────────────────────────────────────────────────────────────
 
+def _free_port() -> int:
+    """A port nothing is listening on, by asking the OS for one."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def spawn_instance() -> tuple[subprocess.Popen, str, str] | None:
+    """Start a throwaway instance; return (process, base_url, db_path).
+
+    This is the "disposable" half of what was asked for: the fixture should
+    not need a server arranged first, a port chosen, or a database path
+    passed in by hand. So it picks a free port, makes a temporary data
+    directory, and starts `haldir serve` itself.
+
+    `--no-key` is deliberate. Without it, `serve` mints a key AND repoints
+    the caller's `haldir` CLI config at this instance — so running a test
+    fixture would quietly redirect the CLI they use for real work, and leave
+    it pointing at a directory that is about to be deleted. The probes mint
+    their own sandbox key over HTTP, so they need nothing from the config.
+    """
+    port = _free_port()
+    data_dir = tempfile.mkdtemp(prefix="haldir-probes-")
+    base = f"http://127.0.0.1:{port}"
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "cli", "serve",
+         "--port", str(port), "--data-dir", data_dir, "--no-key"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            out = proc.stdout.read() if proc.stdout else ""
+            bad("the instance exited before it was ready")
+            if out.strip():
+                evidence("its output", out.strip()[-700:])
+            shutil.rmtree(data_dir, ignore_errors=True)
+            return None
+        try:
+            with urllib.request.urlopen(base + "/healthz", timeout=2):
+                pass
+            info(f"started a throwaway instance at {base}")
+            evidence("data dir", f"{data_dir} (removed on exit)")
+            return proc, base, os.path.join(data_dir, "haldir.db")
+        except Exception:
+            time.sleep(0.3)
+
+    proc.terminate()
+    shutil.rmtree(data_dir, ignore_errors=True)
+    bad("the instance did not answer /healthz within 30s")
+    return None
+
+
+def stop_instance(proc: subprocess.Popen, db_path: str) -> None:
+    """Stop it and delete everything it wrote."""
+    info("stopping the throwaway instance")
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+    shutil.rmtree(os.path.dirname(db_path), ignore_errors=True)
+
+
 def find_db(explicit: str | None) -> str | None:
     """Locate the SQLite file for the tamper control.
 
@@ -401,7 +477,12 @@ def probe_audit_readback(c: Client, db_path: str | None) -> bool:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Three probes against a running Haldir instance.")
+        description="Three probes against a Haldir instance.",
+        epilog="With --serve this starts a throwaway instance, probes it, and "
+               "deletes it — nothing to arrange and nothing left behind.")
+    ap.add_argument("--serve", action="store_true",
+                    help="start a disposable instance instead of using one "
+                         "you already have running")
     ap.add_argument("--base", default=DEFAULT_BASE,
                     help=f"instance URL (default {DEFAULT_BASE})")
     ap.add_argument("--key", default=os.environ.get("HALDIR_API_KEY"),
@@ -411,37 +492,53 @@ def main() -> int:
                          "for probe 3's tamper control")
     args = ap.parse_args()
 
-    c = Client(args.base, args.key)
+    proc: subprocess.Popen | None = None
+    try:
+        if args.serve:
+            spawned = spawn_instance()
+            if spawned is None:
+                return 1
+            proc, args.base, args.db = spawned
 
-    info(f"probing {args.base}")
-    if not c.api_key:
-        status, body = c.call("POST", "/v1/demo/key")
-        if status not in (200, 201):
-            bad(f"could not mint a demo key (HTTP {status})")
-            evidence("response", body)
-            print("\n  Is an instance running?  haldir serve")
+        c = Client(args.base, args.key)
+        info(f"probing {args.base}")
+
+        if not c.api_key:
+            status, body = c.call("POST", "/v1/demo/key")
+            if status not in (200, 201):
+                bad(f"could not mint a demo key (HTTP {status})")
+                evidence("response", body)
+                print("\n  Is an instance running?      haldir serve")
+                print("  Or let this start one:       "
+                      "python3 -m haldir_probes --serve")
+                return 1
+            c.api_key = body.get("key")
+            evidence("minted demo key", f"{str(c.api_key)[:12]}...")
+
+        db_path = find_db(args.db)
+        results = [
+            ("mid-call revocation", probe_mid_call_revocation(c)),
+            ("timeout after commit", probe_timeout_after_commit(c)),
+            ("audit read-back after reconnect", probe_audit_readback(c, db_path)),
+        ]
+
+        banner("Summary")
+        for name, passed in results:
+            (good if passed else bad)(f"{name}: {'PASS' if passed else 'FAIL'}")
+
+        failed = [n for n, ok in results if not ok]
+        if failed:
+            print(f"\n  {len(failed)} probe(s) failed. Each printed the raw")
+            print("  responses it judged — that is the thing to argue with.")
             return 1
-        c.api_key = body.get("key")
-        evidence("minted demo key", f"{str(c.api_key)[:12]}...")
-
-    db_path = find_db(args.db)
-    results = [
-        ("mid-call revocation", probe_mid_call_revocation(c)),
-        ("timeout after commit", probe_timeout_after_commit(c)),
-        ("audit read-back after reconnect", probe_audit_readback(c, db_path)),
-    ]
-
-    banner("Summary")
-    for name, passed in results:
-        (good if passed else bad)(f"{name}: {'PASS' if passed else 'FAIL'}")
-
-    failed = [n for n, ok in results if not ok]
-    if failed:
-        print(f"\n  {len(failed)} probe(s) failed. Each printed the raw")
-        print("  responses it judged — that is the thing to argue with.")
-        return 1
-    print("\n  All three passed. If you can make one lie, that is the finding.")
-    return 0
+        print("\n  All three passed. If you can make one lie, that is the "
+              "finding.")
+        return 0
+    finally:
+        # In a finally so a throwaway instance cannot outlive the run — not
+        # on a probe failure, and not on a crash mid-probe.
+        if proc is not None:
+            stop_instance(proc, args.db)
 
 
 if __name__ == "__main__":
