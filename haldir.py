@@ -45,12 +45,12 @@ from sdk import (
 # report. A literal rather than importlib.metadata, deliberately: CI imports
 # this module from a source checkout where the distribution is not installed at
 # all, and a developer venv may hold a stale one — this machine's reports 0.3.0
-# while the checkout is 0.4.0. Reading metadata would raise in the first case
+# while the checkout is 0.4.1. Reading metadata would raise in the first case
 # and quietly return a wrong answer in the second.
 #
 # tests/test_version.py holds this equal to pyproject.toml, which is the same
 # guard the other version literals in this tree are under.
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     "HaldirClient",

@@ -3,6 +3,25 @@
 All notable changes to Haldir are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.1] — 2026-09-23
+
+### Fixed
+
+- **`haldir secret get` crashed before it made a request.** `APIClient.request()`
+  supplies its own `headers=`, so a caller passing one as well was a duplicate
+  keyword argument rather than an override, and `cmd_secret_get` — the only
+  call site that passes headers — raised `TypeError` every time. Not
+  conditionally: the `headers` dict is passed whether or not `--session` was
+  given, so the command was unreachable in full.
+
+### Documentation
+
+- **Six examples in `CLI.md` used the wrong flag shapes** — `session check`
+  takes `--scope`, `pay authorize` and `audit log` take the session id
+  positionally, `audit consistency` takes two positional sizes, `proxy call`
+  takes `--args` as a JSON object, and `webhooks rotate` takes a numeric id.
+  Found by running the commands rather than reading the help.
+
 ## [0.4.0] — 2026-09-23
 
 The "provable boundaries" release. Two authorization failures closed — one
