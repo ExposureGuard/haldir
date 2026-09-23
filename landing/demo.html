@@ -220,6 +220,62 @@
   footer a { color: var(--w50); text-decoration: none; margin: 0 0.75rem }
   footer a:hover { color: var(--w) }
 
+  /* ── Playground: inputs, scope chips, break-it affordances ── */
+
+  .pg-row { display: flex; gap: 0.55rem; align-items: center; flex-wrap: wrap }
+
+  .pg-input {
+    font-family: var(--mono); font-size: 0.78rem;
+    background: var(--w04); color: var(--w);
+    border: 1px solid var(--w20); padding: 0.6rem 0.75rem;
+    width: 7rem;
+  }
+  .pg-input:focus { outline: none; border-color: var(--gold) }
+  .pg-input:disabled { opacity: 0.35; cursor: not-allowed }
+  .pg-input::placeholder { color: var(--w20) }
+
+  /* The break-it buttons read as a different kind of act than the walk. */
+  .pg-btn.break { background: var(--red); color: var(--bg) }
+  .pg-btn.break:hover:not(:disabled) { background: #e07070 }
+  .pg-btn.gold { background: var(--gold); color: var(--bg) }
+  .pg-btn.gold:hover:not(:disabled) { background: #cca94a }
+
+  .pg-scopes { display: flex; gap: 0.45rem; flex-wrap: wrap; margin-bottom: 0.85rem }
+  .pg-scope {
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 1px;
+    background: var(--w04); color: var(--w80); cursor: pointer;
+    border: 1px solid var(--w20); padding: 0.42rem 0.7rem;
+    transition: all 0.2s;
+  }
+  .pg-scope:hover { border-color: var(--w50) }
+  .pg-scope.active { background: var(--w); color: var(--bg); border-color: var(--w) }
+
+  .pg-hint {
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.5px;
+    color: var(--w50); margin-top: 0.6rem; line-height: 1.5;
+  }
+
+  /* A step whose point is that it fails gets a red rule down the side, so
+     the shape of the section reads before the prose does.
+     Inset shadow rather than border-left: a border would add 2px to the
+     grid cell and shift the text, for a line that sits in the same place. */
+  .pg-step.breaks .pg-num { color: var(--red) }
+  .pg-step.breaks .pg-left { box-shadow: inset 2px 0 0 var(--red) }
+
+  /* Divider that opens the break-it arc. */
+  .pg-break {
+    padding: 2rem 2rem 1.4rem;
+    border-bottom: 1px solid var(--w08);
+    background: var(--w04);
+  }
+  .pg-break-h {
+    font-size: 1.15rem; color: var(--red); margin-bottom: 0.5rem;
+  }
+  .pg-break-d {
+    font-size: 0.82rem; font-weight: 300; color: var(--w50);
+    line-height: 1.7; max-width: 44rem;
+  }
+
   /* ── Mobile ── */
   @media (max-width: 780px) {
     nav { padding: 1rem 1.5rem }
@@ -257,10 +313,12 @@
 
   <h2>Try it live</h2>
   <p class="section-lede">
-    Four buttons. Four real API calls. By the end you'll have minted a
-    sandbox API key, opened a governed session, checked one permission,
-    and written one tamper-evident audit entry — every one verifiable
-    against the live <a href="/openapi.json" style="color:var(--gold)">OpenAPI spec</a>.
+    Four buttons walk the happy path — mint a sandbox key, open a governed
+    session, check a permission, write a tamper-evident audit entry. Then
+    three more try to <em>break</em> it: spend past the cap, revoke the
+    session, and act anyway. Every call hits the live API, and every
+    response below is the real one — verifiable against the
+    <a href="/openapi.json" style="color:var(--gold)">OpenAPI spec</a>.
   </p>
 
   <div class="pg">
@@ -319,15 +377,23 @@
         <div class="pg-num">STEP 03</div>
         <div class="pg-title">Check a permission</div>
         <div class="pg-desc">
-          Ask Haldir whether the agent is allowed to <code style="color:var(--w);font-family:var(--mono);font-size:0.78rem">execute</code>
-          a tool right now. Returns <code style="color:var(--w);font-family:var(--mono);font-size:0.78rem">allowed: true</code>
-          plus the remaining budget — your wrapper code can early-exit
-          on a denial.
+          Ask whether the agent may use a scope right now. The session above
+          was granted <code style="color:var(--w);font-family:var(--mono);font-size:0.78rem">read</code>
+          and <code style="color:var(--w);font-family:var(--mono);font-size:0.78rem">execute</code>
+          — pick <code style="color:var(--w);font-family:var(--mono);font-size:0.78rem">delete</code>
+          and it refuses, because a check that only ever answers yes is not a
+          check.
+        </div>
+        <div class="pg-scopes" id="scopes-check">
+          <button type="button" class="pg-scope active" data-scope="execute">execute</button>
+          <button type="button" class="pg-scope" data-scope="read">read</button>
+          <button type="button" class="pg-scope" data-scope="spend">spend</button>
+          <button type="button" class="pg-scope" data-scope="delete">delete</button>
         </div>
         <button type="button" class="pg-btn" id="btn-check" disabled>Check permission</button>
         <div class="pg-snippet">
 <span class="k">POST</span> /v1/sessions/:id/check
-{"scope": "execute"}</div>
+{"scope": "<span id="snippet-scope">execute</span>"}</div>
       </div>
       <div class="pg-right">
         <div class="resp-bar">
@@ -363,6 +429,101 @@
           <span class="resp-status" id="status-log">—</span>
         </div>
         <div class="resp-body resp-empty" id="out-log">Check a permission first.</div>
+      </div>
+    </div>
+
+    <!-- Steps 5-7 — the break-it arc.
+         These are the calls a careful reader would try in a terminal
+         anyway. Putting them on the page makes the refusal the demo
+         instead of a footnote, and each one is a real 403 or a real
+         false — not a mocked "denied" string. -->
+    <div class="pg-break">
+      <div class="pg-break-h">Now try to break it</div>
+      <div class="pg-break-d">
+        Governance that only ever says yes is indistinguishable from
+        nothing. The next three calls are the ones that should fail.
+      </div>
+    </div>
+
+    <!-- Step 5 -->
+    <div class="pg-step breaks">
+      <div class="pg-left">
+        <div class="pg-num">STEP 05 · BREAK IT</div>
+        <div class="pg-title">Spend past the cap</div>
+        <div class="pg-desc">
+          The session above has a $5 ceiling. Authorize an amount and see
+          which side of it you land on — it starts at $10 so the first click
+          shows the refusal, and $2 shows the same call succeeding.
+        </div>
+        <div class="pg-row">
+          <input class="pg-input" id="in-amount" type="number" value="10.00"
+                 min="0.01" step="0.50" aria-label="Amount to authorize, in USD">
+          <button type="button" class="pg-btn break" id="btn-pay" disabled>Authorize</button>
+        </div>
+        <div class="pg-hint">
+          Over the cap the API answers 403 and moves no money. There is no
+          "log it and continue" mode to fall into.
+        </div>
+        <div class="pg-snippet">
+<span class="k">POST</span> /v1/payments/authorize
+{"session_id": "ses_...",
+ "amount": 10.00}</div>
+      </div>
+      <div class="pg-right">
+        <div class="resp-bar">
+          <span>Response</span>
+          <span class="resp-status" id="status-pay">—</span>
+        </div>
+        <div class="resp-body resp-empty" id="out-pay">Open a session first.</div>
+      </div>
+    </div>
+
+    <!-- Step 6 -->
+    <div class="pg-step breaks">
+      <div class="pg-left">
+        <div class="pg-num">STEP 06 · BREAK IT</div>
+        <div class="pg-title">Pull the kill switch</div>
+        <div class="pg-desc">
+          Revoke the session while the agent is still holding it. Nothing is
+          coordinated with the agent and nothing is queued for it — the
+          session simply stops being valid, on the next call, everywhere.
+        </div>
+        <button type="button" class="pg-btn break" id="btn-revoke" disabled>Revoke session</button>
+        <div class="pg-snippet">
+<span class="k">DELETE</span> /v1/sessions/:id</div>
+      </div>
+      <div class="pg-right">
+        <div class="resp-bar">
+          <span>Response</span>
+          <span class="resp-status" id="status-revoke">—</span>
+        </div>
+        <div class="resp-body resp-empty" id="out-revoke">Open a session first.</div>
+      </div>
+    </div>
+
+    <!-- Step 7 -->
+    <div class="pg-step breaks">
+      <div class="pg-left">
+        <div class="pg-num">STEP 07 · BREAK IT</div>
+        <div class="pg-title">Try to act anyway</div>
+        <div class="pg-desc">
+          The agent has not been told it was revoked. Ask for the scope it
+          held a moment ago, on the same session ID, and watch the call that
+          returned <code style="color:var(--w);font-family:var(--mono);font-size:0.78rem">allowed: true</code>
+          in step 03 come back <code style="color:var(--w);font-family:var(--mono);font-size:0.78rem">false</code>.
+          Note the status is still 200 — the check worked, and the answer is no.
+        </div>
+        <button type="button" class="pg-btn break" id="btn-after" disabled>Check permission again</button>
+        <div class="pg-snippet">
+<span class="k">POST</span> /v1/sessions/:id/check
+{"scope": "execute"}</div>
+      </div>
+      <div class="pg-right">
+        <div class="resp-bar">
+          <span>Response</span>
+          <span class="resp-status" id="status-after">—</span>
+        </div>
+        <div class="resp-body resp-empty" id="out-after">Revoke the session first.</div>
       </div>
     </div>
   </div>
@@ -441,12 +602,15 @@
       .replace(/: (true|false|null)/g, ': <span class="bool">$1</span>');
   }
 
-  function paint(targetId, statusId, ok, payload) {
+  function paint(targetId, statusId, ok, payload, status) {
     const out = document.getElementById(targetId);
     const stat = document.getElementById(statusId);
     out.classList.remove("resp-empty");
     out.innerHTML = colorJSON(payload);
-    stat.textContent = ok ? "200 OK" : "ERROR";
+    // The real status code. The three break-it steps are supposed to fail,
+    // and labelling a deliberate 403 on the spend cap as "ERROR" would
+    // teach the opposite of what the section is for.
+    stat.textContent = status ? String(status) : (ok ? "200 OK" : "ERROR");
     stat.className = "resp-status " + (ok ? "ok" : "err");
   }
 
@@ -474,8 +638,8 @@
   document.getElementById("btn-key").addEventListener("click", async () => {
     const btn = document.getElementById("btn-key");
     btn.disabled = true; btn.textContent = "Minting...";
-    const { ok, data } = await call("POST", "/v1/demo/key", {});
-    paint("out-key", "status-key", ok, data);
+    const { ok, status, data } = await call("POST", "/v1/demo/key", {});
+    paint("out-key", "status-key", ok, data, status);
     if (ok && data.key) {
       state.apiKey = data.key;
       setOk("btn-key");
@@ -493,19 +657,20 @@
   document.getElementById("btn-sess").addEventListener("click", async () => {
     const btn = document.getElementById("btn-sess");
     btn.disabled = true; btn.textContent = "Creating...";
-    const { ok, data } = await call("POST", "/v1/sessions", {
+    const { ok, status, data } = await call("POST", "/v1/sessions", {
       agent_id: "my-agent",
       scopes: ["read", "execute"],
       spend_limit: 5.00,
     });
-    paint("out-sess", "status-sess", ok, data);
+    paint("out-sess", "status-sess", ok, data, status);
     if (ok && data.session_id) {
       state.sessionId = data.session_id;
       setOk("btn-sess");
       btn.textContent = "✓ Session opened";
-      const next = document.getElementById("btn-check");
-      next.disabled = false;
-      document.getElementById("out-check").textContent = "Click \"Check permission\".";
+      ["btn-check", "btn-pay", "btn-revoke"].forEach(id => {
+        document.getElementById(id).disabled = false;
+      });
+      document.getElementById("out-check").textContent = "Pick a scope, then check it.";
     } else {
       btn.disabled = false;
       btn.textContent = "Retry";
@@ -513,18 +678,41 @@
   });
 
   // ── Step 3 ─ Check permission ─────────────────────────────────────
+  //
+  // The scope is chosen rather than fixed. A single hardcoded `execute`
+  // check can only ever show the yes case, and the interesting half of a
+  // permission system is what it does when the answer is no.
+  let pickedScope = "execute";
+
+  document.getElementById("scopes-check").addEventListener("click", (ev) => {
+    const chip = ev.target.closest(".pg-scope");
+    if (!chip) return;
+    pickedScope = chip.dataset.scope;
+    document.querySelectorAll("#scopes-check .pg-scope").forEach(c => {
+      c.classList.toggle("active", c === chip);
+    });
+    document.getElementById("snippet-scope").textContent = pickedScope;
+  });
+
   document.getElementById("btn-check").addEventListener("click", async () => {
     const btn = document.getElementById("btn-check");
     btn.disabled = true; btn.textContent = "Checking...";
-    const { ok, data } = await call(
+    const { ok, status, data } = await call(
       "POST",
       "/v1/sessions/" + state.sessionId + "/check",
-      { scope: "execute" },
+      { scope: pickedScope },
     );
-    paint("out-check", "status-check", ok, data);
+    paint("out-check", "status-check", ok, data, status);
     if (ok) {
       setOk("btn-check");
-      btn.textContent = "✓ Checked";
+      // Both answers are correct outcomes of a working check, so the label
+      // reports which one came back instead of assuming the yes case.
+      btn.textContent = data.allowed
+        ? "✓ Allowed — try another scope"
+        : "✓ Denied — try another scope";
+      btn.disabled = false;
+      btn.classList.remove("ok");   // stay live; scopes are re-checkable
+      setTimeout(() => { btn.classList.add("ok") }, 0);
       const next = document.getElementById("btn-log");
       next.disabled = false;
       document.getElementById("out-log").textContent = "Click \"Log audit entry\".";
@@ -538,13 +726,13 @@
   document.getElementById("btn-log").addEventListener("click", async () => {
     const btn = document.getElementById("btn-log");
     btn.disabled = true; btn.textContent = "Logging...";
-    const { ok, data } = await call("POST", "/v1/audit", {
+    const { ok, status, data } = await call("POST", "/v1/audit", {
       session_id: state.sessionId,
       tool: "stripe",
       action: "charge",
       cost_usd: 0.50,
     });
-    paint("out-log", "status-log", ok, data);
+    paint("out-log", "status-log", ok, data, status);
     if (ok) {
       setOk("btn-log");
       btn.textContent = "✓ Logged · run again";
@@ -554,6 +742,69 @@
       btn.disabled = false;
       btn.textContent = "Retry";
     }
+  });
+
+  // ── Step 5 ─ Spend past the cap ───────────────────────────────────
+  document.getElementById("btn-pay").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-pay");
+    const amount = parseFloat(document.getElementById("in-amount").value);
+    if (!(amount > 0)) {
+      paint("out-pay", "status-pay", false, {
+        error: "Enter an amount above 0. The cap is $5.00.",
+      });
+      return;
+    }
+    btn.disabled = true; btn.textContent = "Authorizing...";
+    const { ok, status, data } = await call("POST", "/v1/payments/authorize", {
+      session_id: state.sessionId,
+      amount,
+    });
+    paint("out-pay", "status-pay", ok, data, status);
+    // Stays enabled either way — the amount is the thing to vary, and both
+    // outcomes are worth seeing. A refusal is not a dead end here.
+    btn.disabled = false;
+    btn.textContent = ok ? "Authorized · try again" : "Refused · try again";
+    btn.classList.toggle("ok", ok);
+  });
+
+  // ── Step 6 ─ Pull the kill switch ─────────────────────────────────
+  document.getElementById("btn-revoke").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-revoke");
+    btn.disabled = true; btn.textContent = "Revoking...";
+    const { ok, status, data } = await call(
+      "DELETE", "/v1/sessions/" + state.sessionId,
+    );
+    paint("out-revoke", "status-revoke", ok, data, status);
+    if (ok) {
+      btn.textContent = "✓ Revoked";
+      btn.classList.add("ok");
+      const next = document.getElementById("btn-after");
+      next.disabled = false;
+      document.getElementById("out-after").textContent =
+        "Now ask for a scope it held a moment ago.";
+    } else {
+      btn.disabled = false;
+      btn.textContent = "Retry";
+    }
+  });
+
+  // ── Step 7 ─ Try to act anyway ────────────────────────────────────
+  document.getElementById("btn-after").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-after");
+    btn.disabled = true; btn.textContent = "Checking...";
+    const { ok, status, data } = await call(
+      "POST",
+      "/v1/sessions/" + state.sessionId + "/check",
+      { scope: "execute" },
+    );
+    paint("out-after", "status-after", ok, data, status);
+    btn.disabled = false;
+    // Whitelisted so it cannot report success on a payload that lacks the
+    // field — an undefined `allowed` would otherwise read as "still allowed".
+    btn.textContent = data.allowed === true
+      ? "STILL ALLOWED — that is a bug, report it"
+      : "Denied · run the walk again";
+    btn.classList.toggle("ok", data.allowed !== true);
   });
 </script>
 </body>
