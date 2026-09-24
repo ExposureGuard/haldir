@@ -14,13 +14,35 @@ machine — there is nothing simulated, no signup, and no account.
 
 ## The one-file demo
 
-A single 34 MB binary with Python and Haldir inside it. Linux x86-64.
+A single binary with Python and Haldir inside it — nothing to install, no
+account, no clone.
+
+**Linux and macOS:**
 
 ```bash
-curl -LO https://github.com/ExposureGuard/haldir/releases/download/demo-preview-1/haldir-demo
-chmod +x haldir-demo
-./haldir-demo
+curl -fsSL https://raw.githubusercontent.com/ExposureGuard/haldir/main/install.sh | sh
 ```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/ExposureGuard/haldir/main/install.ps1 | iex
+```
+
+Each detects the platform, fetches the matching build, and tells you what to
+run next. Then:
+
+```bash
+./haldir-demo            # the three probes, then it deletes everything
+./haldir-demo --keep     # leave an instance up and print a key + URLs
+```
+
+Built for Linux x86-64, Apple Silicon macOS, and Windows x86-64. **There is no
+Intel Mac build** — GitHub retired the last Intel macOS runner — so Intel Macs
+use the `pip install` path below, which needs no build at all.
+
+Or download directly from
+[the latest demo release](https://github.com/ExposureGuard/haldir/releases).
 
 It starts a throwaway instance on a free port, runs three probes against it,
 prints the raw responses behind each verdict, and deletes everything it made.
