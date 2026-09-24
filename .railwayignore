@@ -1,0 +1,80 @@
+# What must not leave this machine.
+#
+# `railway up` uploads the working directory to Railway's build servers. It is
+# not a git push: files that .gitignore excludes from the repository can still
+# be in the build context, and there is no reason for a hosting provider's
+# build machine to receive funding strategy, investor applications, or notes
+# from conversations with users.
+#
+# These are the same documents .gitignore already keeps out of the repo. Listing
+# them again here is deliberate duplication — the two mechanisms are
+# independent, and the one that matters is the one that runs.
+
+# ── Private documents ──
+SESSION_CONTEXT.md
+CONVERSATION_HISTORY.md
+USER_CONVERSATIONS.md
+SOUL.md
+FUNDING_PATH.md
+FUNDING_OPTIONS.md
+OFFICE_PLAN.md
+REALISTIC_OUTCOME.md
+DAILY_PLAYBOOK.md
+DAILY_REALITY_CHECK.md
+YC_*.md
+AGENTIC_MARKET_SUBMISSION.md
+INTEGRATION_PLAYBOOK.md
+/private/
+
+# ── Added 2026-09-22, after `.dockerignore` was found to have the same gap ──
+#
+# `railway up` sends the working directory, not the git tree, so anything
+# `.gitignore` excludes still leaves the machine unless it is named here too.
+# This file and `.dockerignore` are the two independent mechanisms, and both
+# had drifted from the list they were meant to mirror.
+#
+# `.env` was the sharp one: it holds HALDIR_ENCRYPTION_KEY, the master key for
+# the vault, and `.dockerignore` has always excluded it while this file did
+# not.
+.env
+.env.*
+.mcpregistry_*
+drafts/
+.aider*
+.drafts/
+.aws/
+.ssh/
+*.pem
+*.key
+secrets/
+
+# ── Development noise ──
+.git/
+.github/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+build/
+dist/
+*.egg-info/
+venv/
+.venv/
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+.haldir/
+
+# ── Not needed at runtime ──
+#
+# Only these two. landing/, demo/, blog/ and docs/ look like source material
+# but the application SERVES them — /demo, /docs and the blog are routes, and
+# excluding them here would 404 those pages on the deployed instance. The
+# packaging fix in 0.3.2 is what puts them in the wheel for the same reason.
+tests/
+integrations/
