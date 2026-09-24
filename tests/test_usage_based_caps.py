@@ -101,21 +101,24 @@ def _call(client, key):
 
 # ── A paying tenant keeps working ────────────────────────────────────
 
-def test_pro_is_not_blocked_at_its_allowance(haldir_client, bootstrap_key, billed_tenant) -> None:
-    """The whole point of usage-based: the work continues and the meter
-    keeps running."""
-    _set_tier(billed_tenant, "pro")
-    limit = haldir_tiers.TIERS["pro"]["actions_per_month"]
-    _set_usage(billed_tenant, limit + 5_000)
+def test_the_metered_plan_is_never_blocked(haldir_client, bootstrap_key, billed_tenant) -> None:
+    """The whole point of usage billing: the work continues and the meter
+    keeps running.
+
+    There is no allowance on this plan, so there is no ceiling to reach —
+    five million calls in a month is a large bill, not an error.
+    """
+    _set_tier(billed_tenant, "usage")
+    _set_usage(billed_tenant, 5_000_000)
 
     r = _call(haldir_client, bootstrap_key)
     assert r.status_code == 200, (
-        f"a Pro tenant {5_000} actions over its allowance got {r.status_code}; "
-        f"overage is supposed to be billed, not refused"
+        f"a metered tenant at 5,000,000 calls got {r.status_code}; there is "
+        f"no allowance on this plan, so nothing can be exceeded"
     )
 
-    # And the overage is reported, not merely tolerated.
-    assert int(r.headers["X-RateLimit-Monthly-Over-By"]) == 5_000
+    # And the whole of it is reported as billable, not merely tolerated.
+    assert int(r.headers["X-RateLimit-Monthly-Over-By"]) == 5_000_000
 
 
 def test_free_is_still_blocked_at_its_allowance(haldir_client, bootstrap_key, billed_tenant) -> None:
@@ -134,48 +137,63 @@ def test_free_is_still_blocked_at_its_allowance(haldir_client, bootstrap_key, bi
     assert body.get("error") == "monthly_quota_exceeded" or "quota" in str(body).lower()
 
 
-def test_overage_is_reported_in_the_usage_headers(haldir_client, bootstrap_key, billed_tenant) -> None:
+def test_usage_is_reported_in_the_usage_headers(haldir_client, bootstrap_key, billed_tenant) -> None:
     """A customer cannot decide about a bill they cannot see."""
-    _set_tier(billed_tenant, "pro")
-    limit = haldir_tiers.TIERS["pro"]["actions_per_month"]
-    _set_usage(billed_tenant, limit + 250_000)
+    _set_tier(billed_tenant, "usage")
+    _set_usage(billed_tenant, 250_000)
 
     r = _call(haldir_client, bootstrap_key)
     assert r.status_code == 200
     assert int(r.headers["X-RateLimit-Monthly-Over-By"]) == 250_000
 
-    expected = haldir_tiers.overage_cost("pro", 250_000)
+    expected = haldir_tiers.overage_cost("usage", 250_000)
     assert float(r.headers["X-RateLimit-Monthly-Overage-USD"]) == pytest.approx(expected)
 
 
-def test_no_overage_headers_within_the_allowance(haldir_client, bootstrap_key, billed_tenant) -> None:
-    """Zero overage must not look like a charge."""
-    _set_tier(billed_tenant, "pro")
+def test_the_metered_plan_reports_no_limit_header(haldir_client, bootstrap_key, billed_tenant) -> None:
+    """Absent, not zero.
+
+    A plan with no allowance has no limit and no remaining. Emitting `0` for
+    both says the account is already out of quota — and a client that reads
+    those headers would back off for no reason, which is a worse failure than
+    not sending them at all.
+    """
+    _set_tier(billed_tenant, "usage")
     _set_usage(billed_tenant, 10)
 
     r = _call(haldir_client, bootstrap_key)
     assert r.status_code == 200
-    assert int(r.headers.get("X-RateLimit-Monthly-Over-By", 0)) == 0
+    assert "X-RateLimit-Monthly-Limit" not in r.headers
+    assert "X-RateLimit-Monthly-Remaining" not in r.headers
+    # The count itself is still reported — that is the invoice.
+    assert int(r.headers["X-RateLimit-Monthly-Used"]) == 10
+    assert int(r.headers["X-RateLimit-Monthly-Over-By"]) == 10
 
 
 # ── The overview reports it too ──────────────────────────────────────
 
-def test_overview_exposes_overage(haldir_client, bootstrap_key, billed_tenant) -> None:
+def test_overview_exposes_the_metered_cost(haldir_client, bootstrap_key, billed_tenant) -> None:
     """The dashboard is where an operator would look, so it has to carry the
-    same number the limiter is acting on."""
+    same number the limiter is acting on.
+
+    With no allowance, every call is billable — so `overage_actions` is the
+    whole month's usage, and an implementation that computed
+    `max(0, used - allowance)` with no allowance would report zero for the
+    plan whose entire revenue this is.
+    """
     import haldir_admin
 
-    _set_tier(billed_tenant, "pro")
-    limit = haldir_tiers.TIERS["pro"]["actions_per_month"]
-    _set_usage(billed_tenant, limit + 1_000)
+    _set_tier(billed_tenant, "usage")
+    _set_usage(billed_tenant, 1_000)
 
     out = haldir_admin.build_overview(api.DB_PATH, billed_tenant,
                                       watch=api.watch, tier_limits=api.TIER_LIMITS)
     usage = out["usage"]
     assert usage["overage_actions"] == 1_000
     assert usage["metered"] is True
+    assert usage["actions_limit"] is None
     assert usage["overage_usd"] == pytest.approx(
-        haldir_tiers.overage_cost("pro", 1_000)
+        haldir_tiers.overage_cost("usage", 1_000)
     )
 
 
