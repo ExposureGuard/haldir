@@ -2995,7 +2995,13 @@ def list_webhook_deliveries():
 # ── Rate Limiting ──
 
 _rate_limits = {}  # key_hash -> {window_start, count}
-RATE_LIMITS = {"free": 100, "pro": 5000, "enterprise": 50000}
+# Keyed by the tier's current name. "usage" has to be here: a missing key
+# does not fail loudly, because the lookup below falls back to free's number
+# — so a tenant on the paid tier was throttled to 1/50th of what they bought,
+# with nothing in the response to say so. "pro" is deliberately absent and
+# resolves through RENAMED_TIERS at the lookup, so the two names cannot drift
+# into different limits.
+RATE_LIMITS = {"free": 100, "usage": 5000, "enterprise": 50000}
 
 # Per-process, in-memory counters. Good enough for single-node Haldir
 # deployments (which is where most installs live today). When we fan
@@ -3049,7 +3055,12 @@ def rate_limit():
         billing_tier = _get_tenant_tier(tenant)
         effective_tier = billing_tier if billing_tier != "free" else tier
 
-        limit = RATE_LIMITS.get(effective_tier, 100)
+        # Through the rename alias, so a subscription row written before
+        # "pro" became "usage" keeps the limit it was paying for. Resolving
+        # the alias here rather than storing both names is what keeps one
+        # tier from having two rates.
+        resolved = haldir_tiers.RENAMED_TIERS.get(effective_tier, effective_tier)
+        limit = RATE_LIMITS.get(resolved, 100)
         reset = int(entry["start"] + window)
         reset_after = max(0, reset - int(now))
         remaining = limit - entry["count"]
