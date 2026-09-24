@@ -68,6 +68,26 @@ PROBE_ACTION = "probe.timeout_after_commit"
 # ── Output ──────────────────────────────────────────────────────────────
 # Same status prefixes the rest of the project uses.
 
+def force_utf8_output() -> None:
+    """UTF-8 stdout, because this prints box-drawing characters.
+
+    Windows defaults to a legacy codepage that cannot encode them, and a
+    print that raises takes the run with it. See the same helper in
+    demo_quickstart.py.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        # getattr rather than a direct call: `reconfigure` is on
+        # io.TextIOWrapper, not on the TextIO protocol sys.stdout is typed as,
+        # so mypy is right that it may not be there.
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def banner(text: str) -> None:
     print(f"\n── {text} ──")
 
@@ -482,6 +502,8 @@ def main(argv: list[str] | None = None) -> int:
     PyInstaller binary has no `-m`, so it cannot re-invoke this file as a
     module and must call it as a function instead.
     """
+    force_utf8_output()
+
     ap = argparse.ArgumentParser(
         description="Three probes against a Haldir instance.",
         epilog="With --serve this starts a throwaway instance, probes it, and "
