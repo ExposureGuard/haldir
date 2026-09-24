@@ -7,6 +7,12 @@ name: build-demo
 # will run on Windows. So there is one build per target rather than one build
 # and a hope.
 #
+# There is no Intel Mac target. `macos-13` was the last Intel runner and a job
+# on it sat queued for twenty-five minutes without starting, so GitHub has
+# retired it. Intel Macs use `pip install haldir`, which needs no build at all;
+# adding a target here that never runs is worse than not having one, because
+# it looks like coverage.
+#
 # The binaries are attached to a release only after all of them have built and
 # passed their smoke test, in a job that `needs:` the matrix. Attaching as each
 # finished would publish a release that is missing two thirds of its assets for
@@ -41,8 +47,6 @@ jobs:
             asset: haldir-demo-linux-x86_64
           - os: macos-latest          # Apple Silicon
             asset: haldir-demo-macos-arm64
-          - os: macos-13              # Intel
-            asset: haldir-demo-macos-x86_64
           - os: windows-latest
             asset: haldir-demo-windows-x86_64.exe
 
