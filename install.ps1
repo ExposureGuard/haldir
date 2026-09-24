@@ -12,8 +12,23 @@
 $ErrorActionPreference = 'Stop'
 
 $Repo = 'ExposureGuard/haldir'
-$Tag  = if ($env:HALDIR_DEMO_TAG) { $env:HALDIR_DEMO_TAG } else { 'demo-preview-1' }
 $Dir  = if ($env:HALDIR_DEMO_DIR) { $env:HALDIR_DEMO_DIR } else { '.' }
+
+# Newest demo release, so this does not need editing each time one is cut.
+# `/releases/latest` is no good: the demo releases are prerelease, so it
+# returns the product release, which has no binaries attached.
+$Tag = $env:HALDIR_DEMO_TAG
+if (-not $Tag) {
+    try {
+        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=30" -UseBasicParsing
+        $Tag = ($releases | Where-Object { $_.tag_name -like 'demo-*' } | Select-Object -First 1).tag_name
+    } catch {
+        # Anonymous API calls are rate-limited per address; fall back rather
+        # than failing the install over a lookup.
+        $Tag = $null
+    }
+}
+if (-not $Tag) { $Tag = 'demo-preview-2' }
 
 function Say  ($m) { Write-Host "[*] $m" }
 function Good ($m) { Write-Host "[+] $m" -ForegroundColor Green }
