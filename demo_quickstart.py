@@ -346,11 +346,18 @@ def main() -> int:
     def _exit_on_signal(signum: int, _frame: object) -> None:
         raise SystemExit(128 + signum)
 
-    for _sig in (signal.SIGTERM, signal.SIGHUP):
+    # Resolved by name, not referenced directly. Windows has no SIGHUP at all,
+    # so `signal.SIGHUP` raises AttributeError while the tuple is being built —
+    # before the try below can catch anything, and not a type it catches. The
+    # bundled binary died on this on Windows on its first run.
+    for _name in ("SIGTERM", "SIGHUP"):
+        _sig = getattr(signal, _name, None)
+        if _sig is None:
+            continue
         try:
             signal.signal(_sig, _exit_on_signal)
         except (ValueError, OSError):
-            pass   # not every platform has SIGHUP, and threads cannot set these
+            pass   # not settable from a non-main thread, among other reasons
 
     ap = argparse.ArgumentParser(
         description="Run a disposable Haldir demo. Installs what it needs "
