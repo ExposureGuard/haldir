@@ -3438,7 +3438,7 @@
     "/v1/billing/checkout": {
       "post": {
         "operationId": "post_billing_checkout",
-        "summary": "Create a Stripe Checkout session for Pro or Enterprise.",
+        "summary": "Create a Stripe Checkout session for Usage or Enterprise.",
         "tags": [
           "billing"
         ],

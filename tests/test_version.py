@@ -64,6 +64,11 @@ def _stated_versions() -> dict[str, str]:
         # pyproject.toml, and this asserts the generated file was regenerated
         # rather than edited by hand.
         "demo/quickstart.svg":  r"haldir-([0-9][0-9.]*)",
+        # The marketing page's schema.org block — what a crawler reads to
+        # learn which version this is. It sat at 0.3.0 through 0.3.1 and
+        # 0.3.2 with nothing comparing it, because every discovery-surface
+        # pattern above points at `.well-known/` and this one is not there.
+        "landing/index.html":   r'"softwareVersion":\s*"([^"]+)"',
     }
     for rel, pat in patterns.items():
         m = re.search(pat, _read(rel), re.M)

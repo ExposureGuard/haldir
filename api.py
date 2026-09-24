@@ -288,8 +288,13 @@ def _platform_after(response):  # type: ignore[no-untyped-def]
 
     rlm = getattr(g, "rate_limit_monthly", None)
     if rlm:
-        response.headers["X-RateLimit-Monthly-Limit"]       = str(rlm["limit"])
-        response.headers["X-RateLimit-Monthly-Remaining"]   = str(max(0, rlm["remaining"]))
+        # A metered plan has no allowance, so there is no limit to report and
+        # no "remaining". Emitting 0 for both would say the opposite of the
+        # truth — that the account is already out of quota — and a client
+        # reading it would back off for no reason. Absent, not zero.
+        if "limit" in rlm:
+            response.headers["X-RateLimit-Monthly-Limit"]     = str(rlm["limit"])
+            response.headers["X-RateLimit-Monthly-Remaining"] = str(max(0, rlm["remaining"]))
         response.headers["X-RateLimit-Monthly-Used"]        = str(rlm["used"])
         response.headers["X-RateLimit-Monthly-Reset"]       = str(rlm["reset"])
         response.headers["X-RateLimit-Monthly-Reset-After"] = str(max(0, rlm["reset_after"]))
@@ -388,7 +393,14 @@ TIER_LIMITS = haldir_tiers.TIERS
 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
-STRIPE_PRICE_PRO = os.environ.get("STRIPE_PRICE_PRO", "")
+# The metered price. It has to be a Stripe *metered* price, not a flat one:
+# the plan has no monthly fee, so a flat price here would bill whatever the
+# price says and ignore usage entirely.
+STRIPE_PRICE_USAGE = os.environ.get("STRIPE_PRICE_USAGE", "")
+# The name this shipped under when the tier was a $99/month subscription. A
+# deployment that still sets only the old variable keeps working rather than
+# silently losing its price id and 400-ing every checkout.
+STRIPE_PRICE_USAGE_LEGACY = os.environ.get("STRIPE_PRICE_PRO", "")
 STRIPE_PRICE_ENTERPRISE = os.environ.get("STRIPE_PRICE_ENTERPRISE", "")
 
 
@@ -815,9 +827,15 @@ def create_session():
     if cached is not None:
         return cached
 
-    # Enforce agent limit per billing tier
+    # Enforce agent limit per billing tier.
+    #
+    # The lookup goes through haldir_tiers.limits() so the rename alias
+    # applies — indexing the dict directly would give a tenant whose stored
+    # tier says "pro" free's one-agent cap. The table is passed explicitly
+    # because several test modules replace api.TIER_LIMITS to lift that cap,
+    # and resolving through haldir_tiers.TIERS would ignore the replacement.
     tier = _get_tenant_tier(tenant)
-    limits = TIER_LIMITS.get(tier, TIER_LIMITS["free"])
+    limits = haldir_tiers.limits(tier, TIER_LIMITS)
     current_agents = _get_tenant_agent_count(tenant)
 
     # The tier cap governs how many top-level agents a tenant runs. A subagent
@@ -1360,7 +1378,7 @@ def get_audit_stats():
         # Monthly action cap comes from the billing tier, not a DB
         # table — TIER_LIMITS is the single source of truth.
         tier = _get_tenant_tier(tenant)
-        cap = TIER_LIMITS.get(tier, TIER_LIMITS["free"])["actions_per_month"]
+        cap = haldir_tiers.limits(tier, TIER_LIMITS)["actions_per_month"]
 
         # Chain integrity is verified by Watch, not by counting rows.
         chain_ok = bool(watch.verify_chain(tenant_id=tenant).get("valid"))
@@ -1381,11 +1399,16 @@ def get_audit_stats():
     finally:
         conn.close()
 
+    # `cap` is None on a metered plan: nothing is included, so there is no
+    # percentage of it to be used. Reporting 0.0 rather than a number is the
+    # honest answer — the account cannot be "out of" an allowance it does not
+    # have. `actions_cost_usd` is the figure that means something there.
     pct = (total / cap) if cap else 0.0
     return jsonify({
         "actions_this_month": total,
         "actions_limit": cap,
         "actions_pct_used": round(pct, 4),
+        "actions_cost_usd": haldir_tiers.overage_cost(tier, total) or 0.0,
         "spend_usd_this_month": round(spend, 2),
         "total_entries": total,
         "flagged_7d": flagged,
@@ -2609,6 +2632,22 @@ def _render_admin_overview(o: dict, key: str) -> str:
     u = o.get("usage", {})
     pct = float(u.get("actions_pct_used", 0.0))
     bar_pct = min(100.0, max(0.0, pct * 100))
+
+    # A metered plan has no quota to be a percentage of, so the "N / limit"
+    # and the percentage are both meaningless there — and `None` formatted
+    # with `:,` is a TypeError, not a dash. What matters on that plan is what
+    # the calls have cost, so the row says that instead.
+    if u.get("actions_limit") is None:
+        calls_value = f"{u.get('actions_this_month', 0):,}"
+        calls_sub = f"${u.get('actions_cost_usd', 0.0):,.2f} this month · no quota"
+        bar_pct = 0.0
+    else:
+        calls_value = (
+            f"{u.get('actions_this_month', 0):,}"
+            f"<span style=\"color:rgba(224,221,213,0.4);font-weight:300\">"
+            f" / {u['actions_limit']:,}</span>"
+        )
+        calls_sub = f"{pct * 100:.1f}% of monthly quota"
     bar_color = (
         "#0b8043" if pct < 0.7 else
         "#b58900" if pct < 0.9 else
@@ -2847,8 +2886,8 @@ def _render_admin_overview(o: dict, key: str) -> str:
 
     <div class="row">
       <div class="label">API calls</div>
-      <div class="value">{u.get('actions_this_month', 0):,}<span style="color:rgba(224,221,213,0.4);font-weight:300"> / {u.get('actions_limit', 0):,}</span><span class="bar"><span class="bar-fill"></span></span></div>
-      <div class="sub">{pct * 100:.1f}% of monthly quota</div>
+      <div class="value">{calls_value}<span class="bar"><span class="bar-fill"></span></span></div>
+      <div class="sub">{calls_sub}</div>
     </div>
 
     <div class="row">
@@ -3037,18 +3076,28 @@ def rate_limit():
             )
 
         if tenant:
-            tier_limits = TIER_LIMITS.get(effective_tier, TIER_LIMITS["free"])
+            tier_limits = haldir_tiers.limits(effective_tier, TIER_LIMITS)
             monthly_limit = tier_limits["actions_per_month"]
             monthly_actions = _get_tenant_monthly_actions(tenant)
             monthly_reset_after = _seconds_until_end_of_month(now)
-            over = max(0, monthly_actions - monthly_limit)
+            # None means the plan includes no calls at all and every one is
+            # metered — so every call is past the allowance by definition.
+            # Without this branch a metered tenant computes over = 0 - used < 0
+            # and is billed for nothing.
+            over = (
+                monthly_actions if monthly_limit is None
+                else max(0, monthly_actions - monthly_limit)
+            )
             g.rate_limit_monthly = {
-                "limit":       monthly_limit,
                 "used":        monthly_actions,
-                "remaining":   max(0, monthly_limit - monthly_actions),
                 "reset":       int(now + monthly_reset_after),
                 "reset_after": monthly_reset_after,
             }
+            if monthly_limit is not None:
+                g.rate_limit_monthly["limit"] = monthly_limit
+                g.rate_limit_monthly["remaining"] = max(
+                    0, monthly_limit - monthly_actions
+                )
             # Usage past the allowance is billed on plans that have a payment
             # method behind them, and refused on the one that does not.
             #
@@ -4464,13 +4513,27 @@ def _render_tier_cards() -> str:
     """
     import html as _h
     cards = []
-    for name in ("free", "pro", "enterprise"):
+    for name in ("free", "usage", "enterprise"):
         plan = haldir_tiers.limits(name)
         price = plan.get("price_usd_month")
+        # Three shapes, and price alone no longer tells them apart: free and
+        # usage are both $0/month. Free is $0 because it has an allowance you
+        # never pay for; usage is $0 because there is no subscription at all
+        # and the rate *is* the price. Keyed on whether the plan includes any
+        # calls, which is the real difference — and without this branch the
+        # pricing page renders the metered plan as "$0 / forever".
         if price is None:
             price_html = "Custom <span>/ year</span>"
             cta = ('<button onclick="checkout(\'enterprise\')" '
                    'class="tier-btn tier-btn-white">Contact Sales</button>')
+        elif plan.get("actions_per_month") is None:
+            per_million = plan.get("overage_usd_per_action") or 0
+            price_html = (
+                f"${per_million * 1_000_000:,.0f} "
+                f"<span>/ million calls</span>"
+            )
+            cta = (f'<button onclick="checkout(\'{name}\')" '
+                   f'class="tier-btn tier-btn-gold">Start using</button>')
         elif price == 0:
             price_html = "$0 <span>/ forever</span>"
             cta = '<a href="/docs" class="tier-btn tier-btn-outline">Get Started</a>'
@@ -4480,15 +4543,15 @@ def _render_tier_cards() -> str:
                    f'class="tier-btn tier-btn-gold">Upgrade to {plan["label"]}</button>')
 
         badge = ""
-        if name == "pro":
-            badge = '<span class="tier-badge">Most Popular</span>'
+        if name == "usage":
+            badge = '<span class="tier-badge">Pay as you go</span>'
         elif name == "free":
             badge = '<span class="current-badge">Current: Free</span>'
 
         items = "".join(
             f"<li>{_h.escape(line)}</li>" for line in haldir_tiers.feature_lines(name)
         )
-        featured = " featured" if name == "pro" else ""
+        featured = " featured" if name == "usage" else ""
         cards.append(
             f'<div class="tier-card{featured}">\n'
             f'    {badge}\n'
@@ -4759,7 +4822,16 @@ function checkout(tier) {
 @app.route("/v1/billing/checkout", methods=["POST"])
 @require_api_key
 def billing_checkout():
-    """Create a Stripe Checkout session for Pro or Enterprise."""
+    """Create a Stripe Checkout session for Usage or Enterprise.
+
+    Note for whoever wires up metering next: a metered price bills whatever
+    usage is reported against it, and this codebase does not report any. The
+    counter in `track_usage` is local — it drives the rate limiter and the
+    X-RateLimit headers and stops there. On the retired subscription plan
+    that was survivable, because the monthly fee was the revenue and the
+    overage was a number we showed people. On a plan whose entire price is
+    the meter, a subscription created here bills nothing.
+    """
     if not STRIPE_SECRET_KEY:
         return jsonify({"error": "Billing not configured — STRIPE_SECRET_KEY not set"}), 503
 
@@ -4767,10 +4839,16 @@ def billing_checkout():
     stripe.api_key = STRIPE_SECRET_KEY
 
     data = request.json or {}
-    tier = data.get("tier", "pro")
+    # A client that still asks for "pro" — an older pricing page, a saved
+    # link — gets the plan that replaced it rather than a 400.
+    requested = data.get("tier", "usage")
+    tier = haldir_tiers.RENAMED_TIERS.get(requested, requested)
     tenant = getattr(request, "tenant_id", "")
 
-    price_id = STRIPE_PRICE_PRO if tier == "pro" else STRIPE_PRICE_ENTERPRISE
+    price_id = {
+        "usage": STRIPE_PRICE_USAGE or STRIPE_PRICE_USAGE_LEGACY,
+        "enterprise": STRIPE_PRICE_ENTERPRISE,
+    }.get(tier, "")
     if not price_id:
         return jsonify({"error": f"No Stripe price configured for tier '{tier}'"}), 400
 
