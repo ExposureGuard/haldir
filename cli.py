@@ -18,13 +18,15 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import difflib
 import getpass
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 
@@ -192,6 +194,27 @@ class APIClient:
                 # `error` to stderr, so mixing them lets the shell reorder
                 # the lines and the advice arrives before the problem.
                 y, r, d = Color.YELLOW, Color.RESET, Color.DIM
+
+                # With no key configured, nothing has been set up yet, so the
+                # useful sentence is "you have not started one" rather than
+                # "that address is not Haldir". The second describes a host
+                # the user never chose — it is the CLI's own default — and on
+                # a fresh `pip install` it is the very first line they read,
+                # where it lands as a fault in the tool.
+                if not self.api_key:
+                    sys.stderr.write(
+                        f"{Color.RED}{Color.BOLD}[-]{r} No Haldir is running, "
+                        f"and no API key is configured.\n"
+                        f"{y}[!]{r} Haldir runs on your own machine — no "
+                        f"account, no signup:\n"
+                        f"      {Color.BOLD}haldir serve{r}\n"
+                        f"{y}[!]{r} It prints a key and points this CLI at it, "
+                        f"so your next command just works.\n"
+                        f"{d}    (Asked {self.base_url} — it said: "
+                        f"{str(msg)[:80]}){r}\n"
+                    )
+                    sys.exit(1)
+
                 sys.stderr.write(
                     f"{Color.RED}{Color.BOLD}[-]{r} {self.base_url} answered, "
                     f"but it is not a Haldir API.\n"
@@ -206,7 +229,14 @@ class APIClient:
 
             if resp.status_code == 401:
                 error(f"Authentication failed: {msg}")
-                warn("Run 'haldir login' to set your API key.")
+                # `haldir login` is the hosted-service path. When there is no
+                # key at all the local one is what a new user wants, and it
+                # is the only one that works without an account existing.
+                if self.api_key:
+                    warn("Run 'haldir login' to set your API key.")
+                else:
+                    warn("No API key configured. 'haldir serve' starts a local "
+                         "instance and saves a key for it.")
             elif resp.status_code == 403:
                 error(f"Permission denied: {msg}")
             elif resp.status_code == 404:
@@ -1723,8 +1753,42 @@ def _write_local_config(base_url: str, api_key: str) -> str:
 
 # ── Argument parser ──
 
+class SuggestionParser(argparse.ArgumentParser):
+    """An ArgumentParser that guesses what a mistyped command meant.
+
+    argparse's answer to an unknown command is to reprint every one of them
+    on a single line — twenty-one names for this CLI, most of them unrelated
+    to what was typed. The one word the user wants is in there, but they have
+    to find it themselves.
+
+    Subclassing also covers the subcommands: `add_subparsers` builds its
+    parsers from `type(self)`, so `haldir session craete` gets the same
+    treatment as `haldir sessoin` without either being wired up separately.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        match = re.match(
+            r"argument (\w+): invalid choice: '([^']*)' \(choose from (.*)\)$",
+            message,
+        )
+        if match:
+            typed, choices_raw = match.group(2), match.group(3)
+            # Every quoted name in the tail is a valid choice; the typed
+            # value was captured separately above.
+            choices = re.findall(r"'([^']*)'", choices_raw)
+            close = difflib.get_close_matches(typed, choices, n=1, cutoff=0.6)
+            if close:
+                self.exit(
+                    2,
+                    f"{self.prog}: '{typed}' is not a command. "
+                    f"Did you mean '{close[0]}'?\n",
+                )
+
+        super().error(message)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = SuggestionParser(
         prog="haldir",
         description="Haldir CLI — the guardian layer for AI agents",
         formatter_class=argparse.RawDescriptionHelpFormatter,

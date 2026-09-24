@@ -175,7 +175,21 @@ def configure_logging(level: str | None = None, json_output: bool | None = None)
     ).upper()
 
     if json_output is None:
-        json_output = os.environ.get("HALDIR_LOG_JSON", "1") != "0"
+        env = os.environ.get("HALDIR_LOG_JSON")
+        if env is not None:
+            json_output = env != "0"
+        else:
+            # Unset means "decide from where this is going". A container or a
+            # piped command has no TTY and keeps structured JSON, which is
+            # what a log collector wants; a person who typed `haldir serve`
+            # in a terminal gets readable lines instead. The first run
+            # applies eight migrations, and those arrived as escaped JSON
+            # objects above the startup banner — correct, and the last thing
+            # a new user should have to parse.
+            #
+            # Same test Color uses for ANSI, on stderr because that is the
+            # stream the handler below writes to.
+            json_output = not sys.stderr.isatty()
 
     # stderr, not stdout. Log records are diagnostics; stdout belongs to the
     # program's own output. Sharing the stream put a raw JSON record in the
