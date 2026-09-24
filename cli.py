@@ -1495,11 +1495,25 @@ def cmd_mcp_config(args: argparse.Namespace) -> None:
 
 def cmd_dev(args: argparse.Namespace) -> None:
     """Start (or stop) the self-host stack via docker compose."""
+    import shutil
     import subprocess
 
     if not Path("docker-compose.yml").exists():
         error("No docker-compose.yml in current directory. Run `haldir init` first "
               "or cd into a Haldir checkout.")
+        sys.exit(1)
+
+    # Checked before any subprocess call, because a missing binary raises
+    # FileNotFoundError rather than returning a non-zero code — so the
+    # returncode check below never runs and the user gets a stack trace
+    # instead of a sentence. Docker is optional for Haldir, so say what to do
+    # instead rather than only what is absent.
+    if shutil.which("docker") is None:
+        error("docker is not installed (or not on PATH), and `haldir dev` runs "
+              "the stack with docker compose.")
+        print()
+        print("  Install Docker:  https://docs.docker.com/get-docker/")
+        print("  Or skip it:      haldir serve   — the same API, no Docker")
         sys.exit(1)
 
     if args.down:
