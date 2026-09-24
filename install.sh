@@ -14,8 +14,24 @@
 set -eu
 
 REPO="ExposureGuard/haldir"
-TAG="${HALDIR_DEMO_TAG:-demo-preview-1}"
 DIR="${HALDIR_DEMO_DIR:-.}"
+
+# Resolve the newest demo release rather than pinning a tag that goes stale
+# the next time one is cut. `/releases/latest` is no good here: the demo
+# releases are marked prerelease, so it would return the product release
+# instead, which has no binaries on it.
+#
+# Falls back to a known-good tag when the API is unreachable or rate-limited —
+# an anonymous request gets 60 an hour per address, and a shared network can
+# exhaust that.
+TAG="${HALDIR_DEMO_TAG:-}"
+if [ -z "$TAG" ]; then
+    TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=30" 2>/dev/null \
+          | grep -o '"tag_name": *"demo-[^"]*"' \
+          | head -1 \
+          | sed 's/.*"\(demo-[^"]*\)"/\1/') || TAG=""
+fi
+[ -n "$TAG" ] || TAG="demo-preview-2"
 
 say()  { printf '[*] %s\n' "$1"; }
 good() { printf '[+] %s\n' "$1"; }
