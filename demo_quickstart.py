@@ -71,6 +71,9 @@ def source_tree() -> str | None:
 def child_env() -> dict[str, str]:
     """The environment for processes that have to import Haldir."""
     env = dict(os.environ)
+    # Child processes print the same characters; PYTHONIOENCODING is how the
+    # setting crosses a process boundary, since they start fresh interpreters.
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     tree = source_tree()
     if tree:
         prior = env.get("PYTHONPATH", "")
@@ -97,6 +100,32 @@ def haldir_available(python: str) -> bool:
         [python, "-c", "import cli, haldir_probes"],
         capture_output=True, cwd=tempfile.gettempdir(), env=child_env(),
     ).returncode == 0
+
+
+def force_utf8_output() -> None:
+    """Make stdout and stderr UTF-8 on platforms that do not default to it.
+
+    Windows consoles and redirected pipes use a legacy codepage (cp1252 and
+    friends) unless told otherwise, and this program prints em dashes, box
+    drawing and `·`. A `print` that cannot encode a character raises
+    UnicodeEncodeError and takes the whole run with it — the bundled binary
+    died on Windows twice: once on SIGHUP, then on this.
+
+    `errors="replace"` rather than strict, so a console that still cannot
+    render a glyph shows a placeholder instead of failing. Losing a dash is
+    survivable; losing the run is not.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        # getattr rather than a direct call: `reconfigure` is on
+        # io.TextIOWrapper, not on the TextIO protocol sys.stdout is typed as,
+        # so mypy is right that it may not be there.
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass   # not a TextIOWrapper, or already detached
 
 
 def info(msg: str) -> None:
@@ -331,6 +360,8 @@ def _tinker_banner(base: str) -> None:
 
 
 def main() -> int:
+    force_utf8_output()
+
     if sys.version_info < MIN_PYTHON:
         die(
             f"needs Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer; this is "
