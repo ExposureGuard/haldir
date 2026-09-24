@@ -1,0 +1,116 @@
+name: build-demo
+
+# Builds the one-file demo binary for every platform a tester might be on.
+#
+# A PyInstaller build is not portable across operating systems or CPU
+# architectures — an arm64 binary will not run on an Intel Mac, and neither
+# will run on Windows. So there is one build per target rather than one build
+# and a hope.
+#
+# The binaries are attached to a release only after all of them have built and
+# passed their smoke test, in a job that `needs:` the matrix. Attaching as each
+# finished would publish a release that is missing two thirds of its assets for
+# as long as the slowest runner takes, and a download link that 404s is worse
+# than one that does not exist yet.
+
+on:
+  push:
+    tags: ['demo-*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to attach the binaries to"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      # One platform failing should not hide whether the others built: the
+      # whole point of the matrix is which platforms work.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: haldir-demo-linux-x86_64
+          - os: macos-latest          # Apple Silicon
+            asset: haldir-demo-macos-arm64
+          - os: macos-13              # Intel
+            asset: haldir-demo-macos-x86_64
+          - os: windows-latest
+            asset: haldir-demo-windows-x86_64.exe
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Haldir and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build the one-file binary
+        run: python build_demo.py
+
+      - name: Smoke test — the binary has to run here, not just build here
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=dist/haldir-demo
+          [ -f "$BIN.exe" ] && BIN="$BIN.exe"
+          echo "testing $BIN"
+          # Exit code is 0 only when all three probes passed, so this asserts
+          # the bundled copy actually works on this platform — a build that
+          # succeeds and a binary that runs are different claims.
+          if ! "$BIN" > probe.log 2>&1; then
+            echo "::error::the demo binary failed its own probes on ${{ matrix.os }}"
+            tail -30 probe.log
+            exit 1
+          fi
+          tail -8 probe.log
+
+      - name: Name the artifact for its platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=dist/haldir-demo
+          [ -f "$BIN.exe" ] && BIN="$BIN.exe"
+          cp "$BIN" "dist/${{ matrix.asset }}"
+          ls -lh "dist/${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    name: attach to the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/demo-') || inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Show what will be attached
+        run: ls -lh dist/
+
+      # Runs only after every platform above succeeded, so the release never
+      # exists in a half-populated state.
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          files: dist/*
+          fail_on_unmatched_files: true
