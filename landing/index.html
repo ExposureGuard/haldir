@@ -53,7 +53,7 @@
       ],
       "softwareVersion": "0.4.1",
       "datePublished": "2026-04-05",
-      "dateModified": "2026-04-19",
+      "dateModified": "2026-10-01",
       "author": {
         "@type": "Organization",
         "name": "Haldir",
@@ -137,6 +137,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "Grant scopes at session creation and enforce them on every call. Haldir's Proxy sits in front of upstream MCP servers: the agent connects to Haldir, Haldir checks the session's scopes and any policy, then forwards. POST /v1/proxy/policies with {\"type\": \"block_tool\", \"tool\": \"...\"} denies a tool outright, and the denial is recorded in the audit log rather than silently dropped."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does Haldir stop prompt injection?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Not by detecting it, and that is deliberate: spotting a hijacked agent is a guess, and the guess is the part that fails. Haldir limits what a hijacked agent can do instead. Every tool call is authorised against the session's scopes and spend cap before it runs, so an injected instruction cannot read a secret outside that session's scope, call a tool the session was never granted, or spend past its budget. A refused call is written to the same hash-chained log as the calls that succeeded, so you can see what was attempted. Run a detector alongside it if you want one — Haldir is the floor that holds underneath."
       }
     },
     {
@@ -482,9 +490,9 @@
 
     <!-- ── Hero ── -->
     <section class="hero">
-        <span class="hero-eyebrow">Open-source · audit-prep · MIT licensed</span>
+        <span class="hero-eyebrow">Open source · built for audits · MIT licensed</span>
         <h1>The <em>compliance</em> layer<br>for AI agents</h1>
-        <p class="hero-sub">Hash-chained audit trail. Scoped agent sessions. Encrypted vault. <strong style="color:var(--w);">Signed audit-prep evidence packs delivered to your inbox every month — the agent-activity slice an auditor needs for a SOC2 workpaper.</strong></p>
+        <p class="hero-sub">Everything your agent does, written down and impossible to quietly edit. Spending limits that hold. Keys and passwords it can use but never see. <strong style="color:var(--w);">A signed report in your inbox every month — the proof an auditor asks for, without the week of digging.</strong></p>
         <div class="hero-cta">
             <a href="/demo/tamper" class="btn btn-w">Live tamper demo &rarr;</a>
             <a href="/compliance?demo=1" class="btn btn-g">Evidence pack</a>
@@ -512,22 +520,22 @@
             <div class="product-card">
                 <span class="product-num">01</span>
                 <div class="product-name">Gate</div>
-                <div class="product-desc">Scoped sessions for every agent. Permissions, spend limits, and TTL enforced on every tool call.</div>
+                <div class="product-desc">Every agent works inside limits you set — what it can do, how much it can spend, how long it has. Checked on every action, so an agent that gets tricked still cannot overspend.</div>
             </div>
             <div class="product-card">
                 <span class="product-num">02</span>
                 <div class="product-name">Vault</div>
-                <div class="product-desc">Encrypted secrets agents never see. Payment authorization with per-session budget enforcement.</div>
+                <div class="product-desc">Keys and passwords your agent can use but never read. Payments only up to the budget you gave it.</div>
             </div>
             <div class="product-card">
                 <span class="product-num">03</span>
                 <div class="product-name">Watch</div>
-                <div class="product-desc">Immutable audit log. Anomaly detection. Cost tracking. The compliance layer enterprises need.</div>
+                <div class="product-desc">A record that cannot be edited after the fact. Alerts when something looks off. What it all cost. The paper trail for whoever asks.</div>
             </div>
             <div class="product-card">
                 <span class="product-num">04</span>
                 <div class="product-name">Proxy</div>
-                <div class="product-desc">Every tool call intercepted, authorized, and logged. Allow lists, rate limits, and policy enforcement before agents touch your APIs.</div>
+                <div class="product-desc">Every action checked before it happens — including the MCP tools your agent calls. Allow lists, rate limits and rules, applied before anything touches your systems.</div>
             </div>
         </div>
     </section>
