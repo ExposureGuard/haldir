@@ -1698,6 +1698,23 @@ def cmd_serve(args: argparse.Namespace) -> None:
         print(f"    curl -s -X POST {base_url}/v1/keys \\")
         print("      -H 'Content-Type: application/json' -d '{\"name\":\"me\"}'")
 
+    # The console. It has been served at /dashboard all along — sessions,
+    # audit, spend, approvals, secrets, webhooks, usage — and was reachable
+    # from nowhere: no link on the landing page, none in the README, and not
+    # here. A UI nobody can find is the same as no UI, and this is the one
+    # screen that shows what the product does without reading anything.
+    #
+    # The key goes in the URL because dashboard.js reads one from `?key=`
+    # and otherwise puts a "paste a key" form in front of everything —
+    # friction in front of the only visual surface, on a loopback instance
+    # that is already guarded by being loopback. Jupyter does the same with
+    # ?token=. The key is printed a few lines above regardless, so this
+    # exposes nothing that is not already on the screen.
+    if api_key:
+        print()
+        print("  The console — sessions, spend, approvals, audit:")
+        print(f"    {base_url}/dashboard?key={api_key}")
+
     # Printed in both modes, deliberately. The tamper demo is the product's
     # strongest thirty seconds — it rewrites a real row in this instance's
     # audit log and the verdict flips from verified to tampered, using the
