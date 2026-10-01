@@ -119,6 +119,45 @@ def test_agent_json_states_the_current_tool_count() -> None:
     )
 
 
+def test_landing_page_states_the_current_tool_count() -> None:
+    """The same claim, on the page a human reads first.
+
+    The documents above are checked by the phrase "N tools", and the landing
+    page states the number in neither that shape nor the same place twice:
+    the facts band puts the value and the label in separate elements, and the
+    FAQ writes "19 governance tools". A phrase-level check walks past both,
+    which is how the page came to read "9 MCP Tools" three releases after the
+    number stopped being true — while the FAQ on the same page said 19.
+
+    Fails if it finds no claim at all, so refactoring the markup cannot
+    quietly turn this into a test of nothing.
+    """
+    html = _read("landing/index.html")
+
+    band = {
+        label.strip(): int(value)
+        for value, label in re.findall(
+            r'class="fact-val">([^<]+)</div>\s*<div class="fact-label">([^<]+)</div>',
+            html,
+        )
+        if value.strip().isdigit()
+    }
+    prose = {
+        int(n)
+        for n in re.findall(r"\b(\d+)\s+governance\s+tools\b", html)
+    }
+
+    claims = {v for label, v in band.items() if "tool" in label.lower()} | prose
+    assert claims, (
+        "the landing page states no tool count in a form this test reads — "
+        "update the test rather than letting it pass"
+    )
+    assert claims == {len(TOOLS)}, (
+        f"landing/index.html claims {sorted(claims)} MCP tools; the catalog "
+        f"has {len(TOOLS)}"
+    )
+
+
 @pytest.mark.parametrize("doc", ["README.md", "llms.txt", "llms-full.txt", "CONTRIBUTING.md"])
 def test_docs_do_not_advertise_retired_camel_case_names(doc: str) -> None:
     """The retired names — createSession, getAuditTrail and friends — sent
