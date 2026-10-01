@@ -145,12 +145,12 @@ Install once, drive the whole platform from the terminal:
 $ haldir overview
 
   Haldir tenant overview
-  acct_xyz123  ·  tier pro  ·  2026-04-19T18:42:11+00:00
+  acct_xyz123  ·  tier free  ·  2026-09-30T18:42:11+00:00
 
   Status     ● ok
-  API calls    4,217 / 2,500,000  ░░░░░░░░░░░░░░░░░░░    0.2%
+  API calls    4,217 / 10,000  ████████░░░░░░░░░░░░   42.2%
   Spend      $ 47.30 this month
-  Sessions        12 active  ·  3/25 agents
+  Sessions         3 active  ·  1/1 agents
   Vault            8 secrets  ·  62 accesses this month
   Audit        1,847 entries  ·  0 flagged (7d)  ·  chain ✓
   Webhooks         2 registered  ·  541 deliveries (24h)  ·  99.82% success
