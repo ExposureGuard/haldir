@@ -293,6 +293,38 @@ def test_landing_page_price_matches_the_table() -> None:
     assert offers, "no offers parsed"
 
 
+def test_readme_sample_output_describes_a_plan_that_exists() -> None:
+    """The README's `haldir overview` transcript is pasted output, so it names
+    a plan and an agent cap — and it named a retired one.
+
+    It read `tier pro` and `3/25 agents` for three releases after that plan was
+    retired, next to a 2,500,000-call allowance nothing has ever offered. That
+    transcript is a reader's first sight of the product, and nothing compared
+    it to the table every other surface is generated from.
+
+    Both claims are read as sets and checked against the table, and the test
+    fails if it finds neither, so reformatting the sample cannot quietly turn
+    it into a test of nothing.
+    """
+    readme = open(os.path.join(_ROOT, "README.md"), encoding="utf-8").read()
+    plans = set(haldir_tiers.TIERS)
+
+    stated = set(re.findall(r"·\s*tier\s+([a-z][a-z-]*)", readme))
+    assert stated, "the README states no tier — update this test, not the README"
+    assert stated <= plans, (
+        f"the README's sample output says tier {sorted(stated - plans)}, which "
+        f"is not a plan in haldir_tiers: {sorted(plans)}"
+    )
+
+    caps = {int(n) for n in re.findall(r"\d+/(\d+) agents", readme)}
+    assert caps, "the README states no agent cap — update this test, not the README"
+    real = {haldir_tiers.limits(p)["agents"] for p in plans}
+    assert caps <= real, (
+        f"the README's sample output shows {sorted(caps - real)} agents, which "
+        f"no plan sets: {sorted(real)}"
+    )
+
+
 def test_the_in_product_pricing_page_renders_from_the_table(client=None) -> None:
     """The page that used to say $49 for a $99 plan.
 
