@@ -174,6 +174,57 @@ def test_no_caller_looks_up_a_tier_without_the_alias() -> None:
     )
 
 
+def test_every_live_tier_has_a_rate_limit() -> None:
+    """A tier missing from RATE_LIMITS does not fail, it silently throttles.
+
+    The lookup is `RATE_LIMITS.get(tier, 100)` — free's ceiling. So when the
+    paid plan was renamed to "usage", the new name was absent from the table
+    while the retired "pro" stayed in it: the pricing page sold 5,000/hr and
+    the middleware enforced 100/hr, a 50x reduction with nothing in the
+    response to indicate it. The suite above could not catch this because
+    RATE_LIMITS is a second table, and `test_no_caller_looks_up_a_tier_without_
+    the_alias` only watches TIER_LIMITS.
+
+    Compared against TIERS rather than a list written out here, so a plan
+    added later cannot exist in one table and be missing from the other.
+    """
+    import api
+
+    missing = [t for t in haldir_tiers.TIERS if t not in api.RATE_LIMITS]
+    assert not missing, (
+        f"these tiers have no rate limit, so they would fall back to free's "
+        f"100/hr: {missing}. Add them to api.RATE_LIMITS."
+    )
+
+    # A retired name has to land on a live entry. Otherwise the alias maps it
+    # to a tier that has no limit — the rename costs the tenant their ceiling
+    # instead of preserving it, which is the failure the alias exists to stop.
+    for old in haldir_tiers.RENAMED_TIERS:
+        resolved = haldir_tiers.RENAMED_TIERS[old]
+        assert resolved in api.RATE_LIMITS, (
+            f"{old!r} resolves to {resolved!r}, which has no rate limit"
+        )
+
+
+def test_the_retired_name_is_not_stored_in_new_databases() -> None:
+    """`haldir serve` must seed the tier's current name, not a retired one.
+
+    Writing "pro" into a fresh database is how the name outlives the rename:
+    every new local install then reports a plan that stopped existing, and the
+    old name has to be kept working forever.
+    """
+    src = open(os.path.join(_ROOT, "cli.py"), encoding="utf-8").read()
+    offenders = [
+        f"cli.py:{n}"
+        for n, line in enumerate(src.splitlines(), 1)
+        if re.search(r'"local",\s*"pro"', line.split("#", 1)[0])
+    ]
+    assert not offenders, (
+        f"these mint a key on the retired tier name: {offenders}. "
+        f"Use {haldir_tiers.RENAMED_TIERS['pro']!r}."
+    )
+
+
 # ── Overage arithmetic ───────────────────────────────────────────────
 
 def test_usage_is_billed_at_the_stated_rate() -> None:

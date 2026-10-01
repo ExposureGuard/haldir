@@ -1665,7 +1665,12 @@ def cmd_serve(args: argparse.Namespace) -> None:
             conn.execute(
                 "INSERT INTO api_keys (key_hash, key_prefix, tenant_id, name, tier, "
                 "scopes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (key_hash, full_key[:12], key_hash[:16], "local", "pro",
+                # "usage", not "pro": pro is the retired name, and writing it
+                # into a fresh database means every new local install starts
+                # on a tier that no longer appears on the pricing page. The
+                # limit tables resolve the alias either way, so this is about
+                # not seeding new databases with legacy names.
+                (key_hash, full_key[:12], key_hash[:16], "local", "usage",
                  '["*"]', time.time()),
             )
             conn.commit()
