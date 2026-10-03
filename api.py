@@ -4680,7 +4680,7 @@ def _render_tier_cards() -> str:
         if price is None:
             price_html = "Custom <span>/ year</span>"
             cta = ('<button onclick="checkout(\'enterprise\')" '
-                   'class="tier-btn tier-btn-white">Contact Sales</button>')
+                   'class="tier-btn tier-btn-white" onclick="window.location.href=&#39;mailto:hello@haldir.xyz?subject=Haldir%20Enterprise&#39;">Contact Sales</button>')
         elif plan.get("actions_per_month") is None:
             per_million = plan.get("overage_usd_per_action") or 0
             price_html = (
@@ -4933,11 +4933,11 @@ footer a { color: var(--gold); text-decoration: none; }
     </div>
     <div class="faq-item">
         <div class="faq-q">What happens if I exceed my limit?</div>
-        <div class="faq-a">API calls return a 429 with a clear message and a link to upgrade. No data is lost, no sessions are terminated. You just can't make new calls until the next month or you upgrade.</div>
+        <div class="faq-a">On the free tier, calls return a 429 until the month rolls over — nothing is lost and no session is terminated. On the metered plan there is no ceiling to hit: calls keep working and cost $40 per million.</div>
     </div>
     <div class="faq-item">
         <div class="faq-q">Can I change plans anytime?</div>
-        <div class="faq-a">Yes. Upgrade instantly, downgrade at end of billing period. Managed through the Stripe customer portal — no emails, no sales calls.</div>
+        <div class="faq-a">There is nothing to cancel. The metered plan has no subscription and no minimum, so you stop paying by not making calls — an idle agent costs nothing. If you are on the free tier, there is nothing to downgrade from.</div>
     </div>
     <div class="faq-item">
         <div class="faq-q">Do you offer annual billing?</div>
@@ -5004,10 +5004,18 @@ def billing_checkout():
     tier = haldir_tiers.RENAMED_TIERS.get(requested, requested)
     tenant = getattr(request, "tenant_id", "")
 
-    price_id = {
-        "usage": STRIPE_PRICE_USAGE or STRIPE_PRICE_USAGE_LEGACY,
-        "enterprise": STRIPE_PRICE_ENTERPRISE,
-    }.get(tier, "")
+    # Which tiers a customer may buy for themselves. Enterprise is negotiated,
+    # not self-serve — and without this list any authenticated key could ask for
+    # it and be handed a checkout session for whatever price happens to be
+    # configured, including one nobody agreed to.
+    if tier not in ("usage",):
+        return jsonify({
+            "error": f"{tier} is not self-serve. Email hello@haldir.xyz and we will "
+                     f"work it out with you.",
+            "code": "tier_not_purchasable",
+        }), 400
+
+    price_id = {"usage": STRIPE_PRICE_USAGE or STRIPE_PRICE_USAGE_LEGACY}.get(tier, "")
     if not price_id:
         return jsonify({"error": f"No Stripe price configured for tier '{tier}'"}), 400
 
@@ -5041,6 +5049,25 @@ def billing_checkout():
         return jsonify({"error": str(e)}), 400
 
 
+def _evt_field(obj, *path, default=""):
+    """Read a field from a Stripe event object or a plain dict.
+
+    StripeObject supports `obj["key"]` but has **no `.get()`** — so the
+    `.get(..., {})` chains this handler was written with raise AttributeError
+    against the SDK the repo pins, and every real webhook 500s. It walks the
+    path either way, and returns the default the moment a link is missing.
+    """
+    cursor = obj
+    for key in path:
+        if cursor is None:
+            return default
+        try:
+            cursor = cursor[key]
+        except (KeyError, IndexError, TypeError):
+            return default
+    return default if cursor is None else cursor
+
+
 @app.route("/v1/billing/webhook", methods=["POST"])
 def billing_webhook():
     """Handle Stripe webhook events for subscription lifecycle."""
@@ -5055,17 +5082,23 @@ def billing_webhook():
 
     try:
         event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
-    except (ValueError, stripe.SignatureVerificationError):
-        return jsonify({"error": "Invalid webhook signature"}), 400
+    except (ValueError, KeyError, AttributeError, stripe.SignatureVerificationError):
+        # AttributeError is not hypothetical: with the pinned SDK,
+        # construct_event reads `event.object` and raises it on a payload
+        # that has no top-level "object" — a signed body we cannot parse. A
+        # 500 there means Stripe retries the same unusable event until it
+        # gives up and disables the endpoint, so an unparseable body is a
+        # 400: the request is wrong, not the server.
+        return jsonify({"error": "Invalid webhook payload or signature"}), 400
 
     etype = event["type"]
     obj = event["data"]["object"]
 
     if etype == "checkout.session.completed":
-        tenant_id = obj.get("metadata", {}).get("tenant_id", "")
-        tier = obj.get("metadata", {}).get("tier", "pro")
-        customer_id = obj.get("customer", "")
-        subscription_id = obj.get("subscription", "")
+        tenant_id = _evt_field(obj, "metadata", "tenant_id")
+        tier = _evt_field(obj, "metadata", "tier", default="pro")
+        customer_id = _evt_field(obj, "customer")
+        subscription_id = _evt_field(obj, "subscription")
 
         if tenant_id:
             now = time.time()
@@ -5087,21 +5120,46 @@ def billing_webhook():
             conn.commit()
             conn.close()
 
-    elif etype == "invoice.payment_succeeded":
-        subscription_id = obj.get("subscription", "")
-        period_end = obj.get("lines", {}).get("data", [{}])[0].get("period", {}).get("end", 0)
-        if subscription_id:
-            conn = get_db(DB_PATH)
+    elif etype in ("invoice.payment_succeeded", "invoice.payment_failed"):
+        # Where the subscription id lives moved: `Invoice.subscription` was
+        # removed in the Stripe API this repo pins and now sits under
+# parent.subscription_details (tests/test_billing.py names the version)
+        # now sits under parent.subscription_details. Reading only the old path
+        # returns "" and the branch does nothing — a renewal that silently never
+        # confirms, on the event whose whole job is to confirm renewals. Both
+        # shapes are read so an older account keeps working.
+        subscription_id = (
+            _evt_field(obj, "subscription")
+            or _evt_field(obj, "parent", "subscription_details", "subscription")
+        )
+        if not subscription_id:
+            return jsonify({"received": True, "note": "no subscription on this invoice"}), 200
+
+        conn = get_db(DB_PATH)
+        if etype == "invoice.payment_succeeded":
+            period_end = _evt_field(obj, "lines", "data", 0, "period", "end", default=0)
             conn.execute(
                 "UPDATE subscriptions SET status = 'active', current_period_end = ?, updated_at = ? "
                 "WHERE stripe_subscription_id = ?",
                 (period_end, time.time(), subscription_id)
             )
-            conn.commit()
-            conn.close()
+        else:
+            # A failed payment marks the row, and nothing else. That is enough
+            # because _get_tenant_tier honours a tier only while the status is
+            # 'active' — so the tenant falls back to free limits immediately,
+            # and a later successful payment restores them through the branch
+            # above. No api_keys downgrade, so recovery is not a second write
+            # that has to be remembered.
+            conn.execute(
+                "UPDATE subscriptions SET status = 'past_due', updated_at = ? "
+                "WHERE stripe_subscription_id = ?",
+                (time.time(), subscription_id)
+            )
+        conn.commit()
+        conn.close()
 
     elif etype == "customer.subscription.deleted":
-        subscription_id = obj.get("id", "")
+        subscription_id = _evt_field(obj, "id")
         if subscription_id:
             conn = get_db(DB_PATH)
             # Downgrade to free
