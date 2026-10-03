@@ -64,14 +64,14 @@ pre{font-size:0.65rem;padding:0.75rem;line-height:1.6}
 <div class="step locked" id="step-3">
     <div class="step-num">Step 3 — Point your own agent at it</div>
     <h2>One URL. That's the whole setup.</h2>
-    <p>Haldir is an MCP server. Any MCP client that accepts a remote server URL can use it — paste this, add your key as a bearer token, and your agent's tool calls start being checked, logged, and capped.</p>
+    <p>Haldir is an MCP server, and it signs you in — so this URL is genuinely the whole setup. Paste it into your client, approve it in the browser tab that opens, and your agent's tool calls start being checked, logged and capped.</p>
     <pre>https://haldir.xyz/mcp<button class="copy-btn" onclick="copyText('https://haldir.xyz/mcp')">COPY</button></pre>
     <p style="font-size:0.75rem">19 tools: sessions, permissions, secrets, payments, approvals, the audit trail, and the Merkle proofs behind it.</p>
 
     <div class="opt">
         <div class="opt-label">Where to paste it</div>
         <p><strong style="color:var(--w)">Claude</strong> — desktop, web or phone: open <strong style="color:var(--w)">Settings → Connectors</strong>, choose <strong style="color:var(--w)">Add custom connector</strong>, give it a name and paste the URL above.</p>
-        <p style="font-size:0.75rem">One thing to expect: Claude's connector form is built for servers that sign you in with a browser. Haldir authenticates with your key instead, so if the form offers a headers field, put <code style="font-family:'IBM Plex Mono',monospace;color:#b8973a">Authorization: Bearer &lt;your key&gt;</code> there. If it doesn't, use the local option below — it works in every client.</p>
+        <p style="font-size:0.75rem">A browser tab opens, you press one button, and it is connected. No key to copy. If your client asks for a key instead of a sign-in, the one from step 2 works — but you should not need it.</p>
         <p><strong style="color:var(--w)">Cursor, Windsurf, and most others</strong> take a small JSON entry: the URL, plus your key in a headers block. Their MCP settings page shows the exact shape, and this URL is all it needs.</p>
     </div>
 

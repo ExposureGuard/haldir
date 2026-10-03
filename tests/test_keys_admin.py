@@ -158,3 +158,55 @@ def test_revoked_key_appears_in_list_with_revoked_true(haldir_client, bootstrap_
     )
     rows = {k["prefix"]: k for k in r.get_json()["keys"]}
     assert rows[minted["prefix"]]["revoked"] is True
+
+
+# ── The fail-closed mint path ────────────────────────────────────────
+#
+# `_mint_api_key` is the one place a key is created, and it holds the rule the
+# product is sold on: a key nobody can account for must not exist. These tests
+# live here rather than with the OAuth work because the rule belongs to key
+# creation, and every caller of that helper inherits it.
+
+def test_a_key_whose_audit_write_fails_is_revoked_not_returned(
+    haldir_client, bootstrap_key, monkeypatch
+) -> None:
+    """The audit write fails → no usable key, in the response or in the table.
+
+    Two separate assertions, and the second is the one that matters. "The
+    response has no key" protects a caller that reads the body; "the row is
+    revoked" protects a caller that ignores it. A `raise` without the revoke
+    would pass the first and fail the second.
+    """
+    import uuid
+
+    import api
+    from haldir_db import get_db
+
+    name = f"audit-fail-{uuid.uuid4().hex[:8]}"
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("audit chain unavailable")
+
+    monkeypatch.setattr(api, "_audit_admin", unavailable)
+
+    r = haldir_client.post(
+        "/v1/keys",
+        json={"name": name},
+        headers={"Authorization": f"Bearer {bootstrap_key}"},
+    )
+
+    assert r.status_code == 500
+    assert "key" not in r.get_json(), (
+        "a key was returned to the caller even though it could not be recorded"
+    )
+
+    conn = get_db(api.DB_PATH)
+    try:
+        row = conn.execute(
+            "SELECT revoked FROM api_keys WHERE name = ?", (name,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row is not None, "the row should exist and be revoked, not be absent"
+    assert row["revoked"] == 1, "the unrecorded key was left usable"
