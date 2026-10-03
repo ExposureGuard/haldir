@@ -538,6 +538,81 @@ def _audit_admin(action, details=None, tenant_id="", actor=None):
     return watch.log_admin_action(actor, action, details=details, tenant_id=tenant_id)
 
 
+class KeyAuditUnavailable(Exception):
+    """The audit write failed, so the key was revoked and must not be handed out."""
+
+
+def _mint_api_key(
+    *,
+    name: str,
+    scopes: list | None = None,
+    tier: str = "free",
+    tenant_id: str | None = None,
+    actor: str = "",
+    extra_details: dict | None = None,
+    oauth_client_id: str = "",
+    oauth_resource: str = "",
+) -> tuple[str, str, str]:
+    """Create a key, record it in the audit chain, and return it.
+
+    Returns `(full_key, prefix, tenant_id)`. The plaintext exists in this process
+    and in the caller's response and nowhere else — only the hash is stored.
+
+    Raises `KeyAuditUnavailable` when the audit write fails, *having already
+    revoked the key*. That ordering is the security property, and the reason
+    this returns a tuple instead of taking a response object: a caller that
+    handles the exception cannot hand out the key, and a caller that ignores it
+    still cannot, because the row is dead. It is the same rule the delegation
+    spawn path applies to an unrecorded child session — "a key nobody can
+    account for is the one thing this product exists to make impossible".
+
+    `extra_details` merges into the audit entry so a caller can record *how* the
+    key was obtained (`{"via": "oauth", …}`) without inventing a second audit
+    shape for the same event.
+    """
+    import haldir_scopes
+
+    granted = scopes if scopes is not None else [haldir_scopes.WILDCARD]
+    full_key = f"hld_{secrets.token_urlsafe(32)}"
+    key_hash = _hash_key(full_key)
+    prefix = full_key[:12]
+    # A caller with a tenant passes it, so sub-keys live under the same tenant;
+    # the first key of a new tenant starts one from its own hash.
+    tenant = tenant_id or key_hash[:16]
+
+    conn = get_db(DB_PATH)
+    conn.execute(
+        "INSERT INTO api_keys (key_hash, key_prefix, tenant_id, name, tier, "
+        "scopes, oauth_resource, oauth_client_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (key_hash, prefix, tenant, name, tier,
+         haldir_scopes.serialize(granted), oauth_resource, oauth_client_id,
+         time.time()),
+    )
+    conn.commit()
+    conn.close()
+
+    details = {"key_prefix": prefix, "name": name, "tier": tier,
+               "scopes": granted, "bootstrap": tenant_id is None}
+    if extra_details:
+        details.update(extra_details)
+
+    try:
+        _audit_admin("key.create", details, tenant_id=tenant, actor=actor)
+    except Exception:
+        conn = get_db(DB_PATH)
+        conn.execute("UPDATE api_keys SET revoked = 1 WHERE key_hash = ?", (key_hash,))
+        conn.commit()
+        conn.close()
+        log.exception("key.create audit write failed; revoked the new key",
+                      extra={"key_prefix": prefix})
+        raise KeyAuditUnavailable(
+            "the audit chain is unavailable; the new key was revoked"
+        ) from None
+
+    return full_key, prefix, tenant
+
+
 # ── Bootstrap: create first API key ──
 
 @app.route("/v1/keys", methods=["POST"])
@@ -599,42 +674,18 @@ def create_api_key():
     except haldir_scopes.ScopeValidationError as e:
         return jsonify({"error": str(e), "code": "invalid_scope"}), 400
 
-    full_key = f"hld_{secrets.token_urlsafe(32)}"
-    key_hash = _hash_key(full_key)
-    # Inherit caller's tenant so sub-keys live under the same tenant;
-    # only the very first / bootstrap key starts a fresh one.
-    tenant_id = inherited_tenant or key_hash[:16]
-
-    conn = get_db(DB_PATH)
-    conn.execute(
-        "INSERT INTO api_keys (key_hash, key_prefix, tenant_id, name, tier, "
-        "scopes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (key_hash, full_key[:12], tenant_id, name, tier,
-         haldir_scopes.serialize(validated_scopes), time.time()),
-    )
-    conn.commit()
-    conn.close()
-
-    # Record the credential before handing it out. A key nobody can account
-    # for is the one thing this product exists to make impossible, so if the
-    # audit write fails the key is revoked rather than returned — the same
-    # rule the delegation spawn path applies to an unrecorded child session.
     try:
-        _audit_admin(
-            "key.create",
-            {"key_prefix": full_key[:12], "name": name, "tier": tier,
-             "scopes": validated_scopes,
-             "bootstrap": inherited_tenant is None},
-            tenant_id=tenant_id,
+        full_key, prefix, tenant_id = _mint_api_key(
+            name=name,
+            scopes=validated_scopes,
+            tier=tier,
+            tenant_id=inherited_tenant,
             actor=actor,
         )
-    except Exception:
-        conn = get_db(DB_PATH)
-        conn.execute("UPDATE api_keys SET revoked = 1 WHERE key_hash = ?", (key_hash,))
-        conn.commit()
-        conn.close()
-        log.exception("key.create audit write failed; revoked the new key",
-                      extra={"key_prefix": full_key[:12]})
+    except KeyAuditUnavailable:
+        # The helper has already revoked the key before raising. The wording is
+        # unchanged from when this lived inline: operators have seen it, and so
+        # have the tests.
         return jsonify({
             "error": "Could not record the new key in the audit log, so it was "
                      "revoked. The audit chain is unavailable — fix that first.",
@@ -642,7 +693,7 @@ def create_api_key():
 
     response = {
         "key": full_key,
-        "prefix": full_key[:12],
+        "prefix": prefix,
         "name": name,
         "tier": tier,
         "scopes": validated_scopes,
