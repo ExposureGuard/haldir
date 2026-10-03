@@ -502,3 +502,34 @@ def test_the_discovery_documents_describe_routes_that_exist(haldir_client) -> No
                 asm["registration_endpoint"]):
         assert url.startswith(haldir_oauth.issuer())
         assert url[len(haldir_oauth.issuer()):] in rules, f"{url} is not a route"
+
+
+def test_tool_calls_are_limited_and_the_handshake_is_not(
+    haldir_client, bootstrap_key, monkeypatch
+) -> None:
+    """/mcp had no limit at all before this, for any key in existence.
+
+    The limit counts tool calls only. One assistant turn sends initialize,
+    tools/list and then a burst of tools/call — throttling the handshake would
+    break the start of every session while saving nothing.
+    """
+    monkeypatch.setattr(api, "MCP_CALLS_PER_HOUR", 3)
+    api._mcp_calls.clear()
+    h = {"Authorization": f"Bearer {bootstrap_key}"}
+
+    call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "haldir_get_spend", "arguments": {}}}
+
+    for _ in range(3):
+        assert haldir_client.post("/mcp", json=call, headers=h).status_code != 429
+
+    over = haldir_client.post("/mcp", json=call, headers=h)
+    assert over.status_code == 429
+    assert "Retry-After" in over.headers
+    assert over.get_json()["error"]["code"] == -32000
+
+    for _ in range(5):
+        r = haldir_client.post(
+            "/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, headers=h
+        )
+        assert r.status_code == 200, "the handshake was throttled"

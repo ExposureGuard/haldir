@@ -3,6 +3,30 @@
 All notable changes to Haldir are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **OAuth for the MCP endpoint.** A client that can sign in with a browser —
+  Claude's custom connectors among them — connects by pasting
+  `https://haldir.xyz/mcp` and pressing one button, instead of needing a beta
+  header field or Node and a config file. The token issued is an ordinary API
+  key, so revocation, scoping and the audit trail apply unchanged. Dynamic
+  client registration only; Client ID Metadata Documents are off, and
+  advertised as unsupported rather than left absent.
+
+- **A limit on `/mcp`.** It had none, for any key. Tool calls are counted
+  against 5,000 per hour per key; the handshake is not counted, because
+  throttling `initialize` and `tools/list` would break the start of every
+  session and save nothing.
+
+### Security
+
+- Keys minted over OAuth record the resource they were issued for, and `/mcp`
+  refuses one that names a different server. Keys with no binding — every key
+  that existed before this, and every key `POST /v1/keys` mints — are
+  unaffected.
+
 ## [0.4.2] — 2026-10-03
 
 ### Fixed

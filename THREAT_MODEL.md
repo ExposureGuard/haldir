@@ -369,3 +369,58 @@ Each version is committed to git; the diff IS the changelog.
 ---
 
 *Last review: 2026-04-20. Next scheduled review: 2026-07-20.*
+
+---
+
+## 10. Deliberate deviations in the MCP OAuth flow
+
+Three choices in `haldir_oauth.py` depart from the MCP authorization spec or
+from what a reviewer would expect. Each is a decision with a reason, recorded
+here so it reads as one rather than as an oversight.
+
+### No token expiry, and no refresh grant
+
+The token the flow issues **is** an ordinary API key. That is what makes
+revocation, scoping and the audit trail work with no new machinery, and it is
+the reason a key issued by a connector behaves like one a person minted from the
+CLI.
+
+The cost: the spec says an authorization server SHOULD issue short-lived tokens
+and MUST rotate refresh tokens for public clients, and this does neither. A
+leaked connector token is valid until someone revokes it.
+
+The trade was taken knowingly. The alternative — expiry without refresh —
+breaks every connected client silently when the clock runs out, with no
+recovery path a user could follow. Expiry *with* refresh is the correct end
+state and is not built yet. In the meantime the bound is honest: the token
+grants exactly what any Haldir key grants, and `DELETE /v1/keys/<prefix>`
+revokes it immediately.
+
+### Audience binding is recorded on OAuth keys, not enforced on every key
+
+`/mcp` refuses a key whose `oauth_resource` names a different server. Keys
+carrying no binding — every key that predates the column, and every key
+`POST /v1/keys` mints — are not checked at all.
+
+That asymmetry is deliberate: enforcing it on unbound keys would invalidate
+every credential in existence to satisfy a rule about tokens this flow issues.
+The spec's requirement is met for the tokens it is about.
+
+### Client ID Metadata Documents are not implemented
+
+Making the authorization server fetch a client-supplied URL turns it into an
+unauthenticated fetcher of arbitrary public hosts, usable by anyone who can
+reach `/oauth/authorize`, for zero present benefit — Claude registers
+dynamically today. `client_id_metadata_document_supported` is advertised as
+`false` rather than omitted, because a client that finds the flag missing cannot
+tell "unsupported" from "this server forgot to advertise". If it is added later
+it should be an allowlist of client hosts.
+
+### Adjacent, and unresolved
+
+`POST /v1/demo/key` still mints a full, unbound, non-expiring key for an
+anonymous caller, with no audit entry and no rate limit — and each call starts a
+fresh tenant with its own free allowance. That is a larger hole than anything
+the OAuth flow introduces, and the OAuth path deliberately does not copy its
+shape: tenant creation there is capped per IP per day, audited, and attributed to
+a named client.

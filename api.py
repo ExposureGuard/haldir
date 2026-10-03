@@ -3072,6 +3072,21 @@ _rate_limits = {}  # key_hash -> {window_start, count}
 # into different limits.
 RATE_LIMITS = {"free": 100, "usage": 5000, "enterprise": 50000}
 
+# /mcp counts separately, and higher, and only for tool calls.
+#
+# It had no limit at all before this: the predicate in rate_limit matches
+# "/v1/" and /mcp is not under it. Counting every request would be wrong in the
+# other direction — one assistant turn sends initialize, tools/list and then a
+# burst of tools/call, and the handshake is not the part that costs anything.
+#
+# 5,000/hour is the usage tier's figure, and it is deliberately far above the
+# free tier's 100: that ceiling is reasonable for API calls and unusable for a
+# chat session, which is what /mcp serves.
+MCP_CALLS_PER_HOUR = 5000
+
+# key_hash -> {"start", "count"} for tools/call at /mcp.
+_mcp_calls: dict = {}
+
 # Per-process, in-memory counters. Good enough for single-node Haldir
 # deployments (which is where most installs live today). When we fan
 # out across multiple gunicorn hosts the counter shifts to a shared
@@ -3097,6 +3112,38 @@ def _seconds_until_end_of_month(now_ts: float) -> int:
 
 @app.before_request
 def rate_limit():
+    if request.path == "/mcp":
+        # Only tool calls count. A client that is merely listing tools is not
+        # doing work, and throttling it would break the handshake that every
+        # session begins with.
+        body = request.get_json(silent=True) or {}
+        if body.get("method") != "tools/call":
+            return
+        key = request.headers.get("Authorization", "").replace("Bearer ", "") or request.headers.get("X-API-Key", "")
+        if not key:
+            return
+        key_hash = _hash_key(key)
+        now = time.time()
+        entry = _mcp_calls.get(key_hash, {"start": now, "count": 0})
+        if now - entry["start"] > 3600:
+            entry = {"start": now, "count": 0}
+        entry["count"] += 1
+        _mcp_calls[key_hash] = entry
+        if entry["count"] > MCP_CALLS_PER_HOUR:
+            resp = jsonify({
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "error": {
+                    "code": -32000,
+                    "message": f"Rate limit exceeded: {MCP_CALLS_PER_HOUR} tool "
+                               f"calls per hour. Try again shortly.",
+                },
+            })
+            resp.status_code = 429
+            resp.headers["Retry-After"] = str(int(entry["start"] + 3600 - now))
+            return resp
+        return
+
     if request.path.startswith("/v1/") and request.path not in ("/v1/keys", "/v1/demo/key"):
         key = request.headers.get("Authorization", "").replace("Bearer ", "") or request.headers.get("X-API-Key", "")
         if not key:
@@ -4083,7 +4130,9 @@ def mcp_server_card():
         "properties": {
             "apiKey": {
                 "type": "string",
-                "description": "Haldir API key (starts with hld_). Mint via POST /v1/keys.",
+                "description": "Haldir API key (starts with hld_). Mint via POST /v1/keys, "
+                               "or let your client sign in — this server runs an OAuth "
+                               "flow, so a client that supports one needs no key pasted at all.",
             },
             "baseUrl": {
                 "type": "string",
