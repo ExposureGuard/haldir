@@ -5123,11 +5123,11 @@ def billing_webhook():
     elif etype in ("invoice.payment_succeeded", "invoice.payment_failed"):
         # Where the subscription id lives moved: `Invoice.subscription` was
         # removed in the Stripe API this repo pins and now sits under
-# parent.subscription_details (tests/test_billing.py names the version)
-        # now sits under parent.subscription_details. Reading only the old path
-        # returns "" and the branch does nothing — a renewal that silently never
-        # confirms, on the event whose whole job is to confirm renewals. Both
-        # shapes are read so an older account keeps working.
+        # `parent.subscription_details` (tests/test_billing.py names the
+        # version). Reading only the old path returns "" and the branch does
+        # nothing — a renewal that silently never confirms, on the event whose
+        # whole job is to confirm renewals. Both shapes are read so an older
+        # account keeps working.
         subscription_id = (
             _evt_field(obj, "subscription")
             or _evt_field(obj, "parent", "subscription_details", "subscription")
