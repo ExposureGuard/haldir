@@ -297,11 +297,18 @@ def generate_openapi(app: Any, version: str = "0.4.2") -> dict[str, Any]:
 
     # Walk every Flask rule; skip the HTML pages, assets, and internal
     # routes — an OpenAPI doc should only describe the JSON surface.
-    _SKIP_PREFIXES = ("/static", "/_debug")
+    # "/oauth" is skipped rather than documented, and that is a judgement about
+    # what this document is for: it describes the /v1 JSON API. The OAuth
+    # endpoints are form-encoded, so the generator — which assumes a JSON body —
+    # would describe them wrongly, and a wrong spec is worse than a short one.
+    _SKIP_PREFIXES = ("/static", "/_debug", "/oauth")
     _SKIP_EXACT = {"/", "/docs", "/pricing", "/quickstart", "/sitemap.xml",
                    "/robots.txt", "/ai.txt", "/llms.txt", "/llms-full.txt",
                    "/status", "/demo", "/admin", "/admin/overview",
-                   "/admin/revoke", "/compliance"}
+                   "/admin/revoke", "/compliance",
+                   "/.well-known/oauth-protected-resource",
+                   "/.well-known/oauth-protected-resource/mcp",
+                   "/.well-known/oauth-authorization-server"}
     # /livez, /readyz, /healthz are documented in the platform tag —
     # they're machine consumers' contract so they SHOULD appear.
 

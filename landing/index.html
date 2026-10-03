@@ -594,6 +594,37 @@ cd haldir && docker compose up</pre>
         <a href="mailto:sterling@haldir.xyz?subject=Haldir%20Design%20Partner" class="btn btn-w">Claim a pilot spot</a>
     </section>
 
+    <!-- ── Plain questions ──
+         The FAQPage JSON-LD above answers machines. This answers people, and
+         in the words they would use — the questions here are the ones a
+         non-specialist actually asks before handing an agent a key. -->
+    <section id="questions" style="min-height:auto; padding:5rem 2rem; border-top:1px solid var(--w08);">
+        <span class="hero-eyebrow" style="margin-bottom:2.5rem;">Questions people actually ask</span>
+        <div style="max-width:640px; width:100%; display:flex; flex-direction:column; gap:1.75rem;">
+            <div>
+                <div style="font-weight:600; font-size:0.95rem; letter-spacing:-0.3px; margin-bottom:0.4rem;">Do I need to be technical?</div>
+                <div style="font-size:0.82rem; font-weight:300; color:var(--w50); line-height:1.8;">If you already run an agent, no. You paste one address into its settings and it is governed from then on. Everything below the line — the CLI, the API, the SDKs — is there if you want it, not something you have to learn first. You can watch the whole thing work in your browser without installing anything.</div>
+            </div>
+            <div>
+                <div style="font-weight:600; font-size:0.95rem; letter-spacing:-0.3px; margin-bottom:0.4rem;">What does it cost?</div>
+                <div style="font-size:0.82rem; font-weight:300; color:var(--w50); line-height:1.8;">Free for one agent, and 10,000 actions a month is more than most people use — it does not expire. Past that it is $40 per million actions, so an agent doing 1,000 a day costs about $1.20 a month. No subscription, and an agent that does nothing costs nothing.</div>
+            </div>
+            <div>
+                <div style="font-weight:600; font-size:0.95rem; letter-spacing:-0.3px; margin-bottom:0.4rem;">Will it work with my agent?</div>
+                <div style="font-size:0.82rem; font-weight:300; color:var(--w50); line-height:1.8;">Anything that speaks MCP: Claude Desktop, Cursor, Windsurf, and the framework SDKs. It is not tied to a model — Claude, GPT, Gemini, Llama, whatever you run. If you have built your own loop, it is a normal HTTP API.</div>
+            </div>
+            <div>
+                <div style="font-weight:600; font-size:0.95rem; letter-spacing:-0.3px; margin-bottom:0.4rem;">Is it safe to give it my keys?</div>
+                <div style="font-size:0.82rem; font-weight:300; color:var(--w50); line-height:1.8;">Secrets are encrypted before they touch disk, reaching one requires a session scoped to it, and every read is written to the same log as everything else. That log is hash-chained, so nobody — including us — can quietly edit it. It is MIT licensed, and you can run the whole thing yourself so nothing leaves your network.</div>
+            </div>
+            <div>
+                <div style="font-weight:600; font-size:0.95rem; letter-spacing:-0.3px; margin-bottom:0.4rem;">What happens if I stop?</div>
+                <div style="font-size:0.82rem; font-weight:300; color:var(--w50); line-height:1.8;">Nothing breaks. Revoke the key and your agent loses access immediately. Export the audit trail as CSV or JSONL with a proof attached — the record is yours, and it still verifies offline.</div>
+            </div>
+        </div>
+        <p style="font-size:0.78rem; color:var(--w20); margin-top:2.5rem; text-align:center; max-width:520px;">Something not answered here? <a href="mailto:hello@haldir.xyz" style="color:var(--gold); text-decoration:none;">hello@haldir.xyz</a></p>
+    </section>
+
     <!-- ── Facts ── -->
     <div class="facts" style="display:flex; border-top: 1px solid var(--w08);">
         <div class="fact">
