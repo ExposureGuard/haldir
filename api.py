@@ -54,6 +54,7 @@ from haldir_validation import validate_body
 from haldir_openapi import generate_openapi
 from haldir_status import build_status
 from haldir_scopes import require_scope
+import haldir_oauth
 from haldir_public_url import public_base_url, rewrite_public_origin
 
 configure_logging()
@@ -6115,6 +6116,361 @@ def cloud_root():
     if key:
         return redirect("/cloud/overview?key=" + _h.escape(key))
     return redirect("/cloud/login")
+
+
+# ── OAuth: the MCP authorization flow ────────────────────────────────
+#
+# haldir_oauth owns the rules and the reasoning; these handlers stay thin so
+# there is one place to read them. The flow exists because Claude's custom
+# connectors sign in with a browser and cannot paste an API key into that form.
+
+def _oauth_ip() -> str:
+    """The caller's address, as far as this app can honestly know it.
+
+    `remote_addr`, never X-Forwarded-For: there is no ProxyFix in front of the
+    app, so that header is caller-supplied and trusting it would make every
+    limit below bypassable by adding a field. The cost is worth naming rather
+    than hiding — behind a load balancer this is the balancer's address, which
+    collapses the per-IP limits into one shared bucket. Fixing that properly
+    means ProxyFix with a documented trust assumption, which is its own change.
+    """
+    return request.remote_addr or ""
+
+
+_oauth_bursts: dict = {}
+
+
+def _oauth_burst_ok(bucket: str, limit: int, window_s: int) -> bool:
+    """A coarse in-process burst guard.
+
+    Not the billing rate limiter: that one is keyed by API key and this runs
+    before there is one. Two gunicorn workers mean the effective limit is up to
+    twice what is written here, which is acceptable for a burst guard and said
+    out loud rather than assumed — the limit that actually bounds capacity is
+    the daily grant cap, and that is counted from the database.
+    """
+    import time as _t
+    now = _t.time()
+    entry = _oauth_bursts.get(bucket)
+    if not entry or now - entry["start"] > window_s:
+        entry = {"start": now, "count": 0}
+    entry["count"] += 1
+    _oauth_bursts[bucket] = entry
+    return entry["count"] <= limit
+
+
+def _oauth_json(body: dict, status: int = 200, *, no_store: bool = False):
+    resp = jsonify(body)
+    resp.status_code = status
+    if no_store:
+        # RFC 6749 §5.1, and the reason is concrete: this body is the credential.
+        resp.headers["Cache-Control"] = "no-store"
+        resp.headers["Pragma"] = "no-cache"
+    return resp
+
+
+def _oauth_fail(err: "haldir_oauth.OAuthError"):
+    return _oauth_json(err.payload(), err.status)
+
+
+def _oauth_html(body: str, status: int = 200):
+    # The consent page interpolates strings a stranger supplied. Escaping in
+    # haldir_oauth is the control; this is the belt — no scripts, no external
+    # loads, and a form that can only post back here.
+    return body, status, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": (
+            "default-src 'none'; style-src 'unsafe-inline'; "
+            "form-action 'self'; base-uri 'none'"
+        ),
+    }
+
+
+def _authorize_params(source) -> dict:
+    get = source.get
+    return {
+        "response_type": get("response_type", ""),
+        "client_id": get("client_id", ""),
+        "redirect_uri": get("redirect_uri", ""),
+        "code_challenge": get("code_challenge", ""),
+        "code_challenge_method": get("code_challenge_method", ""),
+        "state": get("state", ""),
+        "scope": get("scope", "") or haldir_oauth.SCOPE,
+        "resource": get("resource", ""),
+    }
+
+
+def _check_authorize(params: dict, conn) -> dict:
+    """Validate an authorization request, or raise. Returns the client."""
+    if params["response_type"] != "code":
+        raise haldir_oauth.OAuthError(
+            "unsupported_response_type", "only response_type=code is supported"
+        )
+    # PKCE is not optional. The MCP spec requires S256, and a public client with
+    # no secret has nothing else standing between an intercepted code and a key.
+    if params["code_challenge_method"] != "S256" or not params["code_challenge"]:
+        raise haldir_oauth.OAuthError(
+            "invalid_request",
+            "PKCE is required: send code_challenge with code_challenge_method=S256",
+        )
+    client = haldir_oauth.get_client(conn, params["client_id"])
+    if client is None:
+        raise haldir_oauth.OAuthError("invalid_client", "unknown client_id", 401)
+    if not haldir_oauth.redirect_uri_matches(
+        client["redirect_uris"], params["redirect_uri"]
+    ):
+        raise haldir_oauth.OAuthError(
+            "invalid_request", "redirect_uri does not match a registered value"
+        )
+    wanted = params["resource"]
+    if wanted and wanted.rstrip("/") not in {
+        haldir_oauth.issuer(), haldir_oauth.resource()
+    }:
+        raise haldir_oauth.OAuthError(
+            "invalid_target",
+            "this server does not issue tokens for that resource",
+        )
+    return client
+
+
+def _redirect_with(uri: str, params: dict) -> str:
+    from urllib.parse import urlencode
+    sep = "&" if "?" in uri else "?"
+    return uri + sep + urlencode({k: v for k, v in params.items() if v})
+
+
+def _authorize_error_redirect(uri: str, err: "haldir_oauth.OAuthError", state: str) -> str:
+    """Errors go back to the client, with `iss` (RFC 9207 §2 covers both)."""
+    return _redirect_with(uri, {
+        "error": err.error,
+        "error_description": err.description,
+        "state": state,
+        "iss": haldir_oauth.issuer(),
+    })
+
+
+@app.route("/.well-known/oauth-protected-resource", methods=["GET"])
+@app.route("/.well-known/oauth-protected-resource/mcp", methods=["GET"])
+def oauth_protected_resource():
+    """RFC 9728 protected-resource metadata.
+
+    Both spellings: a client tries the path-insertion form first and falls back
+    to the root, and a server that serves only one looks, to half its callers,
+    like it has no authorization at all.
+    """
+    return jsonify(haldir_oauth.protected_resource_metadata())
+
+
+@app.route("/.well-known/oauth-authorization-server", methods=["GET"])
+def oauth_authorization_server():
+    """RFC 8414 authorization-server metadata."""
+    return jsonify(haldir_oauth.authorization_server_metadata())
+
+
+@app.after_request
+def _mcp_oauth_challenge(response):  # type: ignore[no-untyped-def]
+    """Point a /mcp caller at the sign-in flow when it arrives without a key.
+
+    Scoped to /mcp deliberately: `require_api_key` is shared with every /v1
+    route, and telling an ordinary API client to begin an OAuth flow when what
+    it needs is a key would be wrong. The challenge belongs to the endpoint that
+    accepts a browser sign-in.
+    """
+    if request.path == "/mcp" and response.status_code == 401:
+        response.headers.setdefault(
+            "WWW-Authenticate", haldir_oauth.challenge_header()
+        )
+        # A browser cannot read that header cross-origin unless it is exposed,
+        # and a browser-based MCP client is exactly who needs to read it.
+        existing = response.headers.get("Access-Control-Expose-Headers", "")
+        response.headers["Access-Control-Expose-Headers"] = (
+            f"{existing}, WWW-Authenticate" if existing else "WWW-Authenticate"
+        )
+    return response
+
+
+@app.route("/oauth/register", methods=["POST"])
+def oauth_register():
+    """Register a client (RFC 7591 dynamic client registration).
+
+    Anonymous by design: this is how a client obtains an id before it has any
+    relationship with us, and the id carries no authority — everything it can
+    later ask for still needs a human to press a button.
+    """
+    if not _oauth_burst_ok(
+        f"register:{_oauth_ip()}", haldir_oauth.REGISTRATIONS_PER_IP_PER_HOUR, 3600
+    ):
+        return _oauth_fail(haldir_oauth.OAuthError(
+            "temporarily_unavailable",
+            "too many registrations from this address; try again later", 429,
+        ))
+
+    data = request.get_json(silent=True) or request.form.to_dict() or {}
+    name = str(data.get("client_name") or "An application")[:128]
+    try:
+        uris = haldir_oauth.normalize_redirect_uris(data.get("redirect_uris"))
+    except haldir_oauth.OAuthError as err:
+        return _oauth_fail(err)
+
+    conn = get_db(DB_PATH)
+    try:
+        client = haldir_oauth.register_client(conn, client_name=name, redirect_uris=uris)
+    finally:
+        conn.close()
+    return _oauth_json(client, 201)
+
+
+@app.route("/oauth/authorize", methods=["GET"])
+def oauth_authorize():
+    """The consent screen."""
+    params = _authorize_params(request.args)
+    conn = get_db(DB_PATH)
+    try:
+        try:
+            client = _check_authorize(params, conn)
+        except haldir_oauth.OAuthError as err:
+            # An error may only be redirected to a redirect_uri that has already
+            # been validated. An unvalidated one is an open redirect, and the
+            # error path is the easiest place in a flow to forget that.
+            maybe = haldir_oauth.get_client(conn, params["client_id"])
+            if maybe and haldir_oauth.redirect_uri_matches(
+                maybe["redirect_uris"], params["redirect_uri"]
+            ):
+                return redirect(
+                    _authorize_error_redirect(params["redirect_uri"], err, params["state"])
+                )
+            return _oauth_html(
+                haldir_oauth.render_error_page(err.error, err.description), err.status
+            )
+    finally:
+        conn.close()
+
+    fields = {k: v for k, v in params.items() if k != "code_challenge_method"}
+    fields["code_challenge_method"] = "S256"
+    return _oauth_html(haldir_oauth.render_consent(
+        client=client, redirect_uri=params["redirect_uri"], fields=fields,
+    ))
+
+
+@app.route("/oauth/authorize", methods=["POST"])
+def oauth_authorize_consent():
+    """The one button: create the account, issue a single-use code.
+
+    Nothing is created until this is posted. The consent page says so, and it is
+    true — the tenant id is generated here and the key that will act as that
+    tenant is minted at the token exchange.
+    """
+    params = _authorize_params(request.form)
+    conn = get_db(DB_PATH)
+    try:
+        try:
+            client = _check_authorize(params, conn)
+        except haldir_oauth.OAuthError as err:
+            return _oauth_html(
+                haldir_oauth.render_error_page(err.error, err.description), err.status
+            )
+
+        ip_hash = haldir_oauth.hash_ip(_oauth_ip())
+        if haldir_oauth.grants_from_ip(conn, ip_hash) >= haldir_oauth.GRANTS_PER_IP_PER_DAY:
+            err = haldir_oauth.OAuthError(
+                "temporarily_unavailable",
+                "too many new accounts have been created from this address today",
+                429,
+            )
+            return _oauth_html(
+                haldir_oauth.render_error_page(err.error, err.description), err.status
+            )
+
+        # No tenants table: a tenant is the string its rows carry, so this is a
+        # tenant id and not a row. Prefixed so an operator looking at a support
+        # ticket can tell where an account came from.
+        tenant_id = "oauth_" + secrets.token_urlsafe(18)
+        code = haldir_oauth.mint_code(
+            conn,
+            client_id=client["client_id"],
+            redirect_uri=params["redirect_uri"],
+            code_challenge=params["code_challenge"],
+            tenant_id=tenant_id,
+            resource_uri=haldir_oauth.resource(),
+            scope=params["scope"],
+            ip_hash=ip_hash,
+        )
+    finally:
+        conn.close()
+
+    return redirect(_redirect_with(params["redirect_uri"], {
+        "code": code,
+        "state": params["state"],
+        "iss": haldir_oauth.issuer(),
+    }))
+
+
+@app.route("/oauth/token", methods=["POST"])
+def oauth_token():
+    """Exchange a code for an API key.
+
+    The key is minted *here* rather than at consent, so its plaintext exists only
+    in this response — the alternative is a plaintext credential sitting in the
+    codes table waiting to be collected.
+    """
+    data = request.get_json(silent=True) or request.form.to_dict() or {}
+    if data.get("grant_type") != "authorization_code":
+        return _oauth_fail(haldir_oauth.OAuthError(
+            "unsupported_grant_type",
+            "only grant_type=authorization_code is supported",
+        ))
+
+    conn = get_db(DB_PATH)
+    try:
+        try:
+            granted = haldir_oauth.redeem_code(
+                conn,
+                code=data.get("code"),
+                client_id=data.get("client_id"),
+                redirect_uri=data.get("redirect_uri"),
+                code_verifier=data.get("code_verifier"),
+            )
+        except haldir_oauth.OAuthError as err:
+            return _oauth_fail(err)
+
+        wanted = data.get("resource")
+        if wanted and wanted.rstrip("/") not in {
+            haldir_oauth.issuer(), haldir_oauth.resource()
+        }:
+            return _oauth_fail(haldir_oauth.OAuthError(
+                "invalid_target", "this server does not issue tokens for that resource"
+            ))
+
+        client = haldir_oauth.get_client(conn, data.get("client_id")) or {}
+    finally:
+        conn.close()
+
+    client_id = str(data.get("client_id") or "")
+    try:
+        full_key, _prefix, _tenant = _mint_api_key(
+            name=(client.get("client_name") or "MCP connector")[:64],
+            tier="free",
+            tenant_id=granted["tenant_id"],
+            actor="oauth",
+            extra_details={"via": "oauth", "oauth_client_id": client_id[:64]},
+            oauth_client_id=client_id[:64],
+            oauth_resource=haldir_oauth.resource(),
+        )
+    except KeyAuditUnavailable:
+        return _oauth_fail(haldir_oauth.OAuthError(
+            "server_error",
+            "the key could not be recorded in the audit log, so it was revoked",
+            500,
+        ))
+
+    return _oauth_json(
+        {
+            "access_token": full_key,
+            "token_type": "Bearer",
+            "scope": granted["scope"],
+        },
+        no_store=True,
+    )
 
 
 if __name__ == "__main__":
