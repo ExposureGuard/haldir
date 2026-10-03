@@ -434,12 +434,49 @@ _SCHEMA = """
         name TEXT NOT NULL DEFAULT '',
         tier TEXT NOT NULL DEFAULT 'free',
         scopes TEXT NOT NULL DEFAULT '["*"]',
+        -- Which resource this key was issued for, when it was issued over
+        -- OAuth (migration 009). Empty means "no binding", which is every key
+        -- that existed before this column and every key POST /v1/keys mints —
+        -- so the check that reads it cannot change any existing client's
+        -- behaviour. oauth_client_id names the client that asked for it, for
+        -- the audit trail: "which app is this key?" is the first question when
+        -- one leaks.
+        oauth_resource TEXT NOT NULL DEFAULT '',
+        oauth_client_id TEXT NOT NULL DEFAULT '',
         created_at REAL NOT NULL,
         last_used REAL NOT NULL DEFAULT 0,
         revoked INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS idx_keys_tenant ON api_keys(tenant_id);
+
+    -- OAuth clients and authorization codes. Migration 009 carries the
+    -- reasoning; this is the copy a database created from scratch gets, and
+    -- the two definitions have to stay identical or a fresh instance behaves
+    -- differently from an upgraded one. That is not hypothetical here: the
+    -- scopes column above exists in one and, for a while, not the other.
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+        client_id     TEXT PRIMARY KEY,
+        client_name   TEXT NOT NULL DEFAULT '',
+        redirect_uris TEXT NOT NULL DEFAULT '[]',
+        source        TEXT NOT NULL DEFAULT 'dynamic',
+        created_at    REAL NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_codes (
+        code_hash      TEXT PRIMARY KEY,
+        client_id      TEXT NOT NULL,
+        redirect_uri   TEXT NOT NULL,
+        code_challenge TEXT NOT NULL,
+        scope          TEXT NOT NULL DEFAULT '',
+        tenant_id      TEXT NOT NULL DEFAULT '',
+        ip_hash        TEXT NOT NULL DEFAULT '',
+        created_at     REAL NOT NULL,
+        used_at        REAL NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_oauth_codes_client ON oauth_codes(client_id);
+    CREATE INDEX IF NOT EXISTS idx_oauth_codes_ip ON oauth_codes(ip_hash);
 
     CREATE TABLE IF NOT EXISTS agents (
         agent_id TEXT NOT NULL,
@@ -840,6 +877,21 @@ def _init_sqlite(db_path: str):
         )
     except Exception:
         pass  # column already exists; fine
+    # OAuth audience binding, same shape and same reason as `scopes` above:
+    # CREATE TABLE only shapes fresh databases. Defaults to empty, so keys
+    # issued before OAuth existed stay unbound rather than becoming invalid.
+    try:
+        conn.execute(
+            "ALTER TABLE api_keys ADD COLUMN oauth_resource TEXT NOT NULL DEFAULT ''"
+        )
+    except Exception:
+        pass  # column already exists; fine
+    try:
+        conn.execute(
+            "ALTER TABLE api_keys ADD COLUMN oauth_client_id TEXT NOT NULL DEFAULT ''"
+        )
+    except Exception:
+        pass  # column already exists; fine
     # Agent delegation hierarchy. `CREATE TABLE IF NOT EXISTS` above only
     # shapes fresh databases, so pre-existing installs need the column added
     # in place. SQLite has no `ADD COLUMN IF NOT EXISTS`, hence try/except.
@@ -1040,6 +1092,27 @@ def _apply_pg_schema(conn):
     except Exception as e:
         conn.rollback()
         logger.warning("api_keys.scopes ALTER skipped: %s", e)
+
+    # OAuth audience binding, mirroring the block above.
+    try:
+        cursor.execute(
+            "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS oauth_resource "
+            "TEXT NOT NULL DEFAULT ''"
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.warning("api_keys.oauth_resource ALTER skipped: %s", e)
+
+    try:
+        cursor.execute(
+            "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS oauth_client_id "
+            "TEXT NOT NULL DEFAULT ''"
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.warning("api_keys.oauth_client_id ALTER skipped: %s", e)
 
     # Idempotent column-add for agent delegation hierarchy, mirroring the
     # api_keys.scopes block above. The CREATE TABLE in _SCHEMA only shapes

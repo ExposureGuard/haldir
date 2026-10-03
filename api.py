@@ -54,7 +54,7 @@ from haldir_validation import validate_body
 from haldir_openapi import generate_openapi
 from haldir_status import build_status
 from haldir_scopes import require_scope
-from haldir_public_url import rewrite_public_origin
+from haldir_public_url import public_base_url, rewrite_public_origin
 
 configure_logging()
 log = get_logger("haldir.api")
@@ -453,6 +453,23 @@ def require_api_key(f):
             request.api_key_scopes = haldir_scopes.parse(row["scopes"])
         except (IndexError, KeyError):
             request.api_key_scopes = [haldir_scopes.WILDCARD]
+
+        # Which resource this key was issued for, when it was issued over OAuth
+        # (migration 009), and which client asked for it. Empty on every key
+        # that predates the column and every key POST /v1/keys mints, which is
+        # what keeps the /mcp audience check from changing anything that
+        # already works. Tolerant of the column being absent for the same
+        # reason the two above are: a deployment can be running against a
+        # database that has not migrated yet, and an unreachable check must
+        # degrade to "unbound", not to a 500 on every request.
+        try:
+            request.api_key_resource = row["oauth_resource"] or ""
+        except (IndexError, KeyError):
+            request.api_key_resource = ""
+        try:
+            request.api_key_oauth_client = row["oauth_client_id"] or ""
+        except (IndexError, KeyError):
+            request.api_key_oauth_client = ""
 
         return f(*args, **kwargs)
     return decorated
@@ -3860,10 +3877,36 @@ def _mcp_call_tool(name, arguments):
     return {"isError": True, "content": [{"type": "text", "text": f"Unknown tool: {name}"}]}
 
 
+def _mcp_accepted_resources() -> set:
+    """Resource identifiers a key may name and still be used at /mcp.
+
+    Both spellings, because RFC 8707's canonical URI is valid with and without
+    the path and clients differ on which they send. A key bound to anything
+    else was issued for a different server and is refused.
+    """
+    base = public_base_url().rstrip("/")
+    return {base, base + "/mcp"}
+
+
 @app.route("/mcp", methods=["POST"])
 @require_api_key
 def mcp_jsonrpc():
     """MCP JSON-RPC 2.0 endpoint for Smithery.ai and MCP clients."""
+    # Audience binding, and deliberately narrow. A key minted through OAuth
+    # records the resource it was issued for; MCP requires a server to refuse a
+    # token issued for something else. Keys carrying no binding — every key
+    # that existed before the column, and every key POST /v1/keys mints — skip
+    # this entirely, so nothing that works today can start failing.
+    # Trailing slashes are ignored on both sides. RFC 8707 prefers the form
+    # without one, but "https://host/" and "https://host" name the same
+    # resource, and refusing the second would reject a caller for no security
+    # benefit. Safe to be lenient here specifically because this value is read
+    # from a key row rather than from the request — the leniency that makes an
+    # open redirect is leniency about *attacker-supplied* URLs.
+    bound = getattr(request, "api_key_resource", "").rstrip("/")
+    if bound and bound not in _mcp_accepted_resources():
+        return _mcp_error(None, -32001, "This key was not issued for this server."), 401
+
     body = request.get_json(silent=True)
     if not body:
         return _mcp_error(None, -32700, "Parse error"), 400
@@ -4769,7 +4812,7 @@ footer a { color: var(--gold); text-decoration: none; }
 
 <div class="pricing-hero">
     <h1>Simple, <em>usage-based</em> pricing</h1>
-    <p>Start free. Scale when your agents do. No surprises.</p>
+    <p>Start free — 10,000 actions a month is more than most single agents use. No credit card, no subscription, and an idle agent costs nothing.</p>
 </div>
 
 <div class="pricing-grid">
@@ -4779,6 +4822,10 @@ footer a { color: var(--gold); text-decoration: none; }
 
 <div class="faq">
     <h2>Questions</h2>
+    <div class="faq-item">
+        <div class="faq-q">What does this actually cost me?</div>
+        <div class="faq-a">The free tier covers 10,000 actions a month — about 300 a day, which is more than most single agents use, and it does not expire. Past that it is $40 per million actions: an agent doing 1,000 actions a day costs about $1.20 a month. There is no subscription and no minimum, so an agent that does nothing costs nothing.</div>
+    </div>
     <div class="faq-item">
         <div class="faq-q">What counts as an action?</div>
         <div class="faq-a">Every API call to /v1/* counts as one. Creating sessions, checking permissions, storing secrets, logging audit entries — each is one API call, and reads count too.</div>

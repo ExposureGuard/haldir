@@ -35,6 +35,10 @@ import haldir_tiers  # noqa: E402
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LANDING = os.path.join(_ROOT, "landing", "index.html")
 
+# Plan names this product no longer sells. A retirement is recorded here, so
+# the copy that still displays it fails in CI rather than on the pricing page.
+RETIRED_PLAN_NAMES = ("Pro",)
+
 
 # ── One table, no copies ─────────────────────────────────────────────
 
@@ -342,6 +346,26 @@ def test_landing_page_price_matches_the_table() -> None:
         f"landing page prices Free at ${prices.get('free')}"
     )
     assert offers, "no offers parsed"
+
+
+def test_no_plan_card_names_a_retired_plan() -> None:
+    """The card a customer reads is generated from the table — except one line.
+
+    Enterprise's first bullet read "Everything in Pro" for three releases
+    after Pro was retired: a plan name that is no longer in the table, on the
+    page that sells the plan. The alias test above covers *lookups* by the old
+    name; nothing covered the copy that displays it.
+
+    `RETIRED_PLAN_NAMES` is where a retirement gets recorded, so the next one
+    fails here instead of on the pricing page.
+    """
+    for tier in haldir_tiers.TIERS:
+        for line in haldir_tiers.feature_lines(tier):
+            for name in RETIRED_PLAN_NAMES:
+                assert not re.search(rf"\b{name}\b", line), (
+                    f"the {tier} plan card says {line!r}, which names the "
+                    f"retired plan {name!r}"
+                )
 
 
 def test_readme_sample_output_describes_a_plan_that_exists() -> None:

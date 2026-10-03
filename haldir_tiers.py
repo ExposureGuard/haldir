@@ -182,7 +182,7 @@ TIERS: dict[str, dict[str, Any]] = {
         "hard_cap": False,
         "blurb": "Custom deployments, on-prem, and volume pricing.",
         "features": [
-            "Everything in Pro",
+            "Everything in Usage",
             "Unlimited agents and actions",
             "On-prem / VPC deployment",
             "SSO and audit-log export",
