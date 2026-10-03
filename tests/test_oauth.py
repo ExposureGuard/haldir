@@ -415,9 +415,7 @@ def test_no_oauth_response_sets_a_cookie(haldir_client) -> None:
     """
     client = _register(haldir_client)
     verifier = _verifier()
-    responses = [
-        _authorize,  # the POST that mints
-    ]
+    # The POST that mints.
     consent = _authorize(haldir_client, client["client_id"], verifier=verifier)
     page = haldir_client.get("/oauth/authorize", query_string={
         "response_type": "code", "client_id": client["client_id"],
