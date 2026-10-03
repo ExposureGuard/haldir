@@ -1,0 +1,41 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time, and never cancel one in flight: `railway up` uploads
+# the working directory, and a cancelled upload leaves Railway holding a
+# half-sent archive.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  railway:
+    name: deploy to Railway
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # The deploy runs from GitHub's network, not from a laptop. `railway up`
+      # sends the working directory to Railway's build servers, so on a slow
+      # uplink the archive arrives truncated and Railway records "Failed to
+      # create code snapshot" — which is the failure this job exists to avoid.
+      # From a runner the same upload takes seconds.
+      - name: Deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::notice title=Deploy skipped::RAILWAY_TOKEN is not set"
+            echo "Create a project token in Railway (project -> Settings ->"
+            echo "Tokens -> Create Token), then add it to this repository as"
+            echo "the RAILWAY_TOKEN secret."
+            exit 0
+          fi
+          npm install -g @railway/cli
+          railway up --ci --service haldir
