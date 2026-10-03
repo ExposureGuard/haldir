@@ -1,0 +1,382 @@
+<title>Haldir Proxy Enforcement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+
+<style>
+  :root {
+    --paper:   #FBFAF7;
+    --surface: #F2F0E9;
+    --ink:     #14171C;
+    --muted:   #646C78;
+    --rule:    #E2E0D8;
+    --enforced:#0E6A5A;
+    --gap:     #A8481C;
+
+    --serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+    --sans:  "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono:  "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --measure: 66ch;
+    --gutter: 20px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:   #15171A;
+      --surface: #1C1F23;
+      --ink:     #E9E7E1;
+      --muted:   #979EA8;
+      --rule:    #2B2F34;
+      --enforced:#54C0A7;
+      --gap:     #E08A5A;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:   #15171A;
+    --surface: #1C1F23;
+    --ink:     #E9E7E1;
+    --muted:   #979EA8;
+    --rule:    #2B2F34;
+    --enforced:#54C0A7;
+    --gap:     #E08A5A;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+    padding-inline: var(--gutter);
+    padding-block: 0 72px;
+  }
+
+  .wrap {
+    max-width: var(--measure);
+    margin-inline: auto;
+  }
+
+  /* ── Masthead ─────────────────────────────────────────── */
+
+  header {
+    padding-block: 56px 30px;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 38px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 14px;
+  }
+
+  h1 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: clamp(30px, 6vw, 42px);
+    line-height: 1.14;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    margin: 0 0 16px;
+  }
+
+  .standfirst {
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--muted);
+    margin: 0;
+    max-width: 58ch;
+  }
+
+  /* ── Prose ────────────────────────────────────────────── */
+
+  h2 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 24px;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 52px 0 14px;
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.005em;
+    margin: 30px 0 8px;
+  }
+
+  p { margin: 0 0 16px; }
+
+  a { color: inherit; text-underline-offset: 3px; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.875em;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 0.1em 0.36em;
+  }
+
+  /* ── The two-sided list ───────────────────────────────── */
+
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 26px 0 8px;
+  }
+
+  .split > section {
+    padding: 20px 22px 22px;
+    background: var(--surface);
+  }
+
+  .split > section + section {
+    border-left: 1px solid var(--rule);
+  }
+
+  .split h3 {
+    margin: 0 0 14px;
+    font-size: 13px;
+    font-family: var(--mono);
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .split .held h3     { color: var(--enforced); }
+  .split .outside h3  { color: var(--gap); }
+
+  .split ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .split li {
+    font-size: 15px;
+    line-height: 1.5;
+    padding-left: 18px;
+    position: relative;
+    margin-bottom: 11px;
+  }
+
+  .split li:last-child { margin-bottom: 0; }
+
+  .split li::before {
+    position: absolute;
+    left: 0;
+    top: -0.02em;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+
+  .held li::before    { content: "✓"; color: var(--enforced); }
+  .outside li::before { content: "×"; color: var(--gap); }
+
+  .split li b {
+    font-weight: 600;
+    display: block;
+  }
+
+  .split li span {
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  /* ── Callout ──────────────────────────────────────────── */
+
+  .callout {
+    border-left: 3px solid var(--gap);
+    background: var(--surface);
+    padding: 18px 22px;
+    border-radius: 0 8px 8px 0;
+    margin: 26px 0;
+  }
+
+  .callout h3 {
+    margin: 0 0 8px;
+    font-size: 14px;
+    font-family: var(--mono);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--gap);
+  }
+
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* ── Verified table ───────────────────────────────────── */
+
+  .scroll { overflow-x: auto; margin: 24px 0; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 460px;
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 11px 14px 11px 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+
+  th {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom-color: var(--ink);
+  }
+
+  td:first-child { font-family: var(--mono); font-size: 13.5px; white-space: nowrap; }
+
+  .pass { color: var(--enforced); font-weight: 600; }
+
+  /* ── Footer ───────────────────────────────────────────── */
+
+  footer {
+    margin-top: 56px;
+    padding-top: 26px;
+    border-top: 1px solid var(--rule);
+    font-size: 15px;
+    color: var(--muted);
+  }
+
+  footer p { margin-bottom: 10px; }
+
+  @media (max-width: 560px) {
+    .split { grid-template-columns: 1fr; }
+    .split > section + section {
+      border-left: 0;
+      border-top: 1px solid var(--rule);
+    }
+    body { font-size: 16px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Enforcement model</p>
+    <h1>Haldir Proxy Enforcement</h1>
+    <p class="standfirst">You said proxy-mode enforcement is the right default and that studio tools can still shell out. Both are true. Here is where the line actually falls, and the one hole in it that your allowlisted-hosts case would hit.</p>
+  </header>
+
+  <main>
+
+    <h2>What the proxy governs</h2>
+
+    <p>Haldir sits between the agent and the MCP servers it calls. A tool call goes to Haldir first, gets evaluated against the session's policy, and is either forwarded upstream or refused. Policy is evaluated per call — nothing is cached at session creation, so a change takes effect on the next call, not the next session.</p>
+
+    <p>What that buys you, concretely:</p>
+
+    <div class="split">
+      <section class="held">
+        <h3>Enforced on the proxied path</h3>
+        <ul>
+          <li><b>Which tools may be called</b><span>Allow-list, deny-list, or a per-tool block, scoped to the session.</span></li>
+          <li><b>How much may be spent</b><span>Spend caps on the session; over-budget calls are refused, not logged after the fact.</span></li>
+          <li><b>How often, and when</b><span>Rate limits and time windows per policy.</span></li>
+          <li><b>That it is on the record</b><span>Every proxied call lands in the hash-chained audit log.</span></li>
+          <li><b>That revocation sticks</b><span>Revoking a session closes every granted scope on the very next call.</span></li>
+        </ul>
+      </section>
+      <section class="outside">
+        <h3>Outside the proxy</h3>
+        <ul>
+          <li><b>A shell the agent can reach itself</b><span><code>bash</code>, an exec tool, a file write — anything that does not route through MCP.</span></li>
+          <li><b>Direct network egress</b><span>An SDK calling an API without going through the proxy.</span></li>
+          <li><b>The host's own capabilities</b><span>What the sandbox the agent runs in already permits.</span></li>
+        </ul>
+      </section>
+    </div>
+
+    <p>You are right that this is the right default, and you are also right about the consequence: <b>an agent with its own shell is not governed by a proxy it can walk around.</b> That is not a bug in the proxy — it is the shape of the boundary. Haldir governs the MCP path. Making the boundary hold means the deployment does not hand the agent an ungoverned exec tool, or runs it somewhere that cannot reach one.</p>
+
+    <p>Worth saying plainly, because a governance tool that overstates itself is worse than one that does not exist: <b>Haldir cannot enforce that from the inside.</b> It can only tell you what it saw, and be honest that there is a path it did not.</p>
+
+    <h2>The hole your case would find</h2>
+
+    <p>There is no host allow-list on proxy upstreams today. Policies are evaluated over <em>tools</em> — allow-list, deny-list, block, spend, rate, time window — and nothing evaluates the <em>host</em> an upstream points at.</p>
+
+    <p>Registering an upstream takes a name and a URL and accepts the URL as given. It is then fetched, in the same request, to discover the upstream's tools — and the response body comes back in the reply.</p>
+
+    <p>We already have the guard for this, and it is applied elsewhere. Webhook registration and approval notification targets both run through a check that refuses anything that is not plain <code>http(s)</code> to a public address, re-checked at fetch time because a name that resolved publicly at registration can resolve to loopback by the time it is used. The proxy does not call it.</p>
+
+    <div class="callout">
+      <h3>Verified, not inferred</h3>
+      <p>The same loopback URL, submitted to two endpoints on one running instance, gets opposite answers. The webhook endpoint refuses it: <code>host '127.0.0.1' … is not a public address</code>. The proxy accepts it, fetches it, and returns part of the response body.</p>
+      <p>So this is not a theoretical gap in a policy table — it is a missing call in a code path that already knows how to make it. Your beta case is the right one, and it lands on a real defect.</p>
+    </div>
+
+    <h2>Three things we did break on purpose</h2>
+
+    <p>You named three surfaces you would attack. A fixture now drives all three against a running instance and prints the raw responses behind each verdict, so you can argue with the evidence rather than the summary. It runs locally with no account and no deployment:</p>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Probe</th>
+            <th>What it does</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>mid-call revocation</td>
+            <td>Grants a scope, revokes the session, asks again — plus a never-granted scope as a control, so a gate that always says no cannot pass.</td>
+            <td class="pass">Holds</td>
+          </tr>
+          <tr>
+            <td>timeout after commit</td>
+            <td>Sends one <code>Idempotency-Key</code> twice — the shape of a commit whose response was lost — then reuses that key against a different body.</td>
+            <td class="pass">Holds</td>
+          </tr>
+          <tr>
+            <td>audit read-back</td>
+            <td>A fresh connection reads the chain back and verifies it, then edits a row behind the server's back to prove the verifier can fail.</td>
+            <td class="pass">Holds</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>The retry is safe and returns the original entry rather than writing a second one; the reused-but-different key is refused with a 422 rather than silently obeyed. The third probe is the one worth your time — it edits <code>action</code> in the SQLite file without touching the stored hash, and verification fails with <em>entry hash mismatch</em>. A verifier that cannot fail is not evidence, so that direction is checked too.</p>
+
+    <h2>On the beta case</h2>
+
+    <p>Yes. Specifically, the question worth your attention is what the allow-list should key on — a hostname, a resolved address, an origin, a scheme-plus-host-plus-port — given that the resolution at registration and the resolution at call time are not guaranteed to be the same, and that a redirect can move you after the check passes.</p>
+
+    <p>We would rather have that argued by someone who has thought about it than guess at it. If you want the fixture to poke at, say so — it runs against an instance on your own machine with no account and nothing to deploy, and it prints the evidence behind every verdict.</p>
+
+  </main>
+
+  <footer>
+    <p>Claims above were checked against a local instance rather than read off the source: the revocation, idempotency and read-back results come from the probe run, and the host gap from the two-endpoint comparison described.</p>
+    <p>Haldir — governance for AI agents. Scoped sessions, an encrypted vault, a tamper-evident audit log, and an MCP proxy.</p>
+  </footer>
+
+</div>

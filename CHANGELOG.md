@@ -3,6 +3,61 @@
 All notable changes to Haldir are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.2] — 2026-10-03
+
+### Fixed
+
+- **The metered tier was rate-limited as though it were free.** `RATE_LIMITS`
+  had no `usage` entry, so the lookup fell through to the free tier's ceiling
+  and a tenant paying per call was throttled at the free allowance. Usage now
+  carries its own limit.
+
+- **A fresh install blamed itself for the missing server.** With no key and no
+  running instance, every command answered "haldir.xyz answered, but it is not
+  a Haldir API" — true, but that host is the CLI's own default and the user
+  never chose it. With no key configured the message is now "No Haldir is
+  running, and no API key is configured", with the one command that fixes it.
+  The old wording is kept for the case it was written for.
+
+- **A mistyped command reprinted all twenty-one names on one line.**
+  `SuggestionParser` now offers the nearest match — "Did you mean 'session'?" —
+  including for subcommand typos such as `haldir session craete`.
+
+- **The first run arrived as raw JSON above the startup banner.** The
+  migrations that run on first start printed as escaped JSON objects. The log
+  format now follows where the log is going: a container or a pipe has no TTY
+  and keeps structured logs, while someone who typed `haldir serve` gets
+  readable lines — the same `isatty` test `Color` already used for ANSI.
+
+- **The landing page claimed 9 MCP tools while the catalog held 19**, and the
+  FAQ on the same page already said 19. Nothing compared the marketing claim to
+  the catalog, and the guard that exists for exactly this class of drift could
+  not see either form the page uses. Both forms are read now.
+
+- **`README.md`'s sample `haldir overview` output described a retired plan** —
+  `tier pro`, `3/25 agents`, a 2,500,000-call allowance — three releases after
+  that plan was removed.
+
+### Changed
+
+- **The landing page leads with "Rules your AI agents can't break."** The hero
+  said "The compliance layer for AI agents", which was the last surface still
+  saying it: `<title>`, `og:title` and `.well-known/mcp/mcp.json` all describe
+  Haldir as "The Guardian Layer for AI Agents". The product copy is plainer,
+  and the FAQ answers "Does Haldir stop prompt injection?" with the honest
+  answer — it does not detect injection, it bounds what an injected agent can
+  reach, because detection is the guess that fails.
+
+- **`haldir serve`'s banner points at the monitoring console** that already
+  existed and that `haldir top` already read from.
+
+### Added
+
+- A guard for each drift above: `test_landing_page_states_the_current_tool_count`
+  reads both forms the landing page uses and fails if it finds neither, and
+  `test_tiers.py` checks the README's stated tier and agent cap against the
+  table.
+
 ## [0.4.1] — 2026-09-23
 
 ### Fixed
