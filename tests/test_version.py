@@ -21,6 +21,8 @@ import os
 import re
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -94,6 +96,33 @@ def test_the_version_looks_like_a_release() -> None:
     disagree, and PyPI rejects the upload after the tag is already public."""
     v = _package_version()
     assert re.fullmatch(r"\d+\.\d+\.\d+", v), f"version {v!r} is not X.Y.Z"
+
+
+def test_the_cli_answers_which_version(capsys: pytest.CaptureFixture[str]) -> None:
+    """The first question in any bug report, asked from a terminal.
+
+    Every other surface states the version — the module, the MCP banner, the
+    OpenAPI default, the webhook User-Agent, the tracer name — and the one a
+    person actually types did not: `haldir --version` was "unrecognized
+    arguments". It was found by installing the published wheel and using it,
+    which is the only place it shows: importing the library was always right.
+
+    The CLI imports `haldir.__version__` rather than repeating the literal, so
+    this asserts the wiring rather than a fifth copy of the number.
+    """
+    import cli
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.build_parser().parse_args(["--version"])
+    assert exit_info.value.code == 0, (
+        "`haldir --version` exited non-zero; argparse's version action exits 0"
+    )
+
+    printed = capsys.readouterr().out.strip()
+    assert _package_version() in printed, (
+        f"`haldir --version` printed {printed!r}, which does not contain the "
+        f"package version {_package_version()!r}"
+    )
 
 
 # Version-looking strings in api.py that are deliberately not this product's
