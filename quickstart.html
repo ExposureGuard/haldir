@@ -69,6 +69,13 @@ pre{font-size:0.65rem;padding:0.75rem;line-height:1.6}
     <p style="font-size:0.75rem">19 tools: sessions, permissions, secrets, payments, approvals, the audit trail, and the Merkle proofs behind it.</p>
 
     <div class="opt">
+        <div class="opt-label">Where to paste it</div>
+        <p><strong style="color:var(--w)">Claude</strong> — desktop, web or phone: open <strong style="color:var(--w)">Settings → Connectors</strong>, choose <strong style="color:var(--w)">Add custom connector</strong>, give it a name and paste the URL above.</p>
+        <p style="font-size:0.75rem">One thing to expect: Claude's connector form is built for servers that sign you in with a browser. Haldir authenticates with your key instead, so if the form offers a headers field, put <code style="font-family:'IBM Plex Mono',monospace;color:#b8973a">Authorization: Bearer &lt;your key&gt;</code> there. If it doesn't, use the local option below — it works in every client.</p>
+        <p><strong style="color:var(--w)">Cursor, Windsurf, and most others</strong> take a small JSON entry: the URL, plus your key in a headers block. Their MCP settings page shows the exact shape, and this URL is all it needs.</p>
+    </div>
+
+    <div class="opt">
         <div class="opt-label">Or run it on your own machine</div>
         <p>Same server, local, over stdio. Needs <a href="https://pypi.org/project/haldir">haldir</a> installed once — paste this into your client's MCP config with your key already in it:</p>
         <pre id="mcp-local-wrap"><code id="mcp-local"></code><button class="copy-btn" onclick="copyText(document.getElementById('mcp-local').textContent)">COPY</button></pre>
