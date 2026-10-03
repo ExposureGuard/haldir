@@ -4769,7 +4769,7 @@ footer a { color: var(--gold); text-decoration: none; }
 
 <div class="pricing-hero">
     <h1>Simple, <em>usage-based</em> pricing</h1>
-    <p>Start free. Scale when your agents do. No surprises.</p>
+    <p>Start free — 10,000 actions a month is more than most single agents use. No credit card, no subscription, and an idle agent costs nothing.</p>
 </div>
 
 <div class="pricing-grid">
@@ -4779,6 +4779,10 @@ footer a { color: var(--gold); text-decoration: none; }
 
 <div class="faq">
     <h2>Questions</h2>
+    <div class="faq-item">
+        <div class="faq-q">What does this actually cost me?</div>
+        <div class="faq-a">The free tier covers 10,000 actions a month — about 300 a day, which is more than most single agents use, and it does not expire. Past that it is $40 per million actions: an agent doing 1,000 actions a day costs about $1.20 a month. There is no subscription and no minimum, so an agent that does nothing costs nothing.</div>
+    </div>
     <div class="faq-item">
         <div class="faq-q">What counts as an action?</div>
         <div class="faq-a">Every API call to /v1/* counts as one. Creating sessions, checking permissions, storing secrets, logging audit entries — each is one API call, and reads count too.</div>
