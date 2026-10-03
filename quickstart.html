@@ -92,6 +92,7 @@ pre{font-size:0.65rem;padding:0.75rem;line-height:1.6}
 
 <p style="margin-top:2rem;text-align:center;font-size:0.85rem;color:rgba(224,221,213,0.5)">
 Full API docs at <a href="/docs">haldir.xyz/docs</a> · <a href="/blog">Blog</a> · <a href="https://github.com/ExposureGuard/haldir">GitHub</a>
+<br>Stuck, or not sure this is for you? Say so: <a href="mailto:hello@haldir.xyz">hello@haldir.xyz</a>
 </p>
 
 <script>
@@ -223,7 +224,7 @@ async function runDemo() {
         line('success', 'Done. Nothing was installed, and none of that trusted the agent.');
     } catch (e) {
         line('warn', '! ' + (e && e.message ? e.message : 'something went wrong'));
-        line('dim', 'Try again, or open an issue and paste this line.');
+        line('dim', 'Try again — or email hello@haldir.xyz with that line and we will look.');
     }
 
     btn.disabled = false;
