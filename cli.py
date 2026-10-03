@@ -30,6 +30,12 @@ from typing import Any, NoReturn
 
 import httpx
 
+# The version lives in `haldir.__version__`, which tests/test_version.py holds
+# equal to pyproject.toml. Imported rather than repeated: this is the surface a
+# user reaches for from a terminal, and a fifth copy of the number is a fifth
+# place for it to be wrong.
+from haldir import __version__ as HALDIR_VERSION
+
 # ── Config ──
 
 CONFIG_DIR = Path.home() / ".haldir"
@@ -1818,6 +1824,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--url", help="Override base URL (default: https://haldir.xyz)")
     parser.add_argument("--key", help="Override API key (or set HALDIR_API_KEY)")
+    parser.add_argument(
+        "--version", action="version", version=f"haldir {HALDIR_VERSION}",
+        help="Print the version and exit",
+    )
 
     sub = parser.add_subparsers(dest="command", help="Command group")
 
