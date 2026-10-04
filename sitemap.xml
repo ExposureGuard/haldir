@@ -163,6 +163,15 @@
     <priority>0.8</priority>
   </url>
 
+  <!-- The answer-shaped guide. This is the page an assistant should find
+       when a person asks how to secure an agent — the question arrives in
+       that form, so the page is written in it. -->
+  <url>
+    <loc>https://haldir.xyz/blog/how-to-secure-an-ai-agent</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
   <!-- Framework integration guides. -->
   <url>
     <loc>https://haldir.xyz/blog/haldir-langchain-integration</loc>
