@@ -55,6 +55,11 @@ curl http://localhost:8000/healthz
 
 You now have Haldir running on `http://localhost:8000`.
 
+That covers the required settings. **Every other environment variable — all
+forty-eight of them, with defaults — is in [CONFIGURATION.md](CONFIGURATION.md)**:
+Postgres pool sizing, signing keys, the transparency mirror, SMTP, the
+metrics token, x402, and the rest.
+
 ---
 
 ## Create your first API key

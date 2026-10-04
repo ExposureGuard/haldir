@@ -2,7 +2,12 @@
 Haldir MCP Proxy Client — connects Claude Code to tools through Haldir's governance layer.
 
 Usage:
-    HALDIR_API_KEY=hld_xxx HALDIR_SESSION_ID=ses_xxx python haldir_mcp_proxy.py
+    HALDIR_API_KEY=hld_xxx python haldir_mcp_proxy.py
+
+The session is created on first use (see `_ensure_session`), so there is no
+session id to pass in. This line used to advertise `HALDIR_SESSION_ID=ses_xxx`,
+which nothing has ever read — setting it did nothing, and the proxy quietly
+minted its own session anyway.
 """
 
 import asyncio
