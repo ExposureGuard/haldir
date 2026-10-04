@@ -131,6 +131,18 @@ Remove the `postgres` service + `depends_on` block from `docker-compose.yml`.
 
 Haldir's container speaks plain HTTP. In production, front it with nginx / Caddy / Cloudflare / your load balancer.
 
+**Tell Haldir whose request it is.** Anonymous rate limits — new OAuth accounts, client registrations — are per client address, and the app takes that address from the socket peer. Behind a proxy that is the *proxy*, not the caller; if the proxy's own address rotates (a CDN, a managed edge), those limits key on a bucket every caller shares — protecting nobody, and refusing legitimate users at random.
+
+If your edge knows the address, set `HALDIR_ORIGIN_SECRET` to a random secret and have it send the address it observed:
+
+```nginx
+# in the location block that proxies to Haldir
+proxy_set_header X-Haldir-Client-IP $remote_addr;
+proxy_set_header X-Haldir-Origin-Secret "the-same-secret";
+```
+
+The claim is used only when the secret matches (compared in constant time) and the value parses as an IP. Everything else — including a request that reaches the origin directly, where both headers are caller-supplied — falls back to the socket peer. Leave the secret unset and nothing changes: this is why the signature exists rather than trusting the headers outright.
+
 ### 3. Back up the encryption key
 
 `HALDIR_ENCRYPTION_KEY` is the master key for Vault. If you lose it, every stored secret is unrecoverable. Put it in AWS KMS / GCP Secret Manager / Vault / 1Password Business and inject at deploy time.

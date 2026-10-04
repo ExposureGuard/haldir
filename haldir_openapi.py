@@ -258,7 +258,7 @@ def _components() -> dict[str, Any]:
     }
 
 
-def generate_openapi(app: Any, version: str = "0.4.2") -> dict[str, Any]:
+def generate_openapi(app: Any, version: str = "0.4.3") -> dict[str, Any]:
     """Build the OpenAPI 3.1 document for a Flask app."""
     spec: dict[str, Any] = {
         "openapi": "3.1.0",
@@ -303,9 +303,17 @@ def generate_openapi(app: Any, version: str = "0.4.2") -> dict[str, Any]:
     # would describe them wrongly, and a wrong spec is worse than a short one.
     _SKIP_PREFIXES = ("/static", "/_debug", "/oauth")
     _SKIP_EXACT = {"/", "/docs", "/pricing", "/quickstart", "/sitemap.xml",
-                   "/robots.txt", "/ai.txt", "/llms.txt", "/llms-full.txt",
+                   "/robots.txt", "/llms.txt", "/llms-full.txt",
                    "/status", "/demo", "/admin", "/admin/overview",
                    "/admin/revoke", "/compliance",
+                   # Plain-text discovery documents. The rule stated above is
+                   # "the JSON surface", and these two are not JSON — with the
+                   # blanket response set they were described as returning 201
+                   # Created and 401 Unauthorized. `/ai.txt` sat in this list
+                   # for three releases under a name no route has (the route is
+                   # `/.well-known/ai.txt`), so it documented nothing and the
+                   # real path was documented as JSON.
+                   "/.well-known/ai.txt", "/.well-known/security.txt",
                    "/.well-known/oauth-protected-resource",
                    "/.well-known/oauth-protected-resource/mcp",
                    "/.well-known/oauth-authorization-server"}
@@ -350,6 +358,15 @@ def generate_openapi(app: Any, version: str = "0.4.2") -> dict[str, Any]:
                     **_default_responses(),
                 },
             }
+
+            # The document's top-level `security` applies bearer auth to every
+            # operation that does not override it — which described /healthz,
+            # the discovery documents and the demo-key mint as requiring a key.
+            # `require_api_key` marks the routes it guards; everything without
+            # the mark is public *by construction*, including /v1/billing/webhook
+            # (authenticated by Stripe's signature, not by a key).
+            if not getattr(view_fn, "__haldir_requires_key__", False):
+                op["security"] = []
 
             if method == "POST" and schema:
                 op["requestBody"] = _request_body_from_schema(schema)
