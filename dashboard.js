@@ -557,13 +557,21 @@
         return;
       }
       $t.innerHTML = pending.map(function (r) {
+        // Fields follow the approval row: request_id, agent_id, tool, action,
+        // amount, reason, created_at. This table used to read `session_id`,
+        // `requested_by` and `requested_at`, none of which any surface has
+        // ever returned — so half the row rendered empty and "Requested at"
+        // showed nothing at all. The headers were renamed to match.
         var id = r.request_id || "";
+        var request = r.tool || "—";
+        if (r.action) { request += " · " + r.action; }
         return '<tr>' +
           '<td class="mono">' + esc(id) + '</td>' +
-          '<td>' + esc(r.session_id || "") + '</td>' +
-          '<td>' + esc(r.requested_by || "") + '</td>' +
+          '<td>' + esc(r.agent_id || "") + '</td>' +
+          '<td>' + esc(request) + '</td>' +
+          '<td class="num">' + esc(fmt.usd(Number(r.amount) || 0)) + '</td>' +
           '<td>' + esc(r.reason || "") + '</td>' +
-          '<td>' + fmt.time(r.requested_at) + '</td>' +
+          '<td class="num">' + fmt.time(r.created_at) + '</td>' +
           '<td>' +
             '<button class="btn-sm ok" data-act="approve" data-id="' + esc(id) + '">Allow</button> ' +
             '<button class="btn-sm" data-act="deny" data-id="' + esc(id) + '">Deny</button>' +
@@ -618,8 +626,15 @@
       }
       var nextEl = $("#stat-compliance-next");
       if (nextEl) {
-        var nd = schedules.next_due != null ? schedules.next_due : null;
-        nextEl.textContent = nd ? new Date(nd * 1000).toLocaleDateString() : "—";
+        // `next_due` is per schedule; the response carries no top-level one.
+        // Reading `schedules.next_due` left this stat showing "—" forever,
+        // however many schedules existed. The soonest of them is the number
+        // the label is asking for.
+        var due = null;
+        (schedules.schedules || []).forEach(function (s) {
+          if (s && s.next_due != null && (due == null || s.next_due < due)) { due = s.next_due; }
+        });
+        nextEl.textContent = due ? new Date(due * 1000).toLocaleDateString() : "—";
       }
     }).catch(function(e) {
       flash("compliance load failed: " + (e.message || ""));

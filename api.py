@@ -6163,10 +6163,10 @@ def cloud_overview_page():
         <div class="panel">
           <table class="wrap">
             <thead><tr>
-              <th>ID</th><th>Session</th><th>Requested by</th>
-              <th>Reason</th><th>Requested at</th><th>Actions</th>
+              <th>ID</th><th>Agent</th><th>Request</th>
+              <th>Amount</th><th>Reason</th><th>Requested at</th><th>Actions</th>
             </tr></thead>
-            <tbody id="approvals-body"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
+            <tbody id="approvals-body"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
           </table>
         </div>
       </section>

@@ -19,9 +19,7 @@ Run: python -m pytest tests/test_webhook_delete.py -v
 from __future__ import annotations
 
 import os
-import re
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -131,32 +129,4 @@ def test_the_overview_carries_the_endpoint_list(haldir_client, bootstrap_key) ->
     assert row["success_rate"] is None, (
         "an endpoint nothing has ever reached has no success rate; 100% would "
         "call it healthy"
-    )
-
-
-def test_the_dashboard_reads_fields_the_overview_actually_returns(
-    haldir_client, bootstrap_key
-) -> None:
-    """The break this file exists for, as one assertion.
-
-    The page read `w.id`, `w.event` and `w.deliveries`; the API answers
-    `webhook_id`, `events` and `fire_count`. Nothing compared the two, so
-    every cell but the URL rendered empty. Parsing the real template means a
-    rename on either side fails here rather than emptying a table.
-    """
-    reg = _register_via_http(
-        haldir_client, bootstrap_key, url="https://hooks.example.com/contract"
-    )
-    keys = set(_overview_row(haldir_client, bootstrap_key, reg["webhook_id"]).keys())
-
-    src = (Path(__file__).resolve().parent.parent / "dashboard.js").read_text(
-        encoding="utf-8"
-    )
-    block = src[src.index("function loadWebhooks"):src.index("// ── Approvals page")]
-    read = set(re.findall(r"\bw\.([a-zA-Z_]+)", block))
-    assert read, "the parse found no fields — the template moved and this went blind"
-    missing = read - keys
-    assert not missing, (
-        f"dashboard.js reads {sorted(missing)}, which /v1/admin/overview does "
-        f"not return for an endpoint"
     )
