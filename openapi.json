@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Haldir",
-    "version": "0.4.2",
+    "version": "0.4.3",
     "description": "Identity, secrets, spend, and audit for AI agents. Every mutating POST accepts an optional Idempotency-Key header for safe retries.",
     "contact": {
       "name": "Haldir",
@@ -276,7 +276,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       },
       "get": {
         "operationId": "get_list_api_keys",
@@ -409,7 +410,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/sessions": {
@@ -2890,7 +2892,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/.well-known/mcp/mcp.json": {
@@ -2932,7 +2935,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/.well-known/mcp/server-card.json": {
@@ -2974,7 +2978,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/proxy/upstreams": {
@@ -3306,7 +3311,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/x402/tree-head": {
@@ -3348,7 +3354,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/x402/inclusion-proof/{entry_id}": {
@@ -3399,7 +3406,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/x402/evidence-pack": {
@@ -3441,7 +3449,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/x402/manifest": {
@@ -3483,7 +3492,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/.well-known/x402.json": {
@@ -3525,7 +3535,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/billing/checkout": {
@@ -3609,7 +3620,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/billing/portal": {
@@ -3693,7 +3705,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/blog/": {
@@ -3735,7 +3748,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/blog": {
@@ -3777,7 +3791,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/blog/{slug}": {
@@ -3828,91 +3843,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
-      }
-    },
-    "/.well-known/security.txt": {
-      "get": {
-        "operationId": "get_security_txt",
-        "summary": "",
-        "tags": [
-          "platform"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "201": {
-            "description": "Created"
-          },
-          "400": {
-            "$ref": "#/components/responses/ValidationError"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
-          },
-          "422": {
-            "$ref": "#/components/responses/IdempotencyMismatch"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/.well-known/ai.txt": {
-      "get": {
-        "operationId": "get_ai_txt",
-        "summary": "",
-        "tags": [
-          "platform"
-        ],
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "201": {
-            "description": "Created"
-          },
-          "400": {
-            "$ref": "#/components/responses/ValidationError"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
-          },
-          "422": {
-            "$ref": "#/components/responses/IdempotencyMismatch"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
+        },
+        "security": []
       }
     },
     "/.well-known/ai-plugin.json": {
@@ -3954,7 +3886,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/.well-known/agent.json": {
@@ -3996,7 +3929,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/.well-known/jwks.json": {
@@ -4038,7 +3972,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/AGENTS.md": {
@@ -4080,7 +4015,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/THREAT_MODEL.md": {
@@ -4122,7 +4058,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/icon.svg": {
@@ -4164,7 +4101,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/healthz": {
@@ -4206,7 +4144,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/livez": {
@@ -4248,7 +4187,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/readyz": {
@@ -4290,7 +4230,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/metrics": {
@@ -4332,7 +4273,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/openapi.json": {
@@ -4374,7 +4316,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/swagger": {
@@ -4416,7 +4359,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/status": {
@@ -4458,7 +4402,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1": {
@@ -4500,7 +4445,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/cloud/login": {
@@ -4542,7 +4488,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/cloud/overview": {
@@ -4584,7 +4531,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/dashboard.js": {
@@ -4626,7 +4574,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     },
     "/cloud": {
@@ -4668,7 +4617,8 @@
           "500": {
             "$ref": "#/components/responses/InternalError"
           }
-        }
+        },
+        "security": []
       }
     }
   },

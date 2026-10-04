@@ -55,6 +55,7 @@ from haldir_openapi import generate_openapi
 from haldir_status import build_status
 from haldir_scopes import require_scope
 import haldir_oauth
+import haldir_client_ip
 from haldir_public_url import public_base_url, rewrite_public_origin
 
 configure_logging()
@@ -339,7 +340,7 @@ def _platform_after(response):  # type: ignore[no-untyped-def]
                 "path": request.path,
                 "status": response.status_code,
                 "duration_ms": int(duration_s * 1000) if duration_s is not None else None,
-                "remote_addr": request.remote_addr,
+                "remote_addr": haldir_client_ip.client_ip(request),
                 "user_agent": request.headers.get("User-Agent", "")[:120],
             },
         )
@@ -473,6 +474,12 @@ def require_api_key(f):
             request.api_key_oauth_client = ""
 
         return f(*args, **kwargs)
+    # Marks the route as key-gated, so the OpenAPI generator can declare
+    # `security: []` on the public operations instead of leaving the document's
+    # top-level bearer requirement to speak for /healthz, the discovery
+    # documents and the demo-key mint. `@wraps` copies `__dict__` outward, so
+    # this survives routes stacked under @require_scope.
+    decorated.__haldir_requires_key__ = True
     return decorated
 
 
@@ -3349,7 +3356,7 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.08); margin:2rem 0; }
 </head>
 <body>
 <h1>Haldir API</h1>
-<p class="sub">v0.4.2 — the guardian layer for AI agents</p>
+<p class="sub">v0.4.3 — the guardian layer for AI agents</p>
 <p style="margin-top:1rem;">Base URL: <code>https://haldir.xyz/v1</code></p>
 <p>Auth: <code>Authorization: Bearer hld_your_key</code> or <code>X-API-Key: hld_your_key</code></p>
 
@@ -3496,7 +3503,7 @@ without ever being explicitly registered is still listed.</p>
 
 MCP_SERVER_INFO = {
     "name": "haldir",
-    "version": "0.4.2",
+    "version": "0.4.3",
     "displayName": "Haldir — AI Agent Security Gateway",
     "description": (
         "Haldir is a security and governance layer for AI agents. "
@@ -5562,7 +5569,7 @@ def healthz():
     onto Kubernetes probe semantics and answer different questions."""
     import haldir_health
     return jsonify({**haldir_health.liveness(), "status": "ok",
-                    "version": "0.4.2"})
+                    "version": "0.4.3"})
 
 
 @app.route("/livez")
@@ -5832,7 +5839,7 @@ def status_page():
 def api_index():
     return jsonify({
         "service": "haldir",
-        "version": "0.4.2",
+        "version": "0.4.3",
         "docs": "https://haldir.xyz/docs",
         "endpoints": {
             "sessions": "/v1/sessions",
@@ -5850,7 +5857,7 @@ def landing():
     if os.path.exists(landing_path):
         with open(landing_path) as f:
             return f.read(), 200, {"Content-Type": "text/html"}
-    return jsonify({"service": "haldir", "version": "0.4.2"}), 200
+    return jsonify({"service": "haldir", "version": "0.4.3"}), 200
 
 
 # ── Cloud dashboard SPA pages ────────────────────────────────────────────
@@ -6332,14 +6339,14 @@ def cloud_root():
 def _oauth_ip() -> str:
     """The caller's address, as far as this app can honestly know it.
 
-    `remote_addr`, never X-Forwarded-For: there is no ProxyFix in front of the
-    app, so that header is caller-supplied and trusting it would make every
-    limit below bypassable by adding a field. The cost is worth naming rather
-    than hiding — behind a load balancer this is the balancer's address, which
-    collapses the per-IP limits into one shared bucket. Fixing that properly
-    means ProxyFix with a documented trust assumption, which is its own change.
+    Delegates to `haldir_client_ip`, which explains the trust model: a
+    signed claim from the edge when one is configured and verifies, the
+    socket peer otherwise. Before that module existed this was
+    `request.remote_addr`, and behind the production proxy that is a
+    *rotating* internal address (100.64.0.x), so the per-IP limits these
+    values feed collapsed into shared buckets.
     """
-    return request.remote_addr or ""
+    return haldir_client_ip.client_ip(request)
 
 
 _oauth_bursts: dict = {}
