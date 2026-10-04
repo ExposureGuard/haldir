@@ -952,6 +952,56 @@ def _render_overview(o: dict) -> None:
     print()
 
 
+def cmd_agents(args: argparse.Namespace) -> None:
+    """The agent register — every agent that has acted for this tenant.
+
+    Which agents exist, what each is allowed to do, what each actually did,
+    and which of them can spawn others. This is the "register of AI systems"
+    a review asks for; `/v1/agents` serves it to anything else that wants it.
+    """
+    client = APIClient()
+    if getattr(args, "agent", None):
+        body = client.get(f"/v1/agents/{args.agent}")
+    else:
+        body = client.get("/v1/agents")
+    if getattr(args, "json", False):
+        print(json.dumps(body, indent=2))
+        return
+    _render_register(body if "agents" in body else {"agents": [body], "summary": {}})
+
+
+def _render_register(register: dict) -> None:
+    """Print the register as the table an operator would paste into a review."""
+    agents = register.get("agents") or []
+    summary = register.get("summary") or {}
+    print()
+    print(f"  {Color.BOLD}Agent register{Color.RESET}")
+    if summary:
+        print(f"  {Color.DIM}{summary.get('agents', 0)} agents · "
+              f"{summary.get('agents_active', 0)} active now · "
+              f"{summary.get('flagged_actions', 0)} flagged actions · "
+              f"${summary.get('audited_cost_usd', 0.0):,.6f} logged across "
+              f"{summary.get('actions', 0):,} actions{Color.RESET}")
+    print()
+    if not agents:
+        print(f"  {Color.DIM}No agents have acted yet.{Color.RESET}")
+        print()
+        return
+    print(f"{Color.DIM}  {'agent':26} {'scopes':20} {'cap':>10} {'sess':>5} "
+          f"{'acts':>6} {'cost':>12} {'flag':>5}  spawns{Color.RESET}")
+    for a in agents:
+        sessions = a.get("sessions") or {}
+        activity = a.get("activity") or {}
+        scopes = ",".join(a.get("default_scopes") or []) or "—"
+        cap = f"${a['max_spend']:,.2f}" if a.get("max_spend") else "—"
+        spawns = ",".join(a.get("delegates_to") or []) or "—"
+        print(f"  {a.get('agent_id', '')[:26]:26} {scopes[:20]:20} {cap:>10} "
+              f"{sessions.get('total', 0):>5} {activity.get('actions', 0):>6} "
+              f"${activity.get('cost_usd', 0.0):>11,.6f} "
+              f"{activity.get('flagged', 0):>5}  {spawns}")
+    print()
+
+
 def cmd_overview(args: argparse.Namespace) -> None:
     """Single-call tenant dashboard (calls /v1/admin/overview)."""
     client = APIClient()
@@ -1993,6 +2043,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_over.add_argument("--watch", action="store_true", help="Refresh continuously, top-style")
     p_over.add_argument("--interval", type=float, default=5.0, help="Refresh interval (with --watch)")
     p_over.set_defaults(func=cmd_overview)
+
+    # ── agents ──
+    # The register: who exists, what each may do, what each did, who spawns
+    # whom. Same data as /v1/agents, which is also what the evidence pack and
+    # the dashboard render.
+    p_agents = sub.add_parser(
+        "agents",
+        help="Agent register — who exists, what they may do, what they did",
+    )
+    p_agents.add_argument("--agent", help="Show a single agent by id")
+    p_agents.add_argument("--json", action="store_true", help="Emit raw JSON")
+    p_agents.set_defaults(func=cmd_agents)
 
     # ── top ──
     # A live console for a fleet of agents. Distinct from `overview --watch`,

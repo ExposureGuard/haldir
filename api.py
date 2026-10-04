@@ -2298,6 +2298,47 @@ def admin_overview():
     return jsonify(overview)
 
 
+# ── The agent register ─────────────────────────────────────────────────
+
+@app.route("/v1/agents", methods=["GET"])
+@require_api_key
+@require_scope("admin:read")
+def list_agents():
+    """Every agent that has acted for this tenant.
+
+    Which agents exist, what each is allowed to do (scopes, spend cap), what
+    each actually did (actions, spend, flags, approvals), and which of them
+    can spawn others. This is the "registry of agents" — the table has been
+    written on every session creation since migration 001 and nothing had a
+    way to read it.
+
+    Derived from recorded activity as well as registration: an agent that
+    acted but was never explicitly registered is still listed, because a
+    register that silently omits agents is worse than none.
+    """
+    import haldir_registry
+    tenant = getattr(request, "tenant_id", "")
+    return jsonify(haldir_registry.build_register(DB_PATH, tenant))
+
+
+@app.route("/v1/agents/<agent_id>", methods=["GET"])
+@require_api_key
+@require_scope("admin:read")
+def get_agent(agent_id: str):
+    """One agent's register entry.
+
+    404 when this tenant has no record of the agent — the same answer for
+    "never seen" and "belongs to another tenant", so the route cannot be
+    asked whether a given agent_id exists elsewhere.
+    """
+    import haldir_registry
+    tenant = getattr(request, "tenant_id", "")
+    register = haldir_registry.build_register(DB_PATH, tenant, agent_id=agent_id)
+    if not register["agents"]:
+        return _json_error("not_found", "no agent with that id in this tenant", 404)
+    return jsonify(register["agents"][0])
+
+
 # ── Compliance evidence pack (auditor-ready document) ──────────────────
 
 def _parse_iso_or_unix(v: str | None) -> float | None:
@@ -3318,6 +3359,21 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.08); margin:2rem 0; }
 
 <h3><span class="method post">POST</span> /v1/sessions/:id/check</h3>
 <p>Check if a session has a permission. Body: <code>{"scope": "write"}</code></p>
+
+<hr>
+<h2>Agents — the register</h2>
+
+<h3><span class="method get">GET</span> /v1/agents</h3>
+<p>Every agent that has acted for this tenant: the scopes and spend cap it
+holds, the sessions and spend it has used, its flagged-action count, and the
+agents it has spawned. This is the register of AI systems a review asks for.
+Derived from recorded activity as well as registration, so an agent that acted
+without ever being explicitly registered is still listed.</p>
+<pre>curl https://haldir.xyz/v1/agents \\
+  -H "Authorization: Bearer hld_xxx"</pre>
+
+<h3><span class="method get">GET</span> /v1/agents/:agent_id</h3>
+<p>One agent's register entry. 404 when this tenant has no record of it.</p>
 
 <hr>
 <h2>Vault — Secrets</h2>
@@ -6016,6 +6072,7 @@ def cloud_overview_page():
       <a href="#/account">Account</a>
       <a href="#/quotas">Quotas</a>
       <a href="#/sessions">Sessions</a>
+      <a href="#/agents">Agents</a>
       <a href="#/audit">Audit trail</a>
       <a href="#/webhooks">Webhooks</a>
       <a href="#/approvals">Approvals</a>
@@ -6114,6 +6171,28 @@ def cloud_overview_page():
               <th>Tool</th><th>Action</th><th>Cost</th><th>Status</th>
             </tr></thead>
             <tbody id="audit-body"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- AGENTS -->
+      <section class="page" id="page-agents">
+        <div class="page-title">Agents</div>
+        <div class="stat-grid" id="stat-grid-agents">
+          <div class="stat"><div class="stat-val" id="stat-agents-total">—</div>
+            <div class="stat-label">Agents on record</div></div>
+          <div class="stat"><div class="stat-val" id="stat-agents-active">—</div>
+            <div class="stat-label">Active now</div></div>
+          <div class="stat"><div class="stat-val" id="stat-agents-flagged">—</div>
+            <div class="stat-label">With flagged actions</div></div>
+        </div>
+        <div class="panel">
+          <table class="wrap">
+            <thead><tr>
+              <th>Agent</th><th>Scopes</th><th>Spend cap</th><th>Sessions</th>
+              <th>Actions</th><th>Cost</th><th>Flagged</th><th>Spawns</th>
+            </tr></thead>
+            <tbody id="agents-body"><tr><td colspan="8" class="empty">loading…</td></tr></tbody>
           </table>
         </div>
       </section>

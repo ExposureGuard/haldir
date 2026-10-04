@@ -50,7 +50,8 @@ def test_valid_key_renders_evidence_pack(haldir_client, bootstrap_key) -> None:
         "5 · Spend governance",
         "6 · Human approvals",
         "7 · Outbound alerting",
-        "8 · Document signature",
+        "8 · Agent register",
+            "9 · Document signature",
     ):
         assert hdr in body, f"missing section header {hdr!r}"
     # SOC2 control codes rendered.

@@ -49,7 +49,8 @@ def test_pack_has_every_documented_section() -> None:
         "format_version", "generated_at", "period_start", "period_end",
         "tenant_id", "controls",
         "identity", "access_control", "encryption", "audit_trail",
-        "spend_governance", "approvals", "webhooks", "signatures",
+        "spend_governance", "approvals", "webhooks", "agent_register",
+        "signatures",
     }
     assert expected <= set(pack.keys())
 
@@ -58,7 +59,8 @@ def test_each_section_maps_to_a_soc2_control() -> None:
     pack = haldir_compliance.build_evidence_pack(api.DB_PATH, "t")
     controls = pack["controls"]
     for section in ("access_control", "encryption", "audit_trail",
-                    "spend_governance", "approvals", "webhooks"):
+                    "spend_governance", "approvals", "webhooks",
+                    "agent_register"):
         assert section in controls
         c = controls[section]
         assert c["criterion"].startswith("CC")
@@ -172,7 +174,8 @@ def test_evidence_markdown_endpoint(haldir_client, bootstrap_key) -> None:
     body = r.data.decode()
     assert "# Haldir Audit-Prep Evidence Pack" in body
     assert "## 1. Identity" in body
-    assert "## 8. Document signature" in body
+    assert "## 8. Agent register" in body
+    assert "## 9. Document signature" in body
 
 
 def test_evidence_rejects_bad_format(haldir_client, bootstrap_key) -> None:
@@ -267,3 +270,70 @@ def test_evidence_requires_admin_read_scope(haldir_client, bootstrap_key) -> Non
 def test_evidence_unauthed_returns_401(haldir_client) -> None:
     r = haldir_client.get("/v1/compliance/evidence")
     assert r.status_code == 401
+
+
+# ── The agent register section ────────────────────────────────────────
+
+def test_the_pack_carries_the_agent_register(haldir_client, bootstrap_key) -> None:
+    """The register of AI systems is the section a review asks for, so it has
+    to be in the pack *and* in both rendered forms."""
+    h = {"Authorization": f"Bearer {bootstrap_key}"}
+    haldir_client.post("/v1/sessions",
+                       json={"agent_id": "evidence-agent", "scopes": ["read"]},
+                       headers=h)
+
+    pack = haldir_client.get("/v1/compliance/evidence", headers=h).get_json()
+    agents = {a["agent_id"]: a for a in pack["agent_register"]["agents"]}
+    assert "evidence-agent" in agents
+    assert agents["evidence-agent"]["sessions"]["total"] >= 1
+
+    markdown = haldir_client.get("/v1/compliance/evidence?format=markdown",
+                                 headers=h).data.decode()
+    assert "8. Agent register" in markdown
+    assert "`evidence-agent`" in markdown
+
+
+def test_register_recency_is_not_in_the_digest_but_its_facts_are() -> None:
+    """Two packs over an unchanged database must agree.
+
+    The register's recency fields move without a write — a session TTL expires
+    on its own, and `last_seen` is stamped by activity — so they are dropped
+    from the hashed form, the same way `access_control.last_used` is. What the
+    digest *does* cover is the register's substance: mutating an action count
+    must change it.
+    """
+    pack = haldir_compliance.build_evidence_pack(api.DB_PATH, "digest-tenant")
+
+    def digest_of(p: dict) -> str:
+        return haldir_compliance._section_signatures(p)["digest"]
+
+    volatile = json.loads(json.dumps(pack))
+    volatile["agent_register"]["agents"] = [{
+        "agent_id": "x", "registered": True, "registered_at": 1.0,
+        "default_scopes": ["read"], "max_spend": 0.0, "metadata": {},
+        "first_seen": 1.0, "last_seen": 999999.0,
+        "sessions": {"total": 1, "active": 7, "revoked": 0},
+        "spend": {"session_limits_usd": 0.0, "spent_usd": 0.0},
+        "activity": {"actions": 0, "cost_usd": 0.0, "flagged": 0,
+                     "last_action_at": 999999.0},
+        "approvals": {"requested": 0, "pending": 0},
+        "delegates_to": [], "spawned_by": [],
+    }]
+    volatile["agent_register"]["summary"] = dict(volatile["agent_register"]["summary"])
+
+    stable = json.loads(json.dumps(volatile))
+    assert digest_of(stable) == digest_of(stable), "sanity: hashing is deterministic"
+
+    changed = json.loads(json.dumps(stable))
+    changed["agent_register"]["agents"][0]["activity"]["actions"] = 3
+    assert digest_of(changed) != digest_of(stable), "sanity"
+    # The property under test, stated as the pair it is:
+    assert digest_of(volatile) == digest_of(stable), (
+        "recency fields (last_seen, last_action_at, sessions.active) leak into "
+        "the digest — an auditor re-verifying an archived pack would read the "
+        "drift as tampering"
+    )
+    assert digest_of(changed) != digest_of(stable), (
+        "the register's substance is NOT in the digest — a pack could attest "
+        "to an action count that later changed"
+    )
