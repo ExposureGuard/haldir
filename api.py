@@ -2339,6 +2339,97 @@ def get_agent(agent_id: str):
     return jsonify(register["agents"][0])
 
 
+# ── Capability cards: opt-in discovery ─────────────────────────────────
+
+@app.route("/v1/agents/<agent_id>/card", methods=["POST"])
+@require_api_key
+@require_scope("admin:write")
+def publish_agent_card(agent_id: str):
+    """Publish (or update) this tenant's capability card for one agent.
+
+    Opt-in, per agent, and capability-only: what the operator says the agent
+    does — never what it spent, did, or was flagged for. The card exists so
+    other people and other agents can find it, which is why the parts that
+    are not for publication are not in the table at all.
+
+    The agent must be in this tenant's register, so a listing always refers
+    to an agent this deployment has actually seen.
+    """
+    import haldir_cards
+    import haldir_registry
+
+    tenant = getattr(request, "tenant_id", "")
+    if not haldir_registry.build_register(DB_PATH, tenant, agent_id=agent_id)["agents"]:
+        return _json_error("not_found", "no agent with that id in this tenant", 404)
+
+    data = request.get_json(silent=True) or {}
+    try:
+        card = haldir_cards.publish(
+            DB_PATH, tenant, agent_id,
+            display_name=data.get("display_name", ""),
+            description=data.get("description", ""),
+            capabilities=data.get("capabilities"),
+            contact_url=data.get("contact_url", ""),
+        )
+    except haldir_cards.CardValidationError as err:
+        return _json_error("invalid_card", str(err), 400)
+
+    # Going public is a governance event: the audit trail should say when this
+    # agent became discoverable and under which card.
+    _audit_admin("agent.card_publish",
+                 {"agent_id": agent_id, "card_id": card["card_id"]},
+                 tenant_id=tenant)
+    return jsonify(card), (200 if card["updated"] else 201)
+
+
+@app.route("/v1/agents/<agent_id>/card", methods=["GET"])
+@require_api_key
+@require_scope("admin:read")
+def get_agent_card(agent_id: str):
+    """The owner's view of their own card. 404 when none is published."""
+    import haldir_cards
+    card = haldir_cards.get_card(DB_PATH, getattr(request, "tenant_id", ""), agent_id)
+    if card is None:
+        return _json_error("not_found", "no published card for that agent", 404)
+    return jsonify(card)
+
+
+@app.route("/v1/agents/<agent_id>/card", methods=["DELETE"])
+@require_api_key
+@require_scope("admin:write")
+def unpublish_agent_card(agent_id: str):
+    """Withdraw a card. It is deleted, not hidden — an operator who takes a
+    listing back should be able to mean it."""
+    import haldir_cards
+    tenant = getattr(request, "tenant_id", "")
+    if not haldir_cards.unpublish(DB_PATH, tenant, agent_id):
+        return _json_error("not_found", "no published card for that agent", 404)
+    _audit_admin("agent.card_unpublish", {"agent_id": agent_id}, tenant_id=tenant)
+    return jsonify({"unpublished": True, "agent_id": agent_id}), 200
+
+
+@app.route("/.well-known/agents.json", methods=["GET"])
+def public_agent_cards():
+    """The public index of published cards. No auth — that is the point.
+
+    Every entry is the operator's own claim about their own agent. Nothing
+    here is verified by Haldir, and the document says so, because a directory
+    that implies endorsement turns somebody else's overstatement into our
+    misrepresentation.
+    """
+    import haldir_cards
+    cards = haldir_cards.public_cards(DB_PATH)
+    return jsonify({
+        "description": (
+            "Agent capability cards published by their operators. Each card "
+            "describes what an agent is meant to do; none of them is verified "
+            "by Haldir."
+        ),
+        "count": len(cards),
+        "cards": cards,
+    })
+
+
 # ── Compliance evidence pack (auditor-ready document) ──────────────────
 
 def _tenant_frameworks(tenant: str) -> list[str]:
@@ -3393,6 +3484,27 @@ without ever being explicitly registered is still listed.</p>
 
 <h3><span class="method get">GET</span> /v1/agents/:agent_id</h3>
 <p>One agent's register entry. 404 when this tenant has no record of it.</p>
+
+<h3><span class="method post">POST</span> /v1/agents/:agent_id/card</h3>
+<p>Publish (or update) a capability card, making one agent discoverable at
+<a href="/.well-known/agents.json"><code>/.well-known/agents.json</code></a>.
+Opt-in per agent, and capability-only: what you say the agent does, never what
+it spent or was flagged for. The agent must be in your register.</p>
+<pre>curl -X POST https://haldir.xyz/v1/agents/ledger-bot/card \
+  -H "Authorization: Bearer hld_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"display_name": "Ledger Bot",
+       "description": "Reconciles invoices and schedules payments.",
+       "capabilities": ["read invoices", "schedule payment"],
+       "contact_url": "https://example.com/ledger-bot"}'</pre>
+
+<h3><span class="method delete">DELETE</span> /v1/agents/:agent_id/card</h3>
+<p>Withdraw a card. The row is deleted, not hidden — taking a listing back
+should mean it is gone.</p>
+
+<h3><span class="method get">GET</span> /.well-known/agents.json</h3>
+<p>The public index of published cards. No authentication — that is the point.
+Every entry is its operator's claim, not something Haldir verified.</p>
 
 <hr>
 <h2>Vault — Secrets</h2>

@@ -34,6 +34,20 @@ def _auth(key: str) -> dict:
     return {"Authorization": f"Bearer {key}"}
 
 
+@pytest.fixture(autouse=True)
+def _release_rate_limit_budget():
+    """These tests make real calls against the shared bootstrap key, and the
+    suite's per-key hourly limiter counts them cumulatively. Without releasing
+    the budget, modules that run later get 429s for reasons that have nothing
+    to do with them — which is exactly what happened when this file was added.
+    `fresh_counter` in conftest resets before a test; this releases after one,
+    which is what a module adding load owes the rest of the suite.
+    """
+    yield
+    import api  # imported here: not every module in this file needs it at import time
+    api._rate_limits.clear()
+
+
 # ── The table ──────────────────────────────────────────────────────────
 
 def test_every_plan_declares_its_assurance_entitlements() -> None:
