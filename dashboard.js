@@ -516,13 +516,17 @@
         return;
       }
       $t.innerHTML = rows.map(function (w) {
+        // Field names follow GET /v1/webhooks (`webhook_id`, `events`,
+        // `fire_count`) — this table used to read `id`/`event`/`deliveries`,
+        // which no surface ever returned, so every cell but the URL rendered
+        // empty even once the list arrived.
         return '<tr>' +
-          '<td class="mono">' + esc(String(w.id || "")) + '</td>' +
+          '<td class="mono">' + esc(String(w.webhook_id || "")) + '</td>' +
           '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">' + esc(w.url || "") + '</td>' +
-          '<td>' + esc(w.event || "—") + '</td>' +
-          '<td class="num">' + esc(String(w.deliveries ?? 0)) + '</td>' +
-          '<td class="num">' + esc(String(w.success_rate ?? "—")) + '</td>' +
-          '<td>' + '<button class="btn btn-red btn-sm" data-act="revoke-wh" data-id="' + esc(String(w.id || "")) + '" style="font-size:0.6rem;padding:0.2rem 0.5rem">Delete</button>' + '</td>' +
+          '<td>' + esc(w.events && w.events.length ? w.events.join(", ") : "—") + '</td>' +
+          '<td class="num">' + esc(String(w.fire_count ?? 0)) + '</td>' +
+          '<td class="num">' + esc(w.success_rate == null ? "—" : Math.round(w.success_rate * 100) + "%") + '</td>' +
+          '<td>' + '<button class="btn btn-red btn-sm" data-act="revoke-wh" data-id="' + esc(String(w.webhook_id || "")) + '" style="font-size:0.6rem;padding:0.2rem 0.5rem">Delete</button>' + '</td>' +
           '</tr>';
       }).join("");
       // Wire delete buttons
