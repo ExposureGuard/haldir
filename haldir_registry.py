@@ -54,6 +54,25 @@ def _by_agent(conn: Any, sql: str, params: tuple) -> dict[str, Any]:
     return out
 
 
+#: Principals that are not AI agents. `admin:<key-prefix>` is the convention
+#: `_audit_admin` uses to attribute an operator's action — a person acting
+#: through the API, not an agent. `system` is the deployment's own
+#: bookkeeping. Both belong in the register: they acted, their entries are in
+#: the same hash chain, and an auditor asking "who did this" needs to find
+#: them. But a register of *AI systems* should say which entries are systems,
+#: or the count is wrong in the direction that matters least visibly.
+_NON_AGENT_PREFIXES = ("admin:",)
+_NON_AGENT_IDS = ("system",)
+
+
+def _kind(agent_id: str) -> str:
+    """`agent` for something that acts autonomously, `principal` for an
+    operator or the deployment acting on its own behalf."""
+    if agent_id in _NON_AGENT_IDS or agent_id.startswith(_NON_AGENT_PREFIXES):
+        return "principal"
+    return "agent"
+
+
 def _delegation_edges(conn: Any, tenant_id: str) -> dict[str, set[str]]:
     """parent agent -> the agents it spawned.
 
@@ -135,6 +154,12 @@ def build_register(
     finally:
         conn.close()
 
+    # Which of these agents are discoverable. A card is opt-in, so the register
+    # reports the card id rather than a boolean summary: an operator looking at
+    # the list needs to know *which* listing to withdraw.
+    import haldir_cards
+    cards = haldir_cards.card_ids_for_tenant(db_path, tenant_id)
+
     # Registered, or merely present: both belong in a register.
     known = set(policies) | set(session_rows) | set(activity_rows)
     if agent_id:
@@ -170,6 +195,7 @@ def build_register(
 
         entries.append({
             "agent_id": name,
+            "kind": _kind(name),
             "registered": policy is not None,
             "registered_at": float(policy["created_at"]) if policy is not None else None,
             "default_scopes": default_scopes,
@@ -196,6 +222,7 @@ def build_register(
                 "requested": int(approvals["requested"]) if approvals else 0,
                 "pending": int(approvals["pending"] or 0) if approvals else 0,
             },
+            "card_id": cards.get(name),
             "delegates_to": sorted(edges.get(name, ())),
             "spawned_by": sorted(
                 parent for parent, children in edges.items() if name in children
@@ -205,7 +232,12 @@ def build_register(
     entries.sort(key=lambda e: (e["last_seen"] or 0.0, e["agent_id"]), reverse=True)
 
     summary = {
-        "agents": len(entries),
+        # `agents` counts AI agents; `entries` is everything that acted,
+        # principals included. The two differ on any tenant whose operator has
+        # touched the API — which is every tenant that has been set up.
+        "agents": sum(1 for e in entries if e["kind"] == "agent"),
+        "principals": sum(1 for e in entries if e["kind"] == "principal"),
+        "entries": len(entries),
         "agents_active": sum(1 for e in entries if e["sessions"]["active"] > 0),
         "agents_flagged": sum(1 for e in entries if e["activity"]["flagged"] > 0),
         "actions": sum(e["activity"]["actions"] for e in entries),
@@ -218,6 +250,7 @@ def build_register(
         "audited_cost_usd": round(sum(e["activity"]["cost_usd"] for e in entries), 6),
         "flagged_actions": sum(e["activity"]["flagged"] for e in entries),
         "delegation_edges": sum(len(e["delegates_to"]) for e in entries),
+        "discoverable_agents": sum(1 for e in entries if e["card_id"]),
     }
     return {
         "tenant_id": tenant_id,

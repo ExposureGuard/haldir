@@ -970,6 +970,32 @@ def cmd_agents(args: argparse.Namespace) -> None:
     _render_register(body if "agents" in body else {"agents": [body], "summary": {}})
 
 
+def cmd_publish(args: argparse.Namespace) -> None:
+    """Publish a capability card for one agent — opt-in discovery."""
+    client = APIClient()
+    body = client.post(f"/v1/agents/{args.agent_id}/card", json={
+        "display_name": args.name,
+        "description":   args.description or "",
+        "capabilities":  args.capability or [],
+        "contact_url":   args.contact or "",
+    })
+    verb = "Updated" if body.get("updated") else "Published"
+    print(f"  {Color.GREEN}{verb}{Color.RESET} card for {args.agent_id}")
+    print(f"  {Color.DIM}card id{Color.RESET} {body.get('card_id', '')}")
+    print(f"  {Color.DIM}listable at{Color.RESET} /.well-known/agents.json")
+    print(f"  {Color.DIM}The card carries only what you wrote: what the agent"
+          f" does, never what it did.{Color.RESET}")
+    print()
+
+
+def cmd_unpublish(args: argparse.Namespace) -> None:
+    """Withdraw a capability card. The row is deleted, not hidden."""
+    client = APIClient()
+    client.delete(f"/v1/agents/{args.agent_id}/card")
+    print(f"  {Color.GREEN}Withdrawn{Color.RESET} card for {args.agent_id}")
+    print()
+
+
 def _render_register(register: dict) -> None:
     """Print the register as the table an operator would paste into a review."""
     agents = register.get("agents") or []
@@ -2055,6 +2081,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_agents.add_argument("--agent", help="Show a single agent by id")
     p_agents.add_argument("--json", action="store_true", help="Emit raw JSON")
     p_agents.set_defaults(func=cmd_agents)
+
+    # ── publish / unpublish ──
+    # A capability card makes one agent discoverable at
+    # /.well-known/agents.json. Opt-in per agent; withdrawing deletes it.
+    p_pub = sub.add_parser(
+        "publish",
+        help="Publish a capability card for an agent (opt-in discovery)",
+    )
+    p_pub.add_argument("agent_id", help="The agent to make discoverable")
+    p_pub.add_argument("--name", required=True, help="Display name on the card")
+    p_pub.add_argument("--description", help="What the agent does, one or two sentences")
+    p_pub.add_argument("--capability", action="append",
+                       help="A capability to list (repeatable)")
+    p_pub.add_argument("--contact", help="http(s) URL where the operator can be reached")
+    p_pub.set_defaults(func=cmd_publish)
+
+    p_unpub = sub.add_parser("unpublish", help="Withdraw an agent's capability card")
+    p_unpub.add_argument("agent_id", help="The agent to withdraw")
+    p_unpub.set_defaults(func=cmd_unpublish)
 
     # ── top ──
     # A live console for a fleet of agents. Distinct from `overview --watch`,
