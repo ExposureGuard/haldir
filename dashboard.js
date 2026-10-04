@@ -660,11 +660,52 @@
     });
   }
 
+  // ── Agents page ─────────────────────────────────────────────────────
+  function loadAgents() {
+    var $t = $("#agents-body");
+    if (!$t || !key) { return; }
+    api("/v1/agents").then(function (r) {
+      var summary = r.summary || {};
+      var set = function (sel, val) { var el = $(sel); if (el) { el.textContent = val; } };
+      set("#stat-agents-total", fmt.int(summary.agents || 0));
+      set("#stat-agents-active", fmt.int(summary.agents_active || 0));
+      set("#stat-agents-flagged", fmt.int(summary.agents_flagged || 0));
+
+      var rows = r.agents || [];
+      if (!rows.length) {
+        $t.innerHTML = '<tr><td colspan="8" class="empty">No agents have acted yet</td></tr>';
+        return;
+      }
+      $t.innerHTML = rows.map(function (a) {
+        // Field names follow GET /v1/agents — the register endpoint, which
+        // reads them from the same tables the rest of this dashboard does.
+        var sessions = a.sessions || {};
+        var activity = a.activity || {};
+        var scopes = (a.default_scopes || []).join(", ") || "—";
+        var spawns = (a.delegates_to || []).join(", ") || "—";
+        return '<tr>' +
+          '<td class="mono">' + esc(a.agent_id || "") + '</td>' +
+          '<td>' + esc(scopes) + '</td>' +
+          '<td class="num">' + (Number(a.max_spend) ? fmt.usd(a.max_spend) : "—") + '</td>' +
+          '<td class="num">' + esc(String(sessions.total ?? 0)) + '</td>' +
+          '<td class="num">' + esc(String(activity.actions ?? 0)) + '</td>' +
+          '<td class="num">' + fmt.usd(activity.cost_usd || 0) + '</td>' +
+          '<td class="num">' + esc(String(activity.flagged ?? 0)) + '</td>' +
+          '<td>' + esc(spawns) + '</td>' +
+          '</tr>';
+      }).join("");
+    }).catch(function (e) {
+      $t.innerHTML = '<tr><td colspan="8" class="empty">load failed</td></tr>';
+      flash("agents load failed: " + e.message);
+    });
+  }
+
   // ── Page router ─────────────────────────────────────────────────────
   function loadPage(name) {
     if (name === "account") { loadAccount(); }
     else if (name === "quotas") { loadQuotas(); }
     else if (name === "sessions") { loadSessions(); }
+    else if (name === "agents") { loadAgents(); }
     else if (name === "audit") { loadAudit(); }
     else if (name === "webhooks") { loadWebhooks(); }
     else if (name === "approvals") { loadApprovals(); }

@@ -2298,7 +2298,151 @@ def admin_overview():
     return jsonify(overview)
 
 
+# ── The agent register ─────────────────────────────────────────────────
+
+@app.route("/v1/agents", methods=["GET"])
+@require_api_key
+@require_scope("admin:read")
+def list_agents():
+    """Every agent that has acted for this tenant.
+
+    Which agents exist, what each is allowed to do (scopes, spend cap), what
+    each actually did (actions, spend, flags, approvals), and which of them
+    can spawn others. This is the "registry of agents" — the table has been
+    written on every session creation since migration 001 and nothing had a
+    way to read it.
+
+    Derived from recorded activity as well as registration: an agent that
+    acted but was never explicitly registered is still listed, because a
+    register that silently omits agents is worse than none.
+    """
+    import haldir_registry
+    tenant = getattr(request, "tenant_id", "")
+    return jsonify(haldir_registry.build_register(DB_PATH, tenant))
+
+
+@app.route("/v1/agents/<agent_id>", methods=["GET"])
+@require_api_key
+@require_scope("admin:read")
+def get_agent(agent_id: str):
+    """One agent's register entry.
+
+    404 when this tenant has no record of the agent — the same answer for
+    "never seen" and "belongs to another tenant", so the route cannot be
+    asked whether a given agent_id exists elsewhere.
+    """
+    import haldir_registry
+    tenant = getattr(request, "tenant_id", "")
+    register = haldir_registry.build_register(DB_PATH, tenant, agent_id=agent_id)
+    if not register["agents"]:
+        return _json_error("not_found", "no agent with that id in this tenant", 404)
+    return jsonify(register["agents"][0])
+
+
+# ── Capability cards: opt-in discovery ─────────────────────────────────
+
+@app.route("/v1/agents/<agent_id>/card", methods=["POST"])
+@require_api_key
+@require_scope("admin:write")
+def publish_agent_card(agent_id: str):
+    """Publish (or update) this tenant's capability card for one agent.
+
+    Opt-in, per agent, and capability-only: what the operator says the agent
+    does — never what it spent, did, or was flagged for. The card exists so
+    other people and other agents can find it, which is why the parts that
+    are not for publication are not in the table at all.
+
+    The agent must be in this tenant's register, so a listing always refers
+    to an agent this deployment has actually seen.
+    """
+    import haldir_cards
+    import haldir_registry
+
+    tenant = getattr(request, "tenant_id", "")
+    if not haldir_registry.build_register(DB_PATH, tenant, agent_id=agent_id)["agents"]:
+        return _json_error("not_found", "no agent with that id in this tenant", 404)
+
+    data = request.get_json(silent=True) or {}
+    try:
+        card = haldir_cards.publish(
+            DB_PATH, tenant, agent_id,
+            display_name=data.get("display_name", ""),
+            description=data.get("description", ""),
+            capabilities=data.get("capabilities"),
+            contact_url=data.get("contact_url", ""),
+        )
+    except haldir_cards.CardValidationError as err:
+        return _json_error("invalid_card", str(err), 400)
+
+    # Going public is a governance event: the audit trail should say when this
+    # agent became discoverable and under which card.
+    _audit_admin("agent.card_publish",
+                 {"agent_id": agent_id, "card_id": card["card_id"]},
+                 tenant_id=tenant)
+    return jsonify(card), (200 if card["updated"] else 201)
+
+
+@app.route("/v1/agents/<agent_id>/card", methods=["GET"])
+@require_api_key
+@require_scope("admin:read")
+def get_agent_card(agent_id: str):
+    """The owner's view of their own card. 404 when none is published."""
+    import haldir_cards
+    card = haldir_cards.get_card(DB_PATH, getattr(request, "tenant_id", ""), agent_id)
+    if card is None:
+        return _json_error("not_found", "no published card for that agent", 404)
+    return jsonify(card)
+
+
+@app.route("/v1/agents/<agent_id>/card", methods=["DELETE"])
+@require_api_key
+@require_scope("admin:write")
+def unpublish_agent_card(agent_id: str):
+    """Withdraw a card. It is deleted, not hidden — an operator who takes a
+    listing back should be able to mean it."""
+    import haldir_cards
+    tenant = getattr(request, "tenant_id", "")
+    if not haldir_cards.unpublish(DB_PATH, tenant, agent_id):
+        return _json_error("not_found", "no published card for that agent", 404)
+    _audit_admin("agent.card_unpublish", {"agent_id": agent_id}, tenant_id=tenant)
+    return jsonify({"unpublished": True, "agent_id": agent_id}), 200
+
+
+@app.route("/.well-known/agents.json", methods=["GET"])
+def public_agent_cards():
+    """The public index of published cards. No auth — that is the point.
+
+    Every entry is the operator's own claim about their own agent. Nothing
+    here is verified by Haldir, and the document says so, because a directory
+    that implies endorsement turns somebody else's overstatement into our
+    misrepresentation.
+    """
+    import haldir_cards
+    cards = haldir_cards.public_cards(DB_PATH)
+    return jsonify({
+        "description": (
+            "Agent capability cards published by their operators. Each card "
+            "describes what an agent is meant to do; none of them is verified "
+            "by Haldir."
+        ),
+        "count": len(cards),
+        "cards": cards,
+    })
+
+
 # ── Compliance evidence pack (auditor-ready document) ──────────────────
+
+def _tenant_frameworks(tenant: str) -> list[str]:
+    """The framework mappings this tenant's plan includes.
+
+    Read from `haldir_tiers.assurance()` — the same table the plan cards
+    render from — so what a customer read when they chose a plan and what
+    their evidence pack contains are one statement. Enforced here rather than
+    merely advertised.
+    """
+    import haldir_tiers
+    return list(haldir_tiers.assurance(_get_tenant_tier(tenant))["frameworks"])
+
 
 def _parse_iso_or_unix(v: str | None) -> float | None:
     if not v:
@@ -2339,6 +2483,7 @@ def compliance_evidence():
         )
     pack = haldir_compliance.build_evidence_pack(
         DB_PATH, tenant, since=since, until=until,
+        frameworks=_tenant_frameworks(tenant),
     )
     if fmt in ("markdown", "md"):
         body = haldir_compliance.render_markdown(pack)
@@ -2413,7 +2558,9 @@ def compliance_score():
     "here's what to fix to close the gap"."""
     import haldir_compliance_score
     tenant = getattr(request, "tenant_id", "")
-    return jsonify(haldir_compliance_score.compute_score(DB_PATH, tenant))
+    return jsonify(haldir_compliance_score.compute_score(
+        DB_PATH, tenant, frameworks=_tenant_frameworks(tenant),
+    ))
 
 
 @app.route("/v1/compliance/evidence/manifest", methods=["GET"])
@@ -2428,6 +2575,7 @@ def compliance_evidence_manifest():
     until = _parse_iso_or_unix(request.args.get("until"))
     pack = haldir_compliance.build_evidence_pack(
         DB_PATH, tenant, since=since, until=until,
+        frameworks=_tenant_frameworks(tenant),
     )
     return jsonify({
         "signatures":   pack["signatures"],
@@ -2495,11 +2643,14 @@ def compliance_html():
     tenant_id = row["tenant_id"]
     since = _parse_iso_or_unix(request.args.get("since"))
     until = _parse_iso_or_unix(request.args.get("until"))
+    entitled = _tenant_frameworks(tenant_id)
     pack = haldir_compliance.build_evidence_pack(
-        DB_PATH, tenant_id, since=since, until=until,
+        DB_PATH, tenant_id, since=since, until=until, frameworks=entitled,
     )
     import haldir_compliance_score
-    score = haldir_compliance_score.compute_score(DB_PATH, tenant_id)
+    score = haldir_compliance_score.compute_score(
+        DB_PATH, tenant_id, frameworks=entitled,
+    )
     return haldir_compliance.render_html(pack, key=key, score=score), 200, {
         "Content-Type": "text/html; charset=utf-8",
     }
@@ -3318,6 +3469,42 @@ hr { border:none; border-top:1px solid rgba(255,255,255,0.08); margin:2rem 0; }
 
 <h3><span class="method post">POST</span> /v1/sessions/:id/check</h3>
 <p>Check if a session has a permission. Body: <code>{"scope": "write"}</code></p>
+
+<hr>
+<h2>Agents — the register</h2>
+
+<h3><span class="method get">GET</span> /v1/agents</h3>
+<p>Every agent that has acted for this tenant: the scopes and spend cap it
+holds, the sessions and spend it has used, its flagged-action count, and the
+agents it has spawned. This is the register of AI systems a review asks for.
+Derived from recorded activity as well as registration, so an agent that acted
+without ever being explicitly registered is still listed.</p>
+<pre>curl https://haldir.xyz/v1/agents \\
+  -H "Authorization: Bearer hld_xxx"</pre>
+
+<h3><span class="method get">GET</span> /v1/agents/:agent_id</h3>
+<p>One agent's register entry. 404 when this tenant has no record of it.</p>
+
+<h3><span class="method post">POST</span> /v1/agents/:agent_id/card</h3>
+<p>Publish (or update) a capability card, making one agent discoverable at
+<a href="/.well-known/agents.json"><code>/.well-known/agents.json</code></a>.
+Opt-in per agent, and capability-only: what you say the agent does, never what
+it spent or was flagged for. The agent must be in your register.</p>
+<pre>curl -X POST https://haldir.xyz/v1/agents/ledger-bot/card \
+  -H "Authorization: Bearer hld_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"display_name": "Ledger Bot",
+       "description": "Reconciles invoices and schedules payments.",
+       "capabilities": ["read invoices", "schedule payment"],
+       "contact_url": "https://example.com/ledger-bot"}'</pre>
+
+<h3><span class="method delete">DELETE</span> /v1/agents/:agent_id/card</h3>
+<p>Withdraw a card. The row is deleted, not hidden — taking a listing back
+should mean it is gone.</p>
+
+<h3><span class="method get">GET</span> /.well-known/agents.json</h3>
+<p>The public index of published cards. No authentication — that is the point.
+Every entry is its operator's claim, not something Haldir verified.</p>
 
 <hr>
 <h2>Vault — Secrets</h2>
@@ -6016,6 +6203,7 @@ def cloud_overview_page():
       <a href="#/account">Account</a>
       <a href="#/quotas">Quotas</a>
       <a href="#/sessions">Sessions</a>
+      <a href="#/agents">Agents</a>
       <a href="#/audit">Audit trail</a>
       <a href="#/webhooks">Webhooks</a>
       <a href="#/approvals">Approvals</a>
@@ -6114,6 +6302,28 @@ def cloud_overview_page():
               <th>Tool</th><th>Action</th><th>Cost</th><th>Status</th>
             </tr></thead>
             <tbody id="audit-body"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- AGENTS -->
+      <section class="page" id="page-agents">
+        <div class="page-title">Agents</div>
+        <div class="stat-grid" id="stat-grid-agents">
+          <div class="stat"><div class="stat-val" id="stat-agents-total">—</div>
+            <div class="stat-label">Agents on record</div></div>
+          <div class="stat"><div class="stat-val" id="stat-agents-active">—</div>
+            <div class="stat-label">Active now</div></div>
+          <div class="stat"><div class="stat-val" id="stat-agents-flagged">—</div>
+            <div class="stat-label">With flagged actions</div></div>
+        </div>
+        <div class="panel">
+          <table class="wrap">
+            <thead><tr>
+              <th>Agent</th><th>Scopes</th><th>Spend cap</th><th>Sessions</th>
+              <th>Actions</th><th>Cost</th><th>Flagged</th><th>Spawns</th>
+            </tr></thead>
+            <tbody id="agents-body"><tr><td colspan="8" class="empty">loading…</td></tr></tbody>
           </table>
         </div>
       </section>

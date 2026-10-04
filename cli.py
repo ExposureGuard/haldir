@@ -952,6 +952,152 @@ def _render_overview(o: dict) -> None:
     print()
 
 
+def _register_payload() -> dict | None:
+    """The register, if this machine is configured to talk to an instance.
+
+    The console shows both halves — what is on the machine, and what is
+    governed — but a machine that has never heard of Haldir must still get a
+    working scan, so every failure here is "no register" rather than an error.
+    """
+    if not get_api_key():
+        return None
+    try:
+        return APIClient().get("/v1/agents")
+    except (SystemExit, Exception):
+        return None
+
+
+def cmd_discover(args: argparse.Namespace) -> None:
+    """Find the AI agents and MCP servers already on this machine.
+
+    Read-only, local, stdlib: config files the known clients use, and
+    processes that look like agents. Nothing is uploaded, and nothing is
+    started.
+    """
+    import haldir_console
+    import haldir_discover
+
+    report = haldir_discover.discover()
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2))
+        return
+
+    rows = haldir_console.build_rows(report, _register_payload() if args.register else None)
+    print()
+    print(haldir_console.render_rows_text(rows))
+    print()
+    print(f"  {Color.DIM}{haldir_console.summarize(report)}{Color.RESET}")
+    print(f"  {Color.DIM}Bring one under governance: {haldir_console.HALDIR_MCP_SNIPPET}{Color.RESET}")
+    print()
+
+
+def cmd_console(args: argparse.Namespace) -> None:
+    """Open the console window: what is on this machine, and what is governed.
+
+    `--json` prints the same rows instead of opening a window, which is what
+    a test or a remote shell wants.
+    """
+    import haldir_console
+    import haldir_discover
+
+    def scan() -> list:
+        return haldir_console.build_rows(
+            haldir_discover.discover(), _register_payload() if args.register else None
+        )
+
+    rows = scan()
+    if getattr(args, "json", False):
+        print(json.dumps(rows, indent=2))
+        return
+
+    report = haldir_discover.discover()
+    try:
+        haldir_console.open_console(
+            rows,
+            summary=haldir_console.summarize(report, _register_payload() if args.register else None),
+            on_refresh=scan,
+        )
+    except RuntimeError as err:
+        error(str(err))
+        sys.exit(1)
+
+
+def cmd_agents(args: argparse.Namespace) -> None:
+    """The agent register — every agent that has acted for this tenant.
+
+    Which agents exist, what each is allowed to do, what each actually did,
+    and which of them can spawn others. This is the "register of AI systems"
+    a review asks for; `/v1/agents` serves it to anything else that wants it.
+    """
+    client = APIClient()
+    if getattr(args, "agent", None):
+        body = client.get(f"/v1/agents/{args.agent}")
+    else:
+        body = client.get("/v1/agents")
+    if getattr(args, "json", False):
+        print(json.dumps(body, indent=2))
+        return
+    _render_register(body if "agents" in body else {"agents": [body], "summary": {}})
+
+
+def cmd_publish(args: argparse.Namespace) -> None:
+    """Publish a capability card for one agent — opt-in discovery."""
+    client = APIClient()
+    body = client.post(f"/v1/agents/{args.agent_id}/card", json={
+        "display_name": args.name,
+        "description":   args.description or "",
+        "capabilities":  args.capability or [],
+        "contact_url":   args.contact or "",
+    })
+    verb = "Updated" if body.get("updated") else "Published"
+    print(f"  {Color.GREEN}{verb}{Color.RESET} card for {args.agent_id}")
+    print(f"  {Color.DIM}card id{Color.RESET} {body.get('card_id', '')}")
+    print(f"  {Color.DIM}listable at{Color.RESET} /.well-known/agents.json")
+    print(f"  {Color.DIM}The card carries only what you wrote: what the agent"
+          f" does, never what it did.{Color.RESET}")
+    print()
+
+
+def cmd_unpublish(args: argparse.Namespace) -> None:
+    """Withdraw a capability card. The row is deleted, not hidden."""
+    client = APIClient()
+    client.delete(f"/v1/agents/{args.agent_id}/card")
+    print(f"  {Color.GREEN}Withdrawn{Color.RESET} card for {args.agent_id}")
+    print()
+
+
+def _render_register(register: dict) -> None:
+    """Print the register as the table an operator would paste into a review."""
+    agents = register.get("agents") or []
+    summary = register.get("summary") or {}
+    print()
+    print(f"  {Color.BOLD}Agent register{Color.RESET}")
+    if summary:
+        print(f"  {Color.DIM}{summary.get('agents', 0)} agents · "
+              f"{summary.get('agents_active', 0)} active now · "
+              f"{summary.get('flagged_actions', 0)} flagged actions · "
+              f"${summary.get('audited_cost_usd', 0.0):,.6f} logged across "
+              f"{summary.get('actions', 0):,} actions{Color.RESET}")
+    print()
+    if not agents:
+        print(f"  {Color.DIM}No agents have acted yet.{Color.RESET}")
+        print()
+        return
+    print(f"{Color.DIM}  {'agent':26} {'scopes':20} {'cap':>10} {'sess':>5} "
+          f"{'acts':>6} {'cost':>12} {'flag':>5}  spawns{Color.RESET}")
+    for a in agents:
+        sessions = a.get("sessions") or {}
+        activity = a.get("activity") or {}
+        scopes = ",".join(a.get("default_scopes") or []) or "—"
+        cap = f"${a['max_spend']:,.2f}" if a.get("max_spend") else "—"
+        spawns = ",".join(a.get("delegates_to") or []) or "—"
+        print(f"  {a.get('agent_id', '')[:26]:26} {scopes[:20]:20} {cap:>10} "
+              f"{sessions.get('total', 0):>5} {activity.get('actions', 0):>6} "
+              f"${activity.get('cost_usd', 0.0):>11,.6f} "
+              f"{activity.get('flagged', 0):>5}  {spawns}")
+    print()
+
+
 def cmd_overview(args: argparse.Namespace) -> None:
     """Single-call tenant dashboard (calls /v1/admin/overview)."""
     client = APIClient()
@@ -1993,6 +2139,50 @@ def build_parser() -> argparse.ArgumentParser:
     p_over.add_argument("--watch", action="store_true", help="Refresh continuously, top-style")
     p_over.add_argument("--interval", type=float, default=5.0, help="Refresh interval (with --watch)")
     p_over.set_defaults(func=cmd_overview)
+
+    # ── agents ──
+    # The register: who exists, what each may do, what each did, who spawns
+    # whom. Same data as /v1/agents, which is also what the evidence pack and
+    # the dashboard render.
+    p_agents = sub.add_parser(
+        "agents",
+        help="Agent register — who exists, what they may do, what they did",
+    )
+    p_agents.add_argument("--agent", help="Show a single agent by id")
+    p_agents.add_argument("--json", action="store_true", help="Emit raw JSON")
+    p_agents.set_defaults(func=cmd_agents)
+
+    # ── publish / unpublish ──
+    # A capability card makes one agent discoverable at
+    # /.well-known/agents.json. Opt-in per agent; withdrawing deletes it.
+    p_pub = sub.add_parser(
+        "publish",
+        help="Publish a capability card for an agent (opt-in discovery)",
+    )
+    p_pub.add_argument("agent_id", help="The agent to make discoverable")
+    p_pub.add_argument("--name", required=True, help="Display name on the card")
+    p_pub.add_argument("--description", help="What the agent does, one or two sentences")
+    p_pub.add_argument("--capability", action="append",
+                       help="A capability to list (repeatable)")
+    p_pub.add_argument("--contact", help="http(s) URL where the operator can be reached")
+    p_pub.set_defaults(func=cmd_publish)
+
+    p_unpub = sub.add_parser("unpublish", help="Withdraw an agent's capability card")
+    p_unpub.add_argument("agent_id", help="The agent to withdraw")
+    p_unpub.set_defaults(func=cmd_unpublish)
+
+    # ── discover / console ──
+    # What is on this machine, before anything has been pointed at Haldir.
+    # `discover` prints it; `console` opens a window onto the same rows.
+    for name, help_text, handler in (
+        ("discover", "Find the AI agents and MCP servers already on this machine", cmd_discover),
+        ("console", "Open the agent console window (or print its rows with --json)", cmd_console),
+    ):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("--json", action="store_true", help="Emit raw JSON")
+        p.add_argument("--register", action="store_true",
+                       help="Also show what Haldir is governing (needs an API key)")
+        p.set_defaults(func=handler)
 
     # ── top ──
     # A live console for a fleet of agents. Distinct from `overview --watch`,
