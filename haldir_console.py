@@ -39,6 +39,72 @@ _GROUPS = (
 )
 
 
+#: What a pasted discovery report may be, before it is rendered. The paste
+#: comes from a browser and is untrusted: a list where a dict belongs raises
+#: `AttributeError` three frames down inside `build_rows`, and a 50 MB body is
+#: a denial of service against the renderer. Everything is coerced and capped
+#: here so the renderer only ever sees the documented shape.
+MAX_PASTE_BYTES = 256 * 1024
+MAX_CLIENTS = 50
+MAX_SERVERS_PER_CLIENT = 100
+MAX_PROCESSES = 500
+_FIELD_CAP = 300
+
+
+def _text(value: Any, cap: int = _FIELD_CAP) -> str:
+    """A string, capped. Anything else becomes "" rather than a repr — the
+    renderer shows what the operator's machine said, not our guess at it."""
+    if not isinstance(value, str):
+        return ""
+    return value[:cap]
+
+
+def sanitize_discovery(raw: Any) -> dict[str, Any]:
+    """Coerce a pasted report into the shape `build_rows` expects.
+
+    Unknown keys are dropped rather than passed through: the console renders
+    a fixed set of columns, and a paste is not the place to discover new ones.
+    """
+    if not isinstance(raw, dict):
+        return {"clients": [], "processes": []}
+
+    clients: list[dict[str, Any]] = []
+    raw_clients = raw.get("clients")
+    if isinstance(raw_clients, list):
+        for entry in raw_clients[:MAX_CLIENTS]:
+            if not isinstance(entry, dict):
+                continue
+            servers: dict[str, str] = {}
+            raw_servers = entry.get("servers")
+            if isinstance(raw_servers, dict):
+                for name, spec in list(raw_servers.items())[:MAX_SERVERS_PER_CLIENT]:
+                    if isinstance(name, str) and isinstance(spec, str):
+                        servers[name[:80]] = spec[:_FIELD_CAP]
+            clients.append({
+                "client":      _text(entry.get("client")) or "(unnamed client)",
+                "config_path": _text(entry.get("config_path")),
+                "readable":    bool(entry.get("readable", False)),
+                "note":        _text(entry.get("note")),
+                "servers":     servers,
+            })
+
+    processes: list[dict[str, Any]] = []
+    raw_processes = raw.get("processes")
+    if isinstance(raw_processes, list):
+        for entry in raw_processes[:MAX_PROCESSES]:
+            if not isinstance(entry, dict):
+                continue
+            pid = entry.get("pid")
+            processes.append({
+                "pid":     pid if isinstance(pid, int) else -1,
+                "kind":    _text(entry.get("kind"), 40) or "unknown",
+                "label":   _text(entry.get("label"), 80) or "process",
+                "command": _text(entry.get("command")),
+            })
+
+    return {"clients": clients, "processes": processes}
+
+
 def build_rows(
     discovery: dict[str, Any] | None,
     register: dict[str, Any] | None = None,
@@ -101,15 +167,17 @@ def build_rows(
     for agent in (register or {}).get("agents", []):
         sessions = agent.get("sessions") or {}
         activity = agent.get("activity") or {}
+        total = sessions.get("total", 0)
+        flagged = activity.get("flagged", 0)
         rows.append({
             "group":      "Governed by Haldir",
             "name":       agent.get("agent_id", "?"),
             "kind":       agent.get("kind", "agent"),
             "detail": (
                 f"{', '.join(agent.get('default_scopes') or []) or 'no scopes'} · "
-                f"{sessions.get('total', 0)} sessions · "
+                f"{total} session{'' if total == 1 else 's'} · "
                 f"${activity.get('cost_usd', 0.0):.6f} logged · "
-                f"{activity.get('flagged', 0)} flagged"
+                f"{flagged} flagged"
             ),
             "suggestion": (
                 "Discoverable — a capability card is published."
@@ -126,16 +194,31 @@ def build_rows(
 
 def summarize(discovery: dict[str, Any] | None,
               register: dict[str, Any] | None = None) -> str:
-    """The one-line status under the title."""
-    d = (discovery or {}).get("summary") or {}
+    """The one-line status under the title.
+
+    Computed from the lists rather than from a `summary` block, so the numbers
+    describe exactly what is rendered. The web console's sanitizer drops keys
+    it does not know, and a summary read from one reported "0 clients" next to
+    a rendered list of them.
+    """
+    clients = (discovery or {}).get("clients") or []
+    processes = (discovery or {}).get("processes") or []
+    servers = sum(len(c.get("servers") or {}) for c in clients)
+    ungoverned = sum(
+        1 for c in clients for spec in (c.get("servers") or {}).values()
+        if "haldir" not in str(spec).lower()
+    )
     parts = [
-        f"{d.get('clients', 0)} clients",
-        f"{d.get('configured_servers', 0)} configured servers",
-        f"{d.get('processes', 0)} running",
+        f"{len(clients)} client" + ("" if len(clients) == 1 else "s"),
+        f"{servers} configured server" + ("" if servers == 1 else "s"),
+        f"{len(processes)} running",
     ]
+    if ungoverned:
+        parts.append(f"{ungoverned} ungoverned")
     if register:
-        s = register.get("summary") or {}
-        parts.append(f"{s.get('agents', 0)} governed agents")
+        summary = register.get("summary") or {}
+        agents = summary.get("agents", 0)
+        parts.append(f"{agents} governed agent" + ("" if agents == 1 else "s"))
     return " · ".join(parts)
 
 

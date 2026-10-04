@@ -252,6 +252,10 @@ server launched with `--token sk-…` is the common case — and discovery outpu
 gets pasted into issues. Anything that looks like a token or sits behind a
 `--key`/`--token`/`password` flag is replaced before it reaches a finding.
 
+The same view is on the web at **`/console`** — paste the report there and it renders
+beside the register, with the same next steps. The local half still comes from this
+command, because a website cannot read your filesystem.
+
 `console` opens a window onto the same rows: what is configured, what is
 running, what Haldir governs, and the config snippet that brings each
 ungoverned server under it. It falls back to a clear message when there is no
