@@ -182,6 +182,7 @@ def build_evidence_pack(
     tenant_id: str,
     since: float | None = None,
     until: float | None = None,
+    frameworks: list[str] | None = None,
 ) -> dict[str, Any]:
     """Assemble the complete evidence document. Pure function over a
     DB path + tenant — no Flask, no globals; trivial to unit-test."""
@@ -190,6 +191,8 @@ def build_evidence_pack(
     # Default audit window: last 90 days. Long enough for a quarterly
     # review, short enough to fit in a reasonable response.
     since = since if since is not None else (until - 90 * 24 * 3600)
+
+    frameworks_kept, frameworks_dropped = _framework_sections(frameworks)
 
     pack: dict[str, Any] = {
         "format_version":  FORMAT_VERSION,
@@ -208,8 +211,13 @@ def build_evidence_pack(
         "approvals":       _section_approvals(db_path, tenant_id, since, until),
         "webhooks":        _section_webhooks(db_path, tenant_id, since, until),
         "agent_register":  _section_agent_register(db_path, tenant_id),
-        "frameworks":      _section_frameworks(),
+        "frameworks":      frameworks_kept,
     }
+    # Only when something was filtered, so the key's presence is itself the
+    # signal. An auditor must not read an absent mapping as "this evidence
+    # does not exist" when it means "not in this plan".
+    if frameworks_dropped:
+        pack["frameworks_excluded"] = frameworks_dropped
     pack["signatures"] = _section_signatures(pack)
     return pack
 
@@ -520,6 +528,29 @@ def _section_agent_register(db_path: str, tenant_id: str) -> dict[str, Any]:
     }
 
 
+def _framework_sections(
+    allowed: list[str] | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """The framework mappings, filtered to a plan's entitlement.
+
+    `allowed=None` means no filter — library callers and the self-hosted
+    default see all three. The HTTP routes pass the tenant's entitlement from
+    `haldir_tiers.assurance()`, which is the same table the plan cards render
+    from, so the card and the pack are one statement rather than two.
+
+    Returns `(kept, dropped)`; `dropped` is reported in the pack so a reader
+    can tell "not in your plan" from "not mapped".
+    """
+    import haldir_frameworks
+    report = haldir_frameworks.framework_report(controls=SOC2_CONTROLS)
+    if allowed is None:
+        return report, []
+    permitted = set(allowed)
+    kept = {k: v for k, v in report.items() if k in permitted}
+    dropped = [k for k in report if k not in kept]
+    return kept, dropped
+
+
 def _section_frameworks() -> dict[str, Any]:
     """The framework mappings: which clause of which framework each section's
     evidence speaks to, and what it does not cover.
@@ -795,7 +826,14 @@ def render_markdown(pack: dict[str, Any]) -> str:
     lines.append("_A mapping says what this evidence **contributes to**. It does not")
     lines.append("claim the criterion is met — every clause below names its gap as well._")
     lines.append("")
+    if p.get("frameworks_excluded"):
+        import haldir_frameworks as _fw
+        names = ", ".join(_fw.FRAMEWORKS[k]["label"] for k in p["frameworks_excluded"])
+        lines.append(f"_Not included in this plan (so no mapping is shown here): {names}._")
+        lines.append("")
     for _fid in ("soc2", "eu_ai_act", "iso_42001"):
+        if _fid not in p["frameworks"]:
+            continue
         f = p["frameworks"][_fid]
         lines.append(f"### {f['label']}")
         lines.append("")
@@ -914,7 +952,16 @@ def render_html(pack: dict[str, Any], key: str = "",
         )
     # Build the framework-mapping blocks: clause, evidence, contribution, gap.
     fw_blocks: list[str] = []
+    if p.get("frameworks_excluded"):
+        import haldir_frameworks as _fw
+        names = ", ".join(_fw.FRAMEWORKS[k]["label"] for k in p["frameworks_excluded"])
+        fw_blocks.append(
+            f"<p class='dim'>Not included in this plan (so no mapping is shown "
+            f"here): {_h.escape(names)}.</p>"
+        )
     for _fid in ("soc2", "eu_ai_act", "iso_42001"):
+        if _fid not in p["frameworks"]:
+            continue
         f = p["frameworks"][_fid]
         rows = []
         for c in f["clauses"]:

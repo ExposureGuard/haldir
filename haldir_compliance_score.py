@@ -458,7 +458,9 @@ def _verify_chain_safe(db_path: str, tenant_id: str) -> bool:
 
 # ── Top-level scorer ────────────────────────────────────────────────
 
-def compute_score(db_path: str, tenant_id: str) -> dict[str, Any]:
+def compute_score(
+    db_path: str, tenant_id: str, frameworks: list[str] | None = None,
+) -> dict[str, Any]:
     """Run every evaluator + roll up into the 0-100 score.
 
     Shape:
@@ -507,7 +509,9 @@ def compute_score(db_path: str, tenant_id: str) -> dict[str, Any]:
     import haldir_frameworks
     from haldir_compliance import SOC2_CONTROLS
 
-    payload["frameworks"] = haldir_frameworks.framework_report(
-        controls=SOC2_CONTROLS, score=payload,
-    )
+    report = haldir_frameworks.framework_report(controls=SOC2_CONTROLS, score=payload)
+    if frameworks is not None:
+        permitted = set(frameworks)
+        report = {k: v for k, v in report.items() if k in permitted}
+    payload["frameworks"] = report
     return payload
