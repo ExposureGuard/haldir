@@ -50,7 +50,7 @@ def test_pack_has_every_documented_section() -> None:
         "tenant_id", "controls",
         "identity", "access_control", "encryption", "audit_trail",
         "spend_governance", "approvals", "webhooks", "agent_register",
-        "signatures",
+        "frameworks", "signatures",
     }
     assert expected <= set(pack.keys())
 
@@ -175,7 +175,8 @@ def test_evidence_markdown_endpoint(haldir_client, bootstrap_key) -> None:
     assert "# Haldir Audit-Prep Evidence Pack" in body
     assert "## 1. Identity" in body
     assert "## 8. Agent register" in body
-    assert "## 9. Document signature" in body
+    assert "## 9. Framework mappings" in body
+    assert "## 10. Document signature" in body
 
 
 def test_evidence_rejects_bad_format(haldir_client, bootstrap_key) -> None:

@@ -489,7 +489,7 @@ def compute_score(db_path: str, tenant_id: str) -> dict[str, Any]:
     warning = sum(1 for r in results if r.state == STATE_WARN)
     failing = sum(1 for r in results if r.state == STATE_FAIL)
 
-    return {
+    payload = {
         "score":       score,
         "criteria":    [asdict(r) for r in results],
         "passing":     passing,
@@ -498,3 +498,16 @@ def compute_score(db_path: str, tenant_id: str) -> dict[str, Any]:
         "total":       total,
         "computed_at": time.time(),
     }
+    # The same checks, grouped by the frameworks they speak to. No second
+    # scoring engine and no second set of signals — `haldir_frameworks` maps
+    # these seven checks onto EU AI Act articles and ISO/IEC 42001 controls,
+    # and clauses nothing here can measure are reported as unmeasured rather
+    # than scored. The headline `score` stays SOC 2-shaped for compatibility;
+    # this is the same number seen through the other two frameworks.
+    import haldir_frameworks
+    from haldir_compliance import SOC2_CONTROLS
+
+    payload["frameworks"] = haldir_frameworks.framework_report(
+        controls=SOC2_CONTROLS, score=payload,
+    )
+    return payload
