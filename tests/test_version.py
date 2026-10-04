@@ -71,6 +71,14 @@ def _stated_versions() -> dict[str, str]:
         # 0.3.2 with nothing comparing it, because every discovery-surface
         # pattern above points at `.well-known/` and this one is not there.
         "landing/index.html":   r'"softwareVersion":\s*"([^"]+)"',
+        # The official MCP registry entry — the file an MCP client reads to
+        # decide what it can install. It was published to the registry once,
+        # in April, at 0.1.0, and stayed there for six releases while the
+        # package moved to 0.4.x, because nothing compared the two. The
+        # workflow that republishes it is
+        # `.github/workflows/publish-mcp-registry.yml`; this pattern is what
+        # keeps the file it publishes honest in the meantime.
+        "server.json":          r'^  "version": "([^"]+)"',
     }
     for rel, pat in patterns.items():
         m = re.search(pat, _read(rel), re.M)

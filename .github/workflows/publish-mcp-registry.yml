@@ -1,0 +1,90 @@
+name: publish-mcp-registry
+
+# Keeps Haldir's entry in the official MCP registry
+# (registry.modelcontextprotocol.io) current.
+#
+# Why this exists: the entry was published once, by hand, in April — and then
+# stayed at 0.1.0 for six releases while PyPI moved to 0.4.2, because
+# "republish to the registry" was a manual step in a checklist. A registry
+# entry is what an MCP client reads to decide what it can install; a stale one
+# does not fail loudly, it just quietly sends people to a version from April.
+# So the step is now a workflow that runs on the same tag as the release.
+#
+# Ordering matters: the registry validates that the package version named in
+# server.json actually exists upstream, so this waits for PyPI's *simple
+# index* to list the version before publishing. (The JSON API is CDN-cached
+# and has reported the previous release for minutes after an upload landed;
+# `pypi.org/simple/` is the source the notes trust.)
+#
+# Auth is GitHub OIDC — no secret. The `io.github.ExposureGuard/*` namespace
+# is verified from the workflow's own identity, which is also why this has to
+# run in this repository and not anywhere else.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish to the registry (e.g. 0.4.3 or v0.4.3)"
+        required: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # the whole auth story
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve the version
+        id: v
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME}}"
+          VERSION="${VERSION#v}"
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "not a release version: '$VERSION'" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for PyPI to serve the version
+        run: |
+          set -euo pipefail
+          VERSION='${{ steps.v.outputs.version }}'
+          for attempt in $(seq 1 30); do
+            if curl -fsS https://pypi.org/simple/haldir/ | grep -q "haldir-${VERSION}\.tar\.gz"; then
+              echo "PyPI is serving ${VERSION}"
+              exit 0
+            fi
+            echo "attempt ${attempt}: PyPI does not list ${VERSION} yet"
+            sleep 20
+          done
+          echo "PyPI never listed ${VERSION}; not publishing a version nobody can install" >&2
+          exit 1
+
+      - name: Pin server.json to the released version
+        run: |
+          VERSION='${{ steps.v.outputs.version }}'
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.json.tmp
+          mv server.json.tmp server.json
+          cat server.json
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate
+
+      - name: Authenticate to the MCP registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish
+        run: ./mcp-publisher publish

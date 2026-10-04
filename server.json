@@ -2,18 +2,18 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.ExposureGuard/haldir",
   "title": "Haldir",
-  "description": "Governance for AI agents: scoped sessions, encrypted secrets, hash-chained audit, policy proxy.",
+  "description": "AI agent governance: spend caps, scoped permissions, encrypted secrets, tamper-evident audit.",
   "repository": {
     "url": "https://github.com/ExposureGuard/haldir",
     "source": "github"
   },
   "websiteUrl": "https://haldir.xyz",
-  "version": "0.2.1",
+  "version": "0.4.3",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "haldir",
-      "version": "0.2.0",
+      "version": "0.4.3",
       "transport": { "type": "stdio" }
     }
   ],
