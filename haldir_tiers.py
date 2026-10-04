@@ -118,6 +118,37 @@ def api_calls_per_agent_per_month() -> int:
     return API_CALLS_PER_AGENT_ACTION * AGENT_ACTIONS_PER_MIN * _MINUTES_PER_MONTH
 
 
+# ── Assurance entitlements ──────────────────────────────────────────────
+#
+# The register and the framework mappings are what an assurance buyer buys:
+# which frameworks the evidence speaks to, how long it is kept, and whether
+# delivery runs on a schedule. Entitlements live in the plan table rather
+# than in a separate product because the plan cards render from this table —
+# a card promising framework coverage the product gives everyone is a promise
+# that means nothing, and the two cannot disagree if there is one source.
+#
+# Enforced, not merely advertised: the evidence pack and the readiness score
+# filter their framework mappings to the tenant's entitlement (see
+# `api.py`'s compliance routes), so the card and the product are the same
+# statement.
+ASSURANCE_DEFAULTS: dict[str, Any] = {
+    "frameworks": ["soc2"],
+    "evidence_retention_days": 30,
+    "scheduled_delivery": False,
+}
+
+# Short display names for the plan cards. Deliberately NOT imported from
+# `haldir_frameworks`, which holds the authoritative labels and the clause
+# mappings: this module is imported by pure code so nothing has to restate the
+# plan table to avoid pulling in Flask, and that only works while its imports
+# are `typing` and nothing else. `tests/test_tiers.py` keeps the two in
+# agreement, which is what actually prevents the drift.
+_FRAMEWORK_CARD_NAMES = {
+    "soc2":      "SOC 2",
+    "eu_ai_act": "the EU AI Act",
+    "iso_42001": "ISO/IEC 42001",
+}
+
 TIERS: dict[str, dict[str, Any]] = {
     "free": {
         "label": "Free",
@@ -139,6 +170,11 @@ TIERS: dict[str, dict[str, Any]] = {
             "MCP support",
             "Community support",
         ],
+        "assurance": {
+            "frameworks": ["soc2"],
+            "evidence_retention_days": 30,
+            "scheduled_delivery": False,
+        },
     },
     "usage": {
         "label": "Usage",
@@ -170,6 +206,11 @@ TIERS: dict[str, dict[str, Any]] = {
             "Proxy mode + governance policies",
             "Priority support",
         ],
+        "assurance": {
+            "frameworks": ["soc2", "eu_ai_act", "iso_42001"],
+            "evidence_retention_days": 90,
+            "scheduled_delivery": True,
+        },
     },
     "enterprise": {
         "label": "Enterprise",
@@ -189,6 +230,14 @@ TIERS: dict[str, dict[str, Any]] = {
             "Custom retention windows",
             "Support SLA",
         ],
+        "assurance": {
+            "frameworks": ["soc2", "eu_ai_act", "iso_42001"],
+            # None means "custom", not "zero": the enterprise card already
+            # says custom retention windows, and 0 days would read as a
+            # plan that keeps nothing.
+            "evidence_retention_days": None,
+            "scheduled_delivery": True,
+        },
     },
 }
 
@@ -227,7 +276,32 @@ def feature_lines(tier: str) -> list[str]:
                 f"${rate:,.4f} per API call beyond that, billed not blocked"
             )
     lines.extend(plan.get("features", []))
+
+    # Assurance entitlements, rendered from the same block the compliance
+    # routes enforce — so "mapped to the EU AI Act" on the card is exactly
+    # the set the pack will show.
+    ent = plan.get("assurance") or {}
+    mapped = ent.get("frameworks") or []
+    if mapped:
+        names = [_FRAMEWORK_CARD_NAMES.get(f, f) for f in mapped]
+        lines.append("Evidence mapped to " + _join_names(names))
+    if ent:
+        days = ent.get("evidence_retention_days")
+        lines.append(
+            "Custom evidence retention" if days is None
+            else f"{days}-day evidence retention"
+        )
+        if ent.get("scheduled_delivery"):
+            lines.append("Scheduled evidence delivery")
     return lines
+
+
+def _join_names(names: list[str]) -> str:
+    """`A, B and C` — the card is prose, and a comma-separated dump reads as
+    a list of features rather than a sentence."""
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
 
 # Free is the floor for anything unrecognised. An unknown tier string — a
 # subscription row written by an older version, a typo in a Stripe price
@@ -257,6 +331,20 @@ def limits(tier: str, table: dict[str, dict[str, Any]] | None = None) -> dict[st
     tbl = TIERS if table is None else table
     key = RENAMED_TIERS.get(tier or "", tier or DEFAULT_TIER)
     return tbl.get(key, tbl[DEFAULT_TIER])
+
+
+def assurance(tier: str) -> dict[str, Any]:
+    """Assurance entitlements for a tier, through the rename alias.
+
+    Returns a copy with `frameworks` as a list: callers filter by the list
+    they get back, and handing them the table's own list would let one
+    caller's filter change another's entitlements.
+    """
+    plan = limits(tier)
+    out = dict(ASSURANCE_DEFAULTS)
+    out.update(plan.get("assurance") or {})
+    out["frameworks"] = list(out.get("frameworks") or ())
+    return out
 
 
 def overage_cost(tier: str, actions_over: int) -> float | None:

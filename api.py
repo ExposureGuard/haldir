@@ -2341,6 +2341,18 @@ def get_agent(agent_id: str):
 
 # ── Compliance evidence pack (auditor-ready document) ──────────────────
 
+def _tenant_frameworks(tenant: str) -> list[str]:
+    """The framework mappings this tenant's plan includes.
+
+    Read from `haldir_tiers.assurance()` — the same table the plan cards
+    render from — so what a customer read when they chose a plan and what
+    their evidence pack contains are one statement. Enforced here rather than
+    merely advertised.
+    """
+    import haldir_tiers
+    return list(haldir_tiers.assurance(_get_tenant_tier(tenant))["frameworks"])
+
+
 def _parse_iso_or_unix(v: str | None) -> float | None:
     if not v:
         return None
@@ -2380,6 +2392,7 @@ def compliance_evidence():
         )
     pack = haldir_compliance.build_evidence_pack(
         DB_PATH, tenant, since=since, until=until,
+        frameworks=_tenant_frameworks(tenant),
     )
     if fmt in ("markdown", "md"):
         body = haldir_compliance.render_markdown(pack)
@@ -2454,7 +2467,9 @@ def compliance_score():
     "here's what to fix to close the gap"."""
     import haldir_compliance_score
     tenant = getattr(request, "tenant_id", "")
-    return jsonify(haldir_compliance_score.compute_score(DB_PATH, tenant))
+    return jsonify(haldir_compliance_score.compute_score(
+        DB_PATH, tenant, frameworks=_tenant_frameworks(tenant),
+    ))
 
 
 @app.route("/v1/compliance/evidence/manifest", methods=["GET"])
@@ -2469,6 +2484,7 @@ def compliance_evidence_manifest():
     until = _parse_iso_or_unix(request.args.get("until"))
     pack = haldir_compliance.build_evidence_pack(
         DB_PATH, tenant, since=since, until=until,
+        frameworks=_tenant_frameworks(tenant),
     )
     return jsonify({
         "signatures":   pack["signatures"],
@@ -2536,11 +2552,14 @@ def compliance_html():
     tenant_id = row["tenant_id"]
     since = _parse_iso_or_unix(request.args.get("since"))
     until = _parse_iso_or_unix(request.args.get("until"))
+    entitled = _tenant_frameworks(tenant_id)
     pack = haldir_compliance.build_evidence_pack(
-        DB_PATH, tenant_id, since=since, until=until,
+        DB_PATH, tenant_id, since=since, until=until, frameworks=entitled,
     )
     import haldir_compliance_score
-    score = haldir_compliance_score.compute_score(DB_PATH, tenant_id)
+    score = haldir_compliance_score.compute_score(
+        DB_PATH, tenant_id, frameworks=entitled,
+    )
     return haldir_compliance.render_html(pack, key=key, score=score), 200, {
         "Content-Type": "text/html; charset=utf-8",
     }
