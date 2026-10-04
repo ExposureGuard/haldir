@@ -531,3 +531,22 @@ def test_tool_calls_are_limited_and_the_handshake_is_not(
             "/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, headers=h
         )
         assert r.status_code == 200, "the handshake was throttled"
+
+
+# ── The discovery document says only what is true ───────────────────────
+
+def test_the_metadata_omits_endpoints_that_are_not_implemented() -> None:
+    """RFC 8414 types `revocation_endpoint` as a URL. The document carried it
+    as `null`, which is not a value the field can hold — a strict client is
+    entitled to reject the whole document over it, and `null` never told a
+    lenient one anything either. An unimplemented optional field is omitted.
+
+    (`client_id_metadata_document_supported` stays, explicitly false: it is a
+    boolean capability flag, and there `false` is the way to say
+    "unsupported" rather than an absence that reads as an oversight.)"""
+    doc = haldir_oauth.authorization_server_metadata()
+    assert "revocation_endpoint" not in doc
+    assert doc["client_id_metadata_document_supported"] is False
+    # The field the MCP spec makes load-bearing: a client that does not find
+    # PKCE advertised MUST refuse to proceed.
+    assert doc["code_challenge_methods_supported"] == ["S256"]
