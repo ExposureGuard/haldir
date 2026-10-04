@@ -257,6 +257,8 @@ running, what Haldir governs, and the config snippet that brings each
 ungoverned server under it. It falls back to a clear message when there is no
 display rather than a traceback.
 
+![the Haldir console](docs/console.png)
+
 ```bash
 $ haldir discover
 MCP CLIENTS
