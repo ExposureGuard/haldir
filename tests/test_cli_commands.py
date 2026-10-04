@@ -364,3 +364,50 @@ def test_secret_get_with_a_session_reaches_the_api(mock_transport, capsys) -> No
     out = capsys.readouterr().out
     assert "stripe_key" in out
     assert "sk_live_xxx" in out
+
+
+# ── agents ─────────────────────────────────────────────────────────────
+
+def test_agents_renders_the_register(mock_transport, capsys) -> None:
+    mock_transport.add("GET", "/v1/agents", json_body={
+        "tenant_id": "t1",
+        "generated_at": 1.0,
+        "summary": {"agents": 2, "agents_active": 1, "agents_flagged": 1,
+                    "actions": 12, "audited_cost_usd": 1.5, "flagged_actions": 1,
+                    "delegation_edges": 1, "session_spend_usd": 0.0},
+        "agents": [
+            {"agent_id": "orchestrator", "default_scopes": ["read", "spend"],
+             "max_spend": 100.0, "sessions": {"total": 2, "active": 1, "revoked": 0},
+             "activity": {"actions": 10, "cost_usd": 1.0, "flagged": 0},
+             "delegates_to": ["worker"], "spawned_by": []},
+            {"agent_id": "worker", "default_scopes": ["read"],
+             "max_spend": 0.0, "sessions": {"total": 1, "active": 0, "revoked": 0},
+             "activity": {"actions": 2, "cost_usd": 0.5, "flagged": 1},
+             "delegates_to": [], "spawned_by": ["orchestrator"]},
+        ],
+    })
+    cli.cmd_agents(_ns(json=False, agent=None))
+    out = capsys.readouterr().out
+    for marker in ("Agent register", "2 agents", "orchestrator", "worker",
+                   "spawns", "$100.00", "read,spend"):
+        assert marker in out, f"missing {marker!r} in the register view"
+
+
+def test_agents_json_mode_emits_the_raw_payload(mock_transport, capsys) -> None:
+    payload = {"tenant_id": "t1", "summary": {"agents": 0}, "agents": []}
+    mock_transport.add("GET", "/v1/agents", json_body=payload)
+    cli.cmd_agents(_ns(json=True, agent=None))
+    assert json.loads(capsys.readouterr().out) == payload
+
+
+def test_agents_single_agent_renders(mock_transport, capsys) -> None:
+    mock_transport.add("GET", "/v1/agents/solo", json_body={
+        "agent_id": "solo", "default_scopes": ["read"], "max_spend": 0.0,
+        "sessions": {"total": 1, "active": 1, "revoked": 0},
+        "activity": {"actions": 1, "cost_usd": 0.25, "flagged": 0},
+        "delegates_to": [], "spawned_by": [],
+    })
+    cli.cmd_agents(_ns(json=False, agent="solo"))
+    out = capsys.readouterr().out
+    assert "solo" in out
+    assert "0.250000" in out

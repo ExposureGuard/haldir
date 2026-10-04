@@ -95,6 +95,19 @@ SOC2_CONTROLS: dict[str, dict[str, str]] = {
             "access reviews, and SSO/MFA enforcement."
         ),
     },
+    "agent_register": {
+        "criterion": "CC6.1",
+        "title": "AI agent register",
+        "evidence": (
+            "Every agent that has acted for this tenant: the scopes and "
+            "spend cap it holds, the sessions and spend it has used, its "
+            "flagged-action count, and the agents it has spawned. This is "
+            "the register of AI systems a review asks for. Contributes to "
+            "CC6.1 — what exists, what each may reach, and who may spawn "
+            "whom — and is an inventory plus a record of use, not a control "
+            "in itself."
+        ),
+    },
     "encryption": {
         "criterion": "CC6.7",
         "title": "Restricted Logical Access — Encryption",
@@ -194,6 +207,7 @@ def build_evidence_pack(
         "spend_governance": _section_spend(db_path, tenant_id, since, until),
         "approvals":       _section_approvals(db_path, tenant_id, since, until),
         "webhooks":        _section_webhooks(db_path, tenant_id, since, until),
+        "agent_register":  _section_agent_register(db_path, tenant_id),
     }
     pack["signatures"] = _section_signatures(pack)
     return pack
@@ -488,6 +502,23 @@ def _section_webhooks(db_path: str, tenant_id: str,
     }
 
 
+def _section_agent_register(db_path: str, tenant_id: str) -> dict[str, Any]:
+    """The register of AI systems: which agents exist, what they may do, and
+    what they did — derived from the same tables the rest of the pack reads.
+
+    `build_register` carries a `generated_at` for its own API response; it is
+    dropped here because it is metadata about *this call*, and the pack's
+    digest must not move because someone re-read the document.
+    """
+    import haldir_registry
+    register = haldir_registry.build_register(db_path, tenant_id)
+    return {
+        "agent_count": register["summary"]["agents"],
+        "summary":     register["summary"],
+        "agents":      register["agents"],
+    }
+
+
 def _section_signatures(pack: dict[str, Any]) -> dict[str, Any]:
     """SHA-256 over the canonical JSON of the rest of the pack.
 
@@ -538,6 +569,34 @@ def _section_signatures(pack: dict[str, Any]) -> dict[str, Any]:
                 for row in ac["keys"]
             ]
         hashable["access_control"] = ac
+    # Normalize agent_register: three of its fields move without a write.
+    # `sessions.active` counts sessions that have not expired — a TTL runs out
+    # on its own — and `last_seen` / `last_action_at` are recency telemetry
+    # that an authenticated read can advance. Two packs over an unchanged
+    # database must agree, or an auditor re-verifying an archived pack
+    # false-flags tampering, which is the failure this digest exists to
+    # prevent. Identity and amounts (agent, scopes, caps, counts, spend,
+    # flags, delegation) stay in the digest; the rendered forms still show
+    # the recency fields.
+    if "agent_register" in hashable and isinstance(hashable["agent_register"], dict):
+        areg = dict(hashable["agent_register"])
+        if isinstance(areg.get("agents"), list):
+            stripped = []
+            for row in areg["agents"]:
+                if not isinstance(row, dict):
+                    stripped.append(row)
+                    continue
+                row = dict(row)
+                row.pop("last_seen", None)
+                sessions_row = dict(row.get("sessions") or {})
+                sessions_row.pop("active", None)
+                row["sessions"] = sessions_row
+                activity_row = dict(row.get("activity") or {})
+                activity_row.pop("last_action_at", None)
+                row["activity"] = activity_row
+                stripped.append(row)
+            areg["agents"] = stripped
+        hashable["agent_register"] = areg
     canonical = json.dumps(
         hashable,
         sort_keys=True, separators=(",", ":"),
@@ -688,9 +747,37 @@ def render_markdown(pack: dict[str, Any]) -> str:
     lines.append(f"- Replay protection window: {w['replay_protection_window_s']} s")
     lines.append("")
 
+    # Agent register — the "show me your register of AI systems" section.
+    areg = p["agent_register"]
+    lines.append("## 8. Agent register · relevant to SOC2 CC6.1")
+    lines.append("")
+    lines.append(f"_{p['controls']['agent_register']['evidence']}_")
+    lines.append("")
+    lines.append(f"- Agents on record: **{areg['agent_count']}**")
+    lines.append(f"- Active now: {areg['summary']['agents_active']} · "
+                 f"with flagged actions: {areg['summary']['agents_flagged']} · "
+                 f"delegation edges: {areg['summary']['delegation_edges']}")
+    lines.append(f"- Session spend: ${areg['summary']['session_spend_usd']:,.6f} · "
+                 f"logged action cost: ${areg['summary']['audited_cost_usd']:,.6f} "
+                 f"across {areg['summary']['actions']:,} actions")
+    lines.append("")
+    if areg["agents"]:
+        lines.append("| agent | scopes | max spend | sessions | actions | spend | flagged | spawns |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+        for a_ in areg["agents"]:
+            scopes = ", ".join(a_["default_scopes"]) or "—"
+            spawns = ", ".join(a_["delegates_to"]) or "—"
+            lines.append(
+                f"| `{a_['agent_id']}` | `{scopes}` | ${a_['max_spend']:,.2f} | "
+                f"{a_['sessions']['total']:,} | {a_['activity']['actions']:,} | "
+                f"${a_['activity']['cost_usd']:,.6f} | {a_['activity']['flagged']:,} | "
+                f"{spawns} |"
+            )
+        lines.append("")
+
     # Signatures
     sig = p["signatures"]
-    lines.append("## 8. Document signature")
+    lines.append("## 9. Document signature")
     lines.append("")
     lines.append(f"- Algorithm: **{sig['algorithm']}**")
     lines.append(f"- Signed at: {sig['signed_at']}")
@@ -732,6 +819,7 @@ def render_html(pack: dict[str, Any], key: str = "",
     s = p["spend_governance"]
     ap = p["approvals"]
     w = p["webhooks"]
+    areg = p["agent_register"]
     sig = p["signatures"]
 
     chain_color = "#0b8043" if a["chain_verified"] else "#b00020"
@@ -768,6 +856,34 @@ def render_html(pack: dict[str, Any], key: str = "",
         + "".join(ac_rows)
         + '</tbody></table>'
     ) if ac_rows else '<p class="dim">No keys on file.</p>'
+
+    # Build the agent-register table rows.
+    agent_rows: list[str] = []
+    for a_ in areg["agents"]:
+        scopes_html = ", ".join(
+            f'<code>{_h.escape(s_)}</code>' for s_ in a_["default_scopes"]
+        ) or '<span class="dim">—</span>'
+        spawns_html = ", ".join(
+            f'<code>{_h.escape(x)}</code>' for x in a_["delegates_to"]
+        ) or '<span class="dim">—</span>'
+        agent_rows.append(
+            f"<tr><td><code>{_h.escape(a_['agent_id'])}</code></td>"
+            f"<td>{scopes_html}</td>"
+            f"<td>${a_['max_spend']:,.2f}</td>"
+            f"<td>{a_['sessions']['total']:,}</td>"
+            f"<td>{a_['activity']['actions']:,}</td>"
+            f"<td>${a_['activity']['cost_usd']:,.6f}</td>"
+            f"<td>{a_['activity']['flagged']:,}</td>"
+            f"<td>{spawns_html}</td></tr>"
+        )
+    agent_rows_html = (
+        '<table class="kv"><thead><tr>'
+        '<th>agent</th><th>scopes</th><th>max spend</th><th>sessions</th>'
+        '<th>actions</th><th>spend</th><th>flagged</th><th>spawns</th>'
+        '</tr></thead><tbody>'
+        + "".join(agent_rows)
+        + '</tbody></table>'
+    ) if agent_rows else '<p class="dim">No agents on record.</p>'
 
     bs = ap["by_status"]
 
@@ -1123,7 +1239,18 @@ def render_html(pack: dict[str, Any], key: str = "",
   </section>
 
   <section>
-    <h2>8 · Document signature</h2>
+    <h2>8 · Agent register <span class="cc">relevant to SOC2 CC6.1</span></h2>
+    <p class="lede">{_h.escape(p['controls']['agent_register']['evidence'])}</p>
+    <ul>
+      <li>Agents on record <span class="v">{areg['agent_count']:,}</span></li>
+      <li>Active now <span class="v">{areg['summary']['agents_active']:,}</span> · with flagged actions <span class="v">{areg['summary']['agents_flagged']:,}</span></li>
+      <li>Session spend <span class="v">${areg['summary']['session_spend_usd']:,.6f}</span> · logged action cost <span class="v">${areg['summary']['audited_cost_usd']:,.6f}</span> across {areg['summary']['actions']:,} actions</li>
+    </ul>
+    {agent_rows_html}
+  </section>
+
+  <section>
+    <h2>9 · Document signature</h2>
     <ul>
       <li>Algorithm <span class="v">{_h.escape(sig['algorithm'])}</span></li>
       <li>Signed at <span class="v">{_h.escape(sig['signed_at'])}</span></li>
