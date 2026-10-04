@@ -287,3 +287,130 @@ def test_the_text_render_is_what_the_terminal_shows() -> None:
 
 def summarize_has(text: str) -> bool:
     return bool(re.search(r"Claude Code", text))
+
+
+# ── The console, on the web ────────────────────────────────────────────
+
+def _auth(key: str) -> dict:
+    return {"Authorization": f"Bearer {key}"}
+
+
+SAMPLE_PASTE = {
+    "clients": [{"client": "Claude Code", "config_path": "/home/you/.claude.json",
+                 "readable": True, "servers": {"exposureguard": "exposureguard-mcp"}}],
+    "processes": [{"pid": 1316, "kind": "llm-runtime", "label": "Ollama",
+                   "command": "/usr/local/bin/ollama serve"}],
+}
+
+
+def test_the_paste_is_sanitized_before_it_is_rendered() -> None:
+    """The paste is untrusted browser input: a list where a dict belongs
+    raises three frames down inside build_rows, and unknown keys are the
+    browser's business, not the renderer's."""
+    assert haldir_console.sanitize_discovery("not a dict") == {"clients": [], "processes": []}
+    assert haldir_console.sanitize_discovery(None) == {"clients": [], "processes": []}
+
+    cleaned = haldir_console.sanitize_discovery({
+        "clients": ["a string, not a client", {"client": "C" * 999, "surprise": object()}],
+        "processes": [{"pid": "not an int", "kind": "x", "label": "y", "command": "z"}],
+        "something-else": {"a": 1},
+    })
+    assert set(cleaned) == {"clients", "processes"}
+    assert len(cleaned["clients"]) == 1, "a non-dict entry is skipped, not rendered"
+    assert len(cleaned["clients"][0]["client"]) == 300, "strings are capped"
+    assert "surprise" not in cleaned["clients"][0], "unknown keys are dropped"
+    assert cleaned["processes"][0]["pid"] == -1
+
+
+def test_the_web_summary_describes_the_rendered_rows() -> None:
+    """It is computed from the lists, not from a `summary` block the
+    sanitizer drops — which is how it reported "0 clients" next to a list of
+    them the first time the page ran."""
+    raw = dict(SAMPLE_PASTE)
+    web = haldir_console.sanitize_discovery(raw)
+    assert haldir_console.summarize(raw) == haldir_console.summarize(web)
+    assert "1 client" in haldir_console.summarize(web)
+    assert "1 ungoverned" in haldir_console.summarize(web)
+    assert "2 governed agents" in haldir_console.summarize(web, {"summary": {"agents": 2}})
+
+
+def test_the_console_endpoint_merges_the_paste_with_the_register(
+    haldir_client, bootstrap_key, tmp_path
+) -> None:
+    import api
+    tenant = haldir_client.get(
+        "/v1/admin/overview", headers=_auth(bootstrap_key)
+    ).get_json()["tenant_id"]
+    api.gate.create_session("web-console-agent", scopes=["read"], tenant_id=tenant)
+
+    r = haldir_client.post("/v1/console/rows",
+                           json={"discovery": SAMPLE_PASTE},
+                           headers=_auth(bootstrap_key))
+    assert r.status_code == 200, r.data
+    body = r.get_json()
+    assert set(body) == {"summary", "snippet", "rows"}
+    names = {row["name"] for row in body["rows"]}
+    assert {"Claude Code", "exposureguard", "Ollama #1316", "web-console-agent"} <= names
+    assert body["snippet"].startswith('{"mcpServers"')
+
+
+def test_the_console_endpoint_works_without_a_paste(haldir_client, bootstrap_key) -> None:
+    """No paste means "show me what Haldir governs" — the page's default
+    state, and the only half a website can see by itself."""
+    body = haldir_client.post("/v1/console/rows", json={},
+                              headers=_auth(bootstrap_key)).get_json()
+    assert body["rows"], "the register should still render"
+    assert all(row["group"] == "Governed by Haldir" for row in body["rows"])
+
+
+def test_a_junk_paste_is_empty_not_an_error(haldir_client, bootstrap_key) -> None:
+    for junk in ("lol", 42, [], {"clients": "nope"}):
+        r = haldir_client.post("/v1/console/rows", json={"discovery": junk},
+                               headers=_auth(bootstrap_key))
+        assert r.status_code == 200, f"{junk!r} should not 500"
+        assert isinstance(r.get_json()["rows"], list)
+
+
+def test_an_oversize_paste_is_refused_before_it_is_parsed(haldir_client, bootstrap_key) -> None:
+    huge = {"clients": [{"client": "x" * 1000, "config_path": "y" * 1000,
+                         "servers": {f"s{i}": "z" * 900 for i in range(400)}}]}
+    # Assert the fixture is actually over the limit: the first version of this
+    # test was 200 KB against a 256 KB cap, and passed for the wrong reason.
+    assert len(json.dumps(huge)) > haldir_console.MAX_PASTE_BYTES
+
+    r = haldir_client.post("/v1/console/rows", json={"discovery": huge},
+                           headers=_auth(bootstrap_key))
+    assert r.status_code == 413
+    assert r.get_json()["code"] == "payload_too_large"
+
+
+def test_the_console_endpoint_needs_a_key(haldir_client) -> None:
+    assert haldir_client.post("/v1/console/rows", json={}).status_code == 401
+
+
+def test_the_console_page_needs_a_valid_key(haldir_client, bootstrap_key) -> None:
+    assert haldir_client.get("/console").status_code == 302
+    assert haldir_client.get("/console?key=not-a-key").status_code == 302
+    page = haldir_client.get(f"/console?key={bootstrap_key}")
+    assert page.status_code == 200
+    body = page.data.decode()
+    assert "haldir discover --json" in body, "the paste hint is the whole on-ramp"
+    assert "noindex" in body, "the page carries a key in its URL"
+    assert "/v1/console/rows" in body
+
+
+def test_the_console_page_reads_fields_the_endpoint_returns(
+    haldir_client, bootstrap_key
+) -> None:
+    """The same contract the dashboard pages are held to: the page renders
+    whatever the endpoint returns, so a rename on either side must fail here
+    rather than blanking a column."""
+    page = haldir_client.get(f"/console?key={bootstrap_key}").data.decode()
+    reads = set(re.findall(r"\brow\.([a-zA-Z_]+)", page))
+    assert reads, "the parse found no row fields — the page's script moved"
+
+    body = haldir_client.post("/v1/console/rows", json={"discovery": SAMPLE_PASTE},
+                              headers=_auth(bootstrap_key)).get_json()
+    keys = set(body["rows"][0])
+    missing = reads - keys
+    assert not missing, f"the console page reads {sorted(missing)}, which /v1/console/rows does not return"

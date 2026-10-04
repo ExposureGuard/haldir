@@ -2339,6 +2339,322 @@ def get_agent(agent_id: str):
     return jsonify(register["agents"][0])
 
 
+#: The palette the cloud pages share. Defined once because the dashboard and
+#: the console are one product seen from two angles, and a drift between them
+#: is the kind of thing nobody notices until a screenshot looks wrong.
+_CSS_ROOT = """\
+  :root{
+    --bg:#050505;--card:#0a0a0f;--border:rgba(224,221,213,0.08);
+    --w:#e0ddd5;--w80:rgba(224,221,213,0.8);--w50:rgba(224,221,213,0.5);
+    --w20:rgba(224,221,213,0.2);--w08:rgba(224,221,213,0.04);
+    --gold:#b8973a;--green:#6bbd6b;--red:#e87b7b;--blue:#7ba8e8;
+    --mono:'IBM Plex Mono',monospace;--sans:'Inter',sans-serif;
+  }"""
+
+
+# ── The agent console, on the web ──────────────────────────────────────
+
+@app.route("/v1/console/rows", methods=["POST"])
+@require_api_key
+@require_scope("admin:read")
+def console_rows():
+    """The console's rows: what the operator pasted in, merged with what this
+    tenant governs.
+
+    The paste is the operator's own `haldir discover --json`, sent here to be
+    turned into rows. It is not stored — it is shaped and returned — which is
+    the honest description, and the page says so next to the box. Shaping it
+    here rather than in JavaScript keeps `build_rows` the single definition of
+    what a row is: the CLI, the desktop window and this page all render the
+    same function's output.
+    """
+    import haldir_console
+    import haldir_registry
+
+    if (request.content_length or 0) > haldir_console.MAX_PASTE_BYTES:
+        return _json_error(
+            "payload_too_large",
+            f"a discovery report is a few kilobytes; the limit is "
+            f"{haldir_console.MAX_PASTE_BYTES} bytes",
+            413,
+        )
+
+    body = request.get_json(silent=True) or {}
+    discovery = haldir_console.sanitize_discovery(body.get("discovery"))
+    tenant = getattr(request, "tenant_id", "")
+    register = haldir_registry.build_register(DB_PATH, tenant)
+    return jsonify({
+        "summary":  haldir_console.summarize(discovery, register),
+        "snippet":  haldir_console.HALDIR_MCP_SNIPPET,
+        "rows":     haldir_console.build_rows(discovery, register),
+    })
+
+
+@app.route("/console")
+def console_page():
+    """The console, in a browser: what is on your machine, and what Haldir
+    governs.
+
+    The half that reads a machine runs locally (`haldir discover --json`)
+    because a website cannot see your filesystem — so this page takes that
+    report as a paste and renders it beside the register. The paste goes to
+    *this* instance to be turned into rows and is not stored; a self-hosted
+    console can be pointed at its own instance instead.
+    """
+    import html as _h
+
+    key = request.args.get("key", "")
+    if not key:
+        return redirect("/cloud/login")
+
+    key_hash = _hash_key(key)
+    conn = get_db(DB_PATH)
+    row = conn.execute(
+        "SELECT tenant_id FROM api_keys WHERE key_hash = ? AND revoked = 0",
+        (key_hash,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return redirect("/cloud/login?error=1")
+
+    key_short = (_h.escape(key[:8]) + "..." + _h.escape(key[-4:])) \
+        if len(key) > 12 else _h.escape(key)
+    escaped_key = _h.escape(key)
+
+    # Embedded as JSON, with `<` escaped: this page carries an API key by
+    # design (the same `?key=` the dashboard uses), and a key containing
+    # `</script>` would otherwise close the block it is written inside.
+    import json as _json
+
+    def _js(value: Any) -> str:
+        return _json.dumps(value).replace("<", "\\u003c")
+
+    key_json = _js(key)
+    example_json = _js({
+        "clients": [{
+            "client": "Claude Code",
+            "config_path": "/home/you/.claude.json",
+            "readable": True,
+            "servers": {"exposureguard": "exposureguard-mcp"},
+        }],
+        "processes": [
+            {"pid": 1316, "kind": "llm-runtime", "label": "Ollama",
+             "command": "/usr/local/bin/ollama serve"},
+            {"pid": 4242, "kind": "coding-agent", "label": "Claude",
+             "command": "claude"},
+        ],
+    })
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Haldir · Console</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+  *{{margin:0;padding:0;box-sizing:border-box}}
+  {_CSS_ROOT}
+  body{{background:var(--bg);color:var(--w);font-family:var(--sans);min-height:100vh}}
+
+  .topbar{{display:flex;justify-content:space-between;align-items:center;
+           padding:1rem 2rem;border-bottom:1px solid var(--border);background:var(--card)}}
+  .brand{{font-family:var(--mono);font-size:0.7rem;letter-spacing:3px;
+          text-transform:uppercase;color:var(--gold)}}
+  .topbar-right{{display:flex;gap:1rem;align-items:center;font-family:var(--mono);font-size:0.65rem}}
+  .topbar-right a{{color:var(--w50);text-decoration:none}}
+  .topbar-right a:hover{{color:var(--w)}}
+  .key-pill{{color:var(--w20)}}
+  .key-pill b{{color:var(--w50);font-weight:400}}
+
+  .wrap{{padding:2rem;max-width:1200px;margin:0 auto}}
+  h1{{font-weight:200;font-size:1.5rem;letter-spacing:-0.5px;margin-bottom:0.4rem}}
+  .lede{{color:var(--w50);font-size:0.8rem;margin-bottom:1.5rem;line-height:1.6}}
+  .panel{{background:var(--card);border:1px solid var(--border);border-radius:6px;
+          padding:1.25rem;margin-bottom:1.5rem}}
+  .panel h2{{font-family:var(--mono);font-size:0.6rem;letter-spacing:1.5px;
+             text-transform:uppercase;color:var(--w20);margin-bottom:0.75rem}}
+  textarea{{width:100%;min-height:110px;background:#0a0a0a;border:1px solid var(--w08);
+            border-radius:4px;padding:0.75rem;color:var(--w);font-family:var(--mono);
+            font-size:0.7rem;resize:vertical}}
+  .row{{display:flex;gap:0.6rem;align-items:center;margin-top:0.75rem;flex-wrap:wrap}}
+  button{{background:transparent;border:1px solid var(--w20);border-radius:4px;
+          color:var(--w);font-family:var(--mono);font-size:0.65rem;letter-spacing:1px;
+          padding:0.5rem 0.9rem;cursor:pointer}}
+  button:hover{{border-color:var(--gold);color:var(--gold)}}
+  button.primary{{border-color:var(--gold);color:var(--gold)}}
+  .note{{color:var(--w20);font-size:0.65rem;margin-top:0.6rem;line-height:1.6}}
+
+  .summary{{font-family:var(--mono);font-size:0.7rem;color:var(--w50);margin-bottom:1rem}}
+  .cols{{display:flex;gap:1rem;align-items:flex-start}}
+  .rows{{flex:1;min-width:0}}
+  .detail{{width:340px;background:var(--card);border:1px solid var(--border);
+           border-radius:6px;padding:1rem;font-size:0.72rem;line-height:1.7;
+           color:var(--w50);position:sticky;top:1rem}}
+  .detail h3{{color:var(--gold);font-weight:400;font-size:0.8rem;margin-bottom:0.5rem}}
+  .detail pre{{background:#0a0a0a;border:1px solid var(--w08);border-radius:4px;
+               padding:0.6rem;overflow-x:auto;font-family:var(--mono);font-size:0.62rem;
+               color:var(--w80);margin-top:0.5rem;white-space:pre-wrap;word-break:break-all}}
+  .group{{font-family:var(--mono);font-size:0.55rem;letter-spacing:1.5px;
+          text-transform:uppercase;color:var(--w20);margin:1.4rem 0 0.4rem}}
+  .item{{display:flex;gap:1rem;padding:0.5rem 0.6rem;border-radius:4px;
+         border-bottom:1px solid var(--w08);cursor:pointer;font-size:0.72rem}}
+  .item:hover{{background:var(--w08)}}
+  .item.sel{{background:var(--w08)}}
+  .item .name{{font-family:var(--mono);color:var(--w);min-width:180px}}
+  .item .kind{{font-family:var(--mono);color:var(--gold);font-size:0.6rem;
+               min-width:100px;text-transform:uppercase;letter-spacing:1px}}
+  .item .det{{color:var(--w20);font-family:var(--mono);font-size:0.65rem;
+              overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">Haldir · Console</div>
+    <div class="topbar-right">
+      <span class="key-pill">key <b>{key_short}</b></span>
+      <a href="/cloud/overview?key={escaped_key}">dashboard</a>
+      <a href="/docs">api</a>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <h1>Agent console</h1>
+    <p class="lede">What is on your machine, and what Haldir governs.
+    A website cannot read your filesystem, so the local half comes from
+    <code>haldir discover --json</code> — paste it below.</p>
+
+    <div class="panel">
+      <h2>Discovery report</h2>
+      <textarea id="paste" spellcheck="false"
+        placeholder='Paste the output of:  haldir discover --json'></textarea>
+      <div class="row">
+        <button class="primary" id="render">Render</button>
+        <button id="example">Load an example</button>
+        <button id="clear">Clear</button>
+      </div>
+      <p class="note">Sent to this Haldir instance to be turned into rows; not
+      stored. Point the console at your own instance if you would rather your
+      machine's inventory not come here. Without a paste, this shows what
+      Haldir governs.</p>
+    </div>
+
+    <div class="summary" id="summary">loading…</div>
+    <div class="cols">
+      <div class="rows" id="rows"></div>
+      <div class="detail" id="detail">Select a row.</div>
+    </div>
+  </div>
+
+<script>
+var KEY = {key_json};
+var SNIPPET = "";
+
+var EXAMPLE = {example_json};
+
+function esc(s) {{
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {{
+    return {{"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}}[c];
+  }});
+}}
+
+function render() {{
+  var raw = document.getElementById("paste").value.trim();
+  var payload = {{}};
+  if (raw) {{
+    try {{ payload.discovery = JSON.parse(raw); }}
+    catch (e) {{
+      document.getElementById("summary").textContent =
+        "That is not JSON — run `haldir discover --json` and paste the whole output.";
+      return;
+    }}
+  }}
+  fetch("/v1/console/rows", {{
+    method: "POST",
+    headers: {{"Content-Type": "application/json", "Authorization": "Bearer " + KEY}},
+    body: JSON.stringify(payload),
+  }}).then(function (r) {{ return r.json(); }}).then(function (data) {{
+    if (data.error) {{
+      document.getElementById("summary").textContent = data.error;
+      return;
+    }}
+    SNIPPET = data.snippet || "";
+    document.getElementById("summary").textContent = data.summary || "";
+    draw(data.rows || []);
+  }});
+}}
+
+function draw(rows) {{
+  var host = document.getElementById("rows");
+  host.innerHTML = "";
+  var group = "";
+  rows.forEach(function (row) {{
+    if (row.group !== group) {{
+      group = row.group;
+      var h = document.createElement("div");
+      h.className = "group";
+      h.textContent = group;
+      host.appendChild(h);
+    }}
+    var item = document.createElement("div");
+    item.className = "item";
+    item.innerHTML =
+      '<span class="name">' + esc(row.name) + '</span>' +
+      '<span class="kind">' + esc(row.kind) + '</span>' +
+      '<span class="det">' + esc(row.detail) + '</span>';
+    item.addEventListener("click", function () {{
+      var nodes = host.querySelectorAll(".item");
+      for (var i = 0; i < nodes.length; i++) {{ nodes[i].classList.remove("sel"); }}
+      item.classList.add("sel");
+      show(row);
+    }});
+    host.appendChild(item);
+  }});
+  if (!rows.length) {{
+    document.getElementById("rows").textContent = "Nothing to show yet.";
+  }}
+}}
+
+function show(row) {{
+  var html = "<h3>" + esc(row.name) + "</h3>" +
+             "<div>" + esc(row.detail) + "</div>" +
+             (row.suggestion ? "<p style='margin-top:0.8rem'>" + esc(row.suggestion) + "</p>" : "");
+  if (row.snippet) {{
+    html += "<div style='margin-top:0.8rem;color:var(--gold);font-size:0.65rem'>Config to paste:</div>" +
+            "<pre>" + esc(row.snippet) + "</pre>" +
+            "<button id='copy' style='margin-top:0.6rem'>Copy</button>";
+  }}
+  var detail = document.getElementById("detail");
+  detail.innerHTML = html;
+  var copy = document.getElementById("copy");
+  if (copy) {{
+    copy.addEventListener("click", function () {{
+      navigator.clipboard.writeText(row.snippet);
+      copy.textContent = "Copied";
+    }});
+  }}
+}}
+
+document.getElementById("render").addEventListener("click", render);
+document.getElementById("clear").addEventListener("click", function () {{
+  document.getElementById("paste").value = "";
+  render();
+}});
+document.getElementById("example").addEventListener("click", function () {{
+  document.getElementById("paste").value = JSON.stringify(EXAMPLE, null, 2);
+  render();
+}});
+
+if (location.search.indexOf("example=1") !== -1) {{
+  document.getElementById("paste").value = JSON.stringify(EXAMPLE, null, 2);
+}}
+render();
+</script>
+</body>
+</html>"""
+
+
 # ── Capability cards: opt-in discovery ─────────────────────────────────
 
 @app.route("/v1/agents/<agent_id>/card", methods=["POST"])
@@ -6091,13 +6407,7 @@ def cloud_overview_page():
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Inter:wght@200;300;400;600&display=swap" rel="stylesheet">
 <style>
   *{{margin:0;padding:0;box-sizing:border-box}}
-  :root{{
-    --bg:#050505;--card:#0a0a0f;--border:rgba(224,221,213,0.08);
-    --w:#e0ddd5;--w80:rgba(224,221,213,0.8);--w50:rgba(224,221,213,0.5);
-    --w20:rgba(224,221,213,0.2);--w08:rgba(224,221,213,0.04);
-    --gold:#b8973a;--green:#6bbd6b;--red:#e87b7b;--blue:#7ba8e8;
-    --mono:'IBM Plex Mono',monospace;--sans:'Inter',sans-serif;
-  }}
+  {_CSS_ROOT}
   body{{background:var(--bg);color:var(--w);font-family:var(--sans);min-height:100vh}}
 
   .topbar{{display:flex;justify-content:space-between;align-items:center;
@@ -6209,6 +6519,7 @@ def cloud_overview_page():
       <a href="#/approvals">Approvals</a>
       <a href="#/compliance">Compliance</a>
       <a href="#/settings">Settings</a>
+      <a href="/console?key={_h.escape(key)}">Console ↗</a>
     </nav>
 
     <main class="main">
