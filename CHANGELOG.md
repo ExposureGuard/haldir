@@ -5,6 +5,8 @@ All notable changes to Haldir are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-10-04
+
 ### Added
 
 - **OAuth for the MCP endpoint.** A client that can sign in with a browser —
@@ -20,12 +22,54 @@ All notable changes to Haldir are documented here. Format loosely follows
   throttling `initialize` and `tools/list` would break the start of every
   session and save nothing.
 
+- **`haldir --version`.** The first question in any bug report, and the one
+  surface that could not answer it — every other one (the module, the MCP
+  banner, the OpenAPI default, the webhook User-Agent, the tracer name)
+  already stated it. It reads `haldir.__version__` rather than repeating the
+  literal.
+
+### Fixed
+
+- **The Stripe webhook could not process a real event.** Every read used
+  `.get()` on a `StripeObject`, which has no `.get()` — so
+  `checkout.session.completed`, the event that upgrades a paying customer,
+  returned 500 every time it arrived. Three faults compounding: the
+  `StripeObject` reads; `Invoice.subscription` having moved to
+  `parent.subscription_details` (renewals confirmed nothing); and
+  `construct_event` raising `AttributeError` — not `ValueError` — on an
+  unparseable body, which Stripe would retry until it disabled the endpoint.
+  A failed payment now marks the row `past_due`, which is the whole downgrade,
+  and Enterprise is no longer self-serve: it points at a human instead of
+  handing any authenticated key a checkout session.
+
+- **The OpenAPI document declared bearer auth on public endpoints.** Its
+  top-level `security` applied to every operation that did not override it,
+  which described `/healthz`, the discovery documents and the demo-key mint as
+  requiring a key. Public operations now say `security: []`. `.well-known/ai.txt`
+  and `security.txt` — plain text, documented as returning 201 Created — are no
+  longer described as JSON.
+
+- **The OAuth discovery document carried `"revocation_endpoint": null`.**
+  RFC 8414 types that field as a URL; `null` is not a value it can hold, and a
+  strict client is entitled to reject the document over it. Unimplemented
+  optional fields are omitted.
+
 ### Security
 
 - Keys minted over OAuth record the resource they were issued for, and `/mcp`
   refuses one that names a different server. Keys with no binding — every key
   that existed before this, and every key `POST /v1/keys` mints — are
   unaffected.
+
+- **Client addresses are now resolvable behind the proxy.** The socket peer in
+  production is a Railway-internal address that rotates on every request, so
+  the per-IP limits (new OAuth accounts, registrations) were keyed on a
+  handful of buckets the whole internet shared — protecting nobody and
+  randomly refusing legitimate users. `HALDIR_ORIGIN_SECRET` lets a trusted
+  edge sign the client address it saw (`X-Haldir-Client-IP` +
+  `X-Haldir-Origin-Secret`); the claim is used only when the secret verifies
+  in constant time, and anything unverified falls back to the socket peer —
+  exactly the previous behaviour. Off unless configured.
 
 ## [0.4.2] — 2026-10-03
 

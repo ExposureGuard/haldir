@@ -56,7 +56,7 @@ from mcp.types import Tool, TextContent
 
 
 SERVER_NAME = "haldir"
-SERVER_VERSION = "0.4.2"
+SERVER_VERSION = "0.4.3"
 
 logger = logging.getLogger("haldir.mcp")
 
