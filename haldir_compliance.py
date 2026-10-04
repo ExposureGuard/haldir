@@ -208,6 +208,7 @@ def build_evidence_pack(
         "approvals":       _section_approvals(db_path, tenant_id, since, until),
         "webhooks":        _section_webhooks(db_path, tenant_id, since, until),
         "agent_register":  _section_agent_register(db_path, tenant_id),
+        "frameworks":      _section_frameworks(),
     }
     pack["signatures"] = _section_signatures(pack)
     return pack
@@ -519,6 +520,19 @@ def _section_agent_register(db_path: str, tenant_id: str) -> dict[str, Any]:
     }
 
 
+def _section_frameworks() -> dict[str, Any]:
+    """The framework mappings: which clause of which framework each section's
+    evidence speaks to, and what it does not cover.
+
+    Static — no per-tenant state — because it maps *this document* to the
+    frameworks, and the document's shape does not vary by tenant. States
+    (`pass`/`warn`/`fail`) are not here: they belong to the readiness score,
+    which computes them; this is the map, not the journey.
+    """
+    import haldir_frameworks
+    return haldir_frameworks.framework_report(controls=SOC2_CONTROLS)
+
+
 def _section_signatures(pack: dict[str, Any]) -> dict[str, Any]:
     """SHA-256 over the canonical JSON of the rest of the pack.
 
@@ -775,9 +789,31 @@ def render_markdown(pack: dict[str, Any]) -> str:
             )
         lines.append("")
 
+    # Framework mappings — the clauses this evidence speaks to, and the gaps.
+    lines.append("## 9. Framework mappings")
+    lines.append("")
+    lines.append("_A mapping says what this evidence **contributes to**. It does not")
+    lines.append("claim the criterion is met — every clause below names its gap as well._")
+    lines.append("")
+    for _fid in ("soc2", "eu_ai_act", "iso_42001"):
+        f = p["frameworks"][_fid]
+        lines.append(f"### {f['label']}")
+        lines.append("")
+        if f.get("note"):
+            lines.append(f"_{f['note']}_")
+            lines.append("")
+        for c in f["clauses"]:
+            lines.append(f"- **{c['clause']}** — {c['title']}")
+            lines.append(f"  - Evidence: {', '.join(c['sections'])}")
+            if c.get("contribution"):
+                lines.append(f"  - Contributes: {c['contribution']}")
+            if c.get("not_covered"):
+                lines.append(f"  - Does not cover: {c['not_covered']}")
+        lines.append("")
+
     # Signatures
     sig = p["signatures"]
-    lines.append("## 9. Document signature")
+    lines.append("## 10. Document signature")
     lines.append("")
     lines.append(f"- Algorithm: **{sig['algorithm']}**")
     lines.append(f"- Signed at: {sig['signed_at']}")
@@ -876,6 +912,27 @@ def render_html(pack: dict[str, Any], key: str = "",
             f"<td>{a_['activity']['flagged']:,}</td>"
             f"<td>{spawns_html}</td></tr>"
         )
+    # Build the framework-mapping blocks: clause, evidence, contribution, gap.
+    fw_blocks: list[str] = []
+    for _fid in ("soc2", "eu_ai_act", "iso_42001"):
+        f = p["frameworks"][_fid]
+        rows = []
+        for c in f["clauses"]:
+            rows.append(
+                f"<li><b>{_h.escape(c['clause'])}</b> — {_h.escape(c['title'])}"
+                f"<div class='dim' style='margin-top:0.2rem'>evidence: "
+                f"{_h.escape(', '.join(c['sections']))}</div>"
+                + (f"<div class='dim'>contributes: {_h.escape(c['contribution'])}</div>" if c.get('contribution') else "")
+                + (f"<div class='dim'>does not cover: {_h.escape(c['not_covered'])}</div>" if c.get('not_covered') else "")
+                + "</li>"
+            )
+        fw_blocks.append(
+            f"<h3 style='margin-top:1rem'>{_h.escape(f['label'])}</h3>"
+            + (f"<p class='dim'>{_h.escape(f['note'])}</p>" if f.get('note') else "")
+            + "<ul>" + "".join(rows) + "</ul>"
+        )
+    frameworks_html = "".join(fw_blocks)
+
     agent_rows_html = (
         '<table class="kv"><thead><tr>'
         '<th>agent</th><th>scopes</th><th>max spend</th><th>sessions</th>'
@@ -1250,7 +1307,13 @@ def render_html(pack: dict[str, Any], key: str = "",
   </section>
 
   <section>
-    <h2>9 · Document signature</h2>
+    <h2>9 · Framework mappings</h2>
+    <p class="lede">A mapping says what this evidence <b>contributes to</b>. It does not claim the criterion is met — every clause names its gap as well.</p>
+    {frameworks_html}
+  </section>
+
+  <section>
+    <h2>10 · Document signature</h2>
     <ul>
       <li>Algorithm <span class="v">{_h.escape(sig['algorithm'])}</span></li>
       <li>Signed at <span class="v">{_h.escape(sig['signed_at'])}</span></li>
