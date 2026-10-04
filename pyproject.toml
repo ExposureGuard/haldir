@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "haldir"
-version = "0.4.2"
+version = "0.4.3"
 description = "The guardian layer for AI agents — scoped sessions, AES-256-GCM secrets, hash-chained audit, policy proxy."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -118,6 +118,7 @@ include = [
     "haldir.py",
     "haldir_admin.py",
     "haldir_audit_tree.py",
+    "haldir_client_ip.py",
     "haldir_compliance.py",
     "haldir_compliance_scheduler.py",
     "haldir_compliance_score.py",
@@ -217,6 +218,7 @@ include = [
     "haldir.py",
     "haldir_admin.py",
     "haldir_audit_tree.py",
+    "haldir_client_ip.py",
     "haldir_compliance.py",
     "haldir_compliance_scheduler.py",
     "haldir_compliance_score.py",

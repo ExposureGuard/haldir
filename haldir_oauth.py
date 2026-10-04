@@ -172,11 +172,18 @@ def authorization_server_metadata() -> dict:
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
         "authorization_response_iss_parameter_supported": True,
-        # Neither of these is implemented, and saying so is the point: a client
-        # that sees the flag absent cannot tell "unsupported" from "this server
-        # forgot to advertise it".
+        # Not implemented, and advertised as `false` rather than omitted: a
+        # client that sees the flag absent cannot tell "unsupported" from "this
+        # server forgot to advertise it".
+        #
+        # `revocation_endpoint` was here too, as `None`, until an end-to-end
+        # check against production read the document back. RFC 8414 defines
+        # that field as a URL — `null` is not a value it can hold, so a strict
+        # client is entitled to reject the whole document over it. And the
+        # reasoning that justifies an explicit `false` above does not transfer:
+        # for a URL-typed optional field, *absence* is already the standard way
+        # to say "not supported". It is omitted now.
         "client_id_metadata_document_supported": False,
-        "revocation_endpoint": None,
     }
 
 

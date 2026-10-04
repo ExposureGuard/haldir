@@ -202,3 +202,50 @@ def test_committed_spec_matches_the_generated_one() -> None:
         )
     )
     assert committed == generated, "openapi.json differs beyond its path list"
+
+
+# ── Security is declared per operation, not blanket ─────────────────────
+
+def test_public_operations_declare_themselves_public() -> None:
+    """The document's top-level `security` applies bearer auth to every
+    operation that does not override it. That described /healthz, the
+    discovery documents and the demo-key mint as requiring a key — none of
+    which take one. Public operations now say `security: []` explicitly,
+    which is what the field exists for."""
+    spec = generate_openapi(api.app)
+    for path in ("/healthz", "/.well-known/agent.json", "/v1/demo/key"):
+        for method, op in spec["paths"][path].items():
+            assert op.get("security") == [], (
+                f"{method.upper()} {path} is public but the spec applies the "
+                f"document-wide bearer requirement to it"
+            )
+
+
+def test_key_gated_operations_keep_the_bearer_requirement() -> None:
+    """The other half of the pair: a route marked by `require_api_key` must
+    NOT be declared public. Both examples stack decorators on top of it
+    (@validate_body, @require_scope), which is the case `@wraps` has to carry
+    the marker through."""
+    spec = generate_openapi(api.app)
+    assert "security" not in spec["paths"]["/v1/sessions"]["post"]
+    assert "security" not in spec["paths"]["/v1/keys"]["get"]
+
+
+def test_the_first_key_mint_is_not_declared_as_key_gated() -> None:
+    """POST /v1/keys bootstraps the first key from HALDIR_BOOTSTRAP_TOKEN and
+    takes no API key; it must not inherit the bearer requirement."""
+    spec = generate_openapi(api.app)
+    assert spec["paths"]["/v1/keys"]["post"]["security"] == []
+
+
+def test_plain_text_discovery_documents_are_not_described_as_json() -> None:
+    """`.well-known/ai.txt` and `security.txt` are plain text; with the
+    blanket response set they were documented as returning 201 Created and
+    401 Unauthorized. The generator's stated rule is "the JSON surface", so
+    they are skipped. `/ai.txt` — which no route has served for three
+    releases — was the entry meant to do this."""
+    spec = generate_openapi(api.app)
+    assert "/.well-known/ai.txt" not in spec["paths"]
+    assert "/.well-known/security.txt" not in spec["paths"]
+    # The JSON documents under the same prefix are still described.
+    assert "/.well-known/agent.json" in spec["paths"]
