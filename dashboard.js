@@ -516,13 +516,17 @@
         return;
       }
       $t.innerHTML = rows.map(function (w) {
+        // Field names follow GET /v1/webhooks (`webhook_id`, `events`,
+        // `fire_count`) — this table used to read `id`/`event`/`deliveries`,
+        // which no surface ever returned, so every cell but the URL rendered
+        // empty even once the list arrived.
         return '<tr>' +
-          '<td class="mono">' + esc(String(w.id || "")) + '</td>' +
+          '<td class="mono">' + esc(String(w.webhook_id || "")) + '</td>' +
           '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">' + esc(w.url || "") + '</td>' +
-          '<td>' + esc(w.event || "—") + '</td>' +
-          '<td class="num">' + esc(String(w.deliveries ?? 0)) + '</td>' +
-          '<td class="num">' + esc(String(w.success_rate ?? "—")) + '</td>' +
-          '<td>' + '<button class="btn btn-red btn-sm" data-act="revoke-wh" data-id="' + esc(String(w.id || "")) + '" style="font-size:0.6rem;padding:0.2rem 0.5rem">Delete</button>' + '</td>' +
+          '<td>' + esc(w.events && w.events.length ? w.events.join(", ") : "—") + '</td>' +
+          '<td class="num">' + esc(String(w.fire_count ?? 0)) + '</td>' +
+          '<td class="num">' + esc(w.success_rate == null ? "—" : Math.round(w.success_rate * 100) + "%") + '</td>' +
+          '<td>' + '<button class="btn btn-red btn-sm" data-act="revoke-wh" data-id="' + esc(String(w.webhook_id || "")) + '" style="font-size:0.6rem;padding:0.2rem 0.5rem">Delete</button>' + '</td>' +
           '</tr>';
       }).join("");
       // Wire delete buttons
@@ -553,13 +557,21 @@
         return;
       }
       $t.innerHTML = pending.map(function (r) {
+        // Fields follow the approval row: request_id, agent_id, tool, action,
+        // amount, reason, created_at. This table used to read `session_id`,
+        // `requested_by` and `requested_at`, none of which any surface has
+        // ever returned — so half the row rendered empty and "Requested at"
+        // showed nothing at all. The headers were renamed to match.
         var id = r.request_id || "";
+        var request = r.tool || "—";
+        if (r.action) { request += " · " + r.action; }
         return '<tr>' +
           '<td class="mono">' + esc(id) + '</td>' +
-          '<td>' + esc(r.session_id || "") + '</td>' +
-          '<td>' + esc(r.requested_by || "") + '</td>' +
+          '<td>' + esc(r.agent_id || "") + '</td>' +
+          '<td>' + esc(request) + '</td>' +
+          '<td class="num">' + esc(fmt.usd(Number(r.amount) || 0)) + '</td>' +
           '<td>' + esc(r.reason || "") + '</td>' +
-          '<td>' + fmt.time(r.requested_at) + '</td>' +
+          '<td class="num">' + fmt.time(r.created_at) + '</td>' +
           '<td>' +
             '<button class="btn-sm ok" data-act="approve" data-id="' + esc(id) + '">Allow</button> ' +
             '<button class="btn-sm" data-act="deny" data-id="' + esc(id) + '">Deny</button>' +
@@ -614,8 +626,15 @@
       }
       var nextEl = $("#stat-compliance-next");
       if (nextEl) {
-        var nd = schedules.next_due != null ? schedules.next_due : null;
-        nextEl.textContent = nd ? new Date(nd * 1000).toLocaleDateString() : "—";
+        // `next_due` is per schedule; the response carries no top-level one.
+        // Reading `schedules.next_due` left this stat showing "—" forever,
+        // however many schedules existed. The soonest of them is the number
+        // the label is asking for.
+        var due = null;
+        (schedules.schedules || []).forEach(function (s) {
+          if (s && s.next_due != null && (due == null || s.next_due < due)) { due = s.next_due; }
+        });
+        nextEl.textContent = due ? new Date(due * 1000).toLocaleDateString() : "—";
       }
     }).catch(function(e) {
       flash("compliance load failed: " + (e.message || ""));

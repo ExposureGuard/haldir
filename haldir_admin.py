@@ -386,16 +386,53 @@ def _webhooks(db_path: str, tenant_id: str) -> dict[str, Any]:
         except Exception:
             total_row = None
             success_row = None
+        # The endpoint list the dashboard's webhooks page renders. It reads
+        # `overview["webhooks"]["webhooks"]`, and nothing ever set that key —
+        # so the page said "No webhooks registered" however many were, and
+        # each row's Delete button called a route that did not exist.
+        #
+        # Read straight from the table rather than from the manager's
+        # in-memory registry: production runs two workers, and a webhook
+        # registered on one of them is not in the other's list.
+        endpoint_rows = conn.execute(
+            "SELECT id, url, name, events, active, fire_count, fail_count "
+            "FROM webhooks WHERE tenant_id = ? ORDER BY id",
+            (tenant_id,),
+        ).fetchall()
     finally:
         conn.close()
     total = int(total_row[0]) if total_row else 0
     success = int(success_row[0]) if success_row else 0
     rate = (success / total) if total else 1.0
+    endpoints = []
+    for r in endpoint_rows:
+        try:
+            events = json.loads(r["events"] or "[]")
+        except (TypeError, ValueError):
+            events = []
+        fired = int(r["fire_count"] or 0)
+        failed = int(r["fail_count"] or 0)
+        endpoints.append({
+            "webhook_id":   int(r["id"]),
+            "url":          r["url"] or "",
+            "name":         r["name"] or "",
+            "events":       events,
+            "active":       bool(r["active"]),
+            "fire_count":   fired,
+            "fail_count":   failed,
+            # None, not 1.0: an endpoint that has never fired has no success
+            # rate, and rendering it as 100% would call something healthy
+            # that nothing has ever reached.
+            "success_rate": (
+                round(fired / (fired + failed), 4) if (fired + failed) else None
+            ),
+        })
     return {
         "registered_count":          int(reg_row[0]) if reg_row else 0,
         "deliveries_24h":            total,
         "delivery_success_rate_24h": round(rate, 4),
         "failed_24h":                total - success,
+        "webhooks":                  endpoints,
     }
 
 

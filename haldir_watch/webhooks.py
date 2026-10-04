@@ -644,6 +644,45 @@ class WebhookManager:
             if wh.tenant_id == tenant_id
         ]
 
+    # ── Removal ─────────────────────────────────────────────────────
+
+    def unregister(self, webhook_id: int, tenant_id: str = "") -> bool:
+        """Remove one endpoint. Returns False when nothing was removed.
+
+        Tenant-scoped, and a wrong-tenant id is indistinguishable from an id
+        that exists nowhere — a caller must not be able to use the answer to
+        learn whether some other tenant owns that id. (`rotate_secret` and
+        the approvals path follow the same rule.)
+
+        Delivery history in `webhook_deliveries` is deliberately kept: it
+        records what was sent, not what is configured, and an operator
+        removing an endpoint is not usually trying to destroy the record of
+        what it received.
+        """
+        conn = self._get_db()
+        if not conn:
+            return False
+        try:
+            row = conn.execute(
+                "SELECT id FROM webhooks WHERE id = ? AND tenant_id = ?",
+                (webhook_id, tenant_id),
+            ).fetchone()
+            if not row:
+                return False
+            # The check above is the authority, not the DELETE's row count:
+            # psycopg2's execute() returns None where sqlite3 returns a
+            # cursor, so a row count read here would be None on Postgres and
+            # a delete that succeeded would be reported as a miss.
+            conn.execute("DELETE FROM webhooks WHERE id = ?", (webhook_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Refresh the in-memory registry so the next event does not go to a
+        # receiver the operator just removed.
+        self._load_webhooks()
+        return True
+
     # ── Rotation ────────────────────────────────────────────────────
 
     def rotate_secret(

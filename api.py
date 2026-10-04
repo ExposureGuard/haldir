@@ -2238,6 +2238,31 @@ def list_webhooks():
     })
 
 
+@app.route("/v1/webhooks/<int:webhook_id>", methods=["DELETE"])
+@require_api_key
+@require_scope("webhooks:write")
+def delete_webhook(webhook_id: int):
+    """Remove a webhook endpoint.
+
+    Tenant-scoped, and a miss returns the same 404 whether the id belongs to
+    another tenant or to nobody — the status code must not answer "does
+    tenant B have a webhook with id 7" for tenant A. The dashboard's Delete
+    button has been calling this route since it was written; it did not
+    exist, so the button 404'd and the row stayed.
+    """
+    tenant = getattr(request, "tenant_id", "")
+    if not webhook_mgr.unregister(webhook_id, tenant_id=tenant):
+        return _json_error(
+            "not_found",
+            "no webhook with that id in this tenant",
+            404,
+        )
+    # Removing an endpoint stops evidence leaving the building; the audit
+    # trail should say when that happened and which one.
+    _audit_admin("webhook.delete", {"webhook_id": webhook_id}, tenant_id=tenant)
+    return jsonify({"deleted": True, "webhook_id": webhook_id}), 200
+
+
 @app.route("/v1/webhooks/<int:webhook_id>/rotate-secret", methods=["POST"])
 @require_api_key
 @require_scope("webhooks:write")
@@ -6138,10 +6163,10 @@ def cloud_overview_page():
         <div class="panel">
           <table class="wrap">
             <thead><tr>
-              <th>ID</th><th>Session</th><th>Requested by</th>
-              <th>Reason</th><th>Requested at</th><th>Actions</th>
+              <th>ID</th><th>Agent</th><th>Request</th>
+              <th>Amount</th><th>Reason</th><th>Requested at</th><th>Actions</th>
             </tr></thead>
-            <tbody id="approvals-body"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
+            <tbody id="approvals-body"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
           </table>
         </div>
       </section>
