@@ -952,6 +952,76 @@ def _render_overview(o: dict) -> None:
     print()
 
 
+def _register_payload() -> dict | None:
+    """The register, if this machine is configured to talk to an instance.
+
+    The console shows both halves — what is on the machine, and what is
+    governed — but a machine that has never heard of Haldir must still get a
+    working scan, so every failure here is "no register" rather than an error.
+    """
+    if not get_api_key():
+        return None
+    try:
+        return APIClient().get("/v1/agents")
+    except (SystemExit, Exception):
+        return None
+
+
+def cmd_discover(args: argparse.Namespace) -> None:
+    """Find the AI agents and MCP servers already on this machine.
+
+    Read-only, local, stdlib: config files the known clients use, and
+    processes that look like agents. Nothing is uploaded, and nothing is
+    started.
+    """
+    import haldir_console
+    import haldir_discover
+
+    report = haldir_discover.discover()
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2))
+        return
+
+    rows = haldir_console.build_rows(report, _register_payload() if args.register else None)
+    print()
+    print(haldir_console.render_rows_text(rows))
+    print()
+    print(f"  {Color.DIM}{haldir_console.summarize(report)}{Color.RESET}")
+    print(f"  {Color.DIM}Bring one under governance: {haldir_console.HALDIR_MCP_SNIPPET}{Color.RESET}")
+    print()
+
+
+def cmd_console(args: argparse.Namespace) -> None:
+    """Open the console window: what is on this machine, and what is governed.
+
+    `--json` prints the same rows instead of opening a window, which is what
+    a test or a remote shell wants.
+    """
+    import haldir_console
+    import haldir_discover
+
+    def scan() -> list:
+        return haldir_console.build_rows(
+            haldir_discover.discover(), _register_payload() if args.register else None
+        )
+
+    rows = scan()
+    if getattr(args, "json", False):
+        print(json.dumps(rows, indent=2))
+        return
+
+    report = haldir_discover.discover()
+    try:
+        haldir_console.open_console(
+            rows,
+            summary=haldir_console.summarize(report, _register_payload() if args.register else None),
+            on_refresh=scan,
+        )
+    except RuntimeError as err:
+        error(str(err))
+        sys.exit(1)
+
+
 def cmd_agents(args: argparse.Namespace) -> None:
     """The agent register — every agent that has acted for this tenant.
 
@@ -2100,6 +2170,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_unpub = sub.add_parser("unpublish", help="Withdraw an agent's capability card")
     p_unpub.add_argument("agent_id", help="The agent to withdraw")
     p_unpub.set_defaults(func=cmd_unpublish)
+
+    # ── discover / console ──
+    # What is on this machine, before anything has been pointed at Haldir.
+    # `discover` prints it; `console` opens a window onto the same rows.
+    for name, help_text, handler in (
+        ("discover", "Find the AI agents and MCP servers already on this machine", cmd_discover),
+        ("console", "Open the agent console window (or print its rows with --json)", cmd_console),
+    ):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("--json", action="store_true", help="Emit raw JSON")
+        p.add_argument("--register", action="store_true",
+                       help="Also show what Haldir is governing (needs an API key)")
+        p.set_defaults(func=handler)
 
     # ── top ──
     # A live console for a fleet of agents. Distinct from `overview --watch`,

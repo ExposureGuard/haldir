@@ -232,6 +232,44 @@ haldir mcp serve               # run the stdio server
 and anything else that speaks MCP over stdio — pointed at whichever instance
 your CLI is configured for.
 
+## Discovery
+
+```bash
+haldir discover                # what agents and MCP servers are on this machine
+haldir discover --json         # the same report, machine-readable
+haldir discover --register     # ...and what Haldir is governing (needs a key)
+haldir console                 # the same rows in a window (tkinter, stdlib)
+haldir console --json          # rows without a display — for tests and remote shells
+```
+
+`discover` is read-only and local: it reads the config files the known MCP
+clients use (Claude Code, Claude Desktop, Cursor, Windsurf, Zed, VS Code,
+Cline) and classifies running processes by their command head. It makes no
+network call and starts nothing.
+
+**It redacts credentials.** Command lines carry API keys in practice — an MCP
+server launched with `--token sk-…` is the common case — and discovery output
+gets pasted into issues. Anything that looks like a token or sits behind a
+`--key`/`--token`/`password` flag is replaced before it reaches a finding.
+
+`console` opens a window onto the same rows: what is configured, what is
+running, what Haldir governs, and the config snippet that brings each
+ungoverned server under it. It falls back to a clear message when there is no
+display rather than a traceback.
+
+```bash
+$ haldir discover
+MCP CLIENTS
+  Claude Code  [client]
+      /home/you/.claude.json
+MCP SERVERS THEY LAUNCH
+  exposureguard  [mcp-server]
+      exposureguard-mcp  ·  via Claude Code
+RUNNING NOW
+  Ollama #1316  [llm-runtime]
+      /usr/local/bin/ollama serve
+```
+
 ---
 
 ## JSON output, and which commands have it

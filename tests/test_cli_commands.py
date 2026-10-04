@@ -411,3 +411,34 @@ def test_agents_single_agent_renders(mock_transport, capsys) -> None:
     out = capsys.readouterr().out
     assert "solo" in out
     assert "0.250000" in out
+
+
+# ── discover / console ─────────────────────────────────────────────────
+
+def test_discover_json_emits_the_scan(capsys) -> None:
+    """Scans the real machine — the point of the command — so the assertions
+    are about the shape of the payload, not its contents."""
+    cli.cmd_discover(_ns(json=True, register=False))
+    report = json.loads(capsys.readouterr().out)
+    assert set(report) == {"home", "clients", "processes", "summary"}
+    assert set(report["summary"]) == {
+        "clients", "configured_servers", "processes", "governed_processes",
+        "ungoverned_servers", "unreadable_configs",
+    }
+    for client in report["clients"]:
+        assert {"client", "config_path", "readable", "servers"} <= set(client)
+
+
+def test_discover_renders_for_a_terminal(capsys) -> None:
+    cli.cmd_discover(_ns(json=False, register=False))
+    out = capsys.readouterr().out
+    assert "Bring one under governance" in out
+    assert "mcpServers" in out  # the snippet, not just advice
+
+
+def test_console_json_emits_rows_without_a_display(capsys) -> None:
+    cli.cmd_console(_ns(json=True, register=False))
+    rows = json.loads(capsys.readouterr().out)
+    assert isinstance(rows, list)
+    for row in rows:
+        assert set(row) == {"group", "name", "kind", "detail", "suggestion", "snippet"}
